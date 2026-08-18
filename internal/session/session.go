@@ -1,0 +1,165 @@
+// Package session implements the append-only event log that is the single
+// source of truth for a conversation (D1). Model-visible history is always
+// derived from the log (DeriveHistory); it is never stored separately.
+package session
+
+import (
+	"encoding/json"
+	"time"
+
+	"personal-agent/internal/llm"
+)
+
+// Event type discriminators (v1 vocabulary, see design.md §3).
+const (
+	EventUserMessage      = "user/message"
+	EventAssistantChunk   = "assistant/chunk"
+	EventAssistantMessage = "assistant/message"
+	EventToolResult       = "tool/result"
+	EventToolError        = "tool/error"
+)
+
+// Event is one append-only row of the session log. Seq is monotonically
+// increasing and becomes the cross-restart primary key once persisted (M2).
+type Event struct {
+	Seq  uint64
+	Type string
+	At   time.Time
+	Data json.RawMessage
+}
+
+// Log is an in-memory append-only event log. It is not safe for concurrent
+// use: the agent loop is strictly serial (D5).
+type Log struct {
+	events []Event
+	seq    uint64
+}
+
+// New returns an empty in-memory log.
+func New() *Log {
+	return &Log{}
+}
+
+// Append marshals data and appends one event, assigning the next Seq and At.
+func (l *Log) Append(typ string, data any) (Event, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return Event{}, err
+	}
+	l.seq++
+	ev := Event{Seq: l.seq, Type: typ, At: time.Now().UTC(), Data: raw}
+	l.events = append(l.events, ev)
+	return ev, nil
+}
+
+// Events returns a snapshot copy of the current event log.
+func (l *Log) Events() []Event {
+	out := make([]Event, len(l.events))
+	copy(out, l.events)
+	return out
+}
+
+// DeriveHistory folds the log into model-visible messages (design.md §3:
+// history is a pure derivation of the log). assistant/chunk rows are streaming
+// fidelity records and are folded away in favor of the authoritative
+// assistant/message row that closes the step.
+func (l *Log) DeriveHistory() []llm.Message {
+	return derive(l.events)
+}
+
+func derive(events []Event) []llm.Message {
+	var msgs []llm.Message
+	for _, ev := range events {
+		switch ev.Type {
+		case EventUserMessage:
+			var d userMessageData
+			if json.Unmarshal(ev.Data, &d) != nil {
+				continue
+			}
+			msgs = append(msgs, llm.Message{Role: llm.RoleUser, Content: d.Text})
+		case EventAssistantMessage:
+			var d assistantMessageData
+			if json.Unmarshal(ev.Data, &d) != nil {
+				continue
+			}
+			msgs = append(msgs, llm.Message{
+				Role:      llm.RoleAssistant,
+				Content:   d.Text,
+				ToolCalls: d.ToolCalls,
+			})
+		case EventToolResult:
+			var d toolResultData
+			if json.Unmarshal(ev.Data, &d) != nil {
+				continue
+			}
+			msgs = append(msgs, llm.Message{
+				Role:       llm.RoleTool,
+				ToolCallID: d.CallID,
+				Content:    d.Output,
+			})
+		case EventToolError:
+			var d toolErrorData
+			if json.Unmarshal(ev.Data, &d) != nil {
+				continue
+			}
+			msgs = append(msgs, llm.Message{
+				Role:       llm.RoleTool,
+				ToolCallID: d.CallID,
+				Content:    "Error: " + d.Error,
+			})
+		}
+	}
+	return msgs
+}
+
+// Payload structs for each v1 event type. Kept private: only the session
+// package knows the on-disk shapes, and the loop builds them through the
+// New* helpers below so model-visible inputs cannot be logged ad hoc.
+
+type userMessageData struct {
+	Text string `json:"text"`
+}
+
+type assistantChunkData struct {
+	Text string `json:"text"`
+}
+
+type assistantMessageData struct {
+	Text         string         `json:"text"`
+	ToolCalls    []llm.ToolCall `json:"toolCalls,omitempty"`
+	FinishReason string         `json:"finishReason,omitempty"`
+}
+
+type toolResultData struct {
+	CallID string `json:"callId"`
+	Name   string `json:"name"`
+	Output string `json:"output"`
+}
+
+type toolErrorData struct {
+	CallID string `json:"callId"`
+	Name   string `json:"name"`
+	Error  string `json:"error"`
+}
+
+// NewUserMessage builds the user/message payload.
+func NewUserMessage(text string) any { return userMessageData{Text: text} }
+
+// NewAssistantChunk builds one assistant/chunk payload (streaming fidelity).
+func NewAssistantChunk(text string) any { return assistantChunkData{Text: text} }
+
+// NewAssistantMessage builds the authoritative assistant/message payload that
+// closes a step.
+func NewAssistantMessage(text string, toolCalls []llm.ToolCall, finishReason string) any {
+	return assistantMessageData{Text: text, ToolCalls: toolCalls, FinishReason: finishReason}
+}
+
+// NewToolResult builds one successful tool/result payload.
+func NewToolResult(callID, name, output string) any {
+	return toolResultData{CallID: callID, Name: name, Output: output}
+}
+
+// NewToolError builds one failed tool/error payload.
+func NewToolError(callID, name, err string) any {
+	return toolErrorData{CallID: callID, Name: name, Error: err}
+}
