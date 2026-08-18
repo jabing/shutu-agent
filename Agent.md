@@ -73,7 +73,7 @@ go run ./cmd/pa       # 启动 REPL（M1 后可用，需 DEEPSEEK_API_KEY）
 
 **实施会话开场白模板**（直接粘贴）：
 
-> 请阅读 `D:\dev-projects\Agent\personal-agent\Agent.md` 和 `docs/design.md`，按设计基线实现 **M1 最小循环骨架**（里程碑验收标准见 Agent.md 第 4 节）。完成后运行 `go vet ./...`、`go test ./...`、`go build ./...` 并全部通过，然后报告：改动文件清单、实现决策、测试结果。严格遵守 design.md 第 10 节 D1–D10，不要引入任何超出 M1 范围的功能。
+> 请阅读 `D:\dev-projects\Agent\personal-agent\Agent.md` 和 `docs/design.md`，按设计基线实现 **M1 最小循环骨架**（里程碑验收标准见 Agent.md 第 4 节）。参考原型 dsh 的源码与文档在 `D:\dev-projects\Agent\deepseek-harness`——实现每个模块前先读 Agent.md 第 9 节对应的 dsh 源码与文档，借鉴其结构与接口设计（注意 dsh 是 TypeScript + 插件框架，只需借鉴思路，不照搬代码，Go 实现按 design.md 的模块地图落地）。完成后运行 `go vet ./...`、`go test ./...`、`go build ./...` 并全部通过，然后报告：改动文件清单、实现决策、测试结果。严格遵守 design.md 第 10 节 D1–D10，不要引入任何超出 M1 范围的功能。
 
 **并行原则**：同一里程碑只派一个实施会话；需要并行时按包目录划分所有权（如 `session`/`store` 与 `kb` 分属不同会话），各会话只写自己负责的目录。
 
@@ -81,8 +81,24 @@ go run ./cmd/pa       # 启动 REPL（M1 后可用，需 DEEPSEEK_API_KEY）
 
 ## 9. 参考链接
 
+### 文档
+
 - 设计基线：[`docs/design.md`](docs/design.md)
 - 原型架构：[`../deepseek-harness/docs/architecture.md`](../deepseek-harness/docs/architecture.md)
 - dsh 循环细节：[`../deepseek-harness/docs/subsystems/core.md`](../deepseek-harness/docs/subsystems/core.md)
 - dsh 会话日志：[`../deepseek-harness/docs/subsystems/session.md`](../deepseek-harness/docs/subsystems/session.md)
 - dsh 能力接缝：[`../deepseek-harness/docs/capability-seams.md`](../deepseek-harness/docs/capability-seams.md)
+
+### 源码参考（`../deepseek-harness/packages/`）
+
+实现每个模块前先读对应源码，借鉴结构、接口划分与边界设计；dsh 是 TypeScript + Cordis 插件框架，**只借鉴思路，不照搬代码**。
+
+| 本模块 | dsh 参考源码 | 重点看什么 |
+|---|---|---|
+| `loop` | `core/agent-loop/` | 循环驱动、turn/step 状态机 |
+| `session` | `core/session/` | 事件日志、历史派生（deriveMessages） |
+| `tools` | `core/tools/` | 工具注册表、参数校验、执行管道 |
+| `prompt` | `core/system-prompt/` | 提示词分节组装 |
+| `llm` | `llm/llm/` + `llm/llm-deepseek/` | 适配器接口、流式、DeepSeek 实现 |
+| `store`（M2） | `session/session-persistence*` | 持久化与重放 |
+| `kb`（M4） | `web/`（seam 三件套模板） | 能力接缝的包划分 |
