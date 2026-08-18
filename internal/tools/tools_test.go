@@ -16,7 +16,8 @@ type fakeTool struct {
 	executed bool
 }
 
-func (f *fakeTool) Name() string { return f.name }
+func (f *fakeTool) Name() string        { return f.name }
+func (f *fakeTool) Description() string { return "fake tool" }
 func (f *fakeTool) Schema() map[string]any {
 	if f.schema != nil {
 		return f.schema

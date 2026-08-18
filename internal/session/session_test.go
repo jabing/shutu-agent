@@ -2,7 +2,9 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
+	"time"
 
 	"personal-agent/internal/llm"
 )
@@ -108,5 +110,97 @@ func TestDeriveHistoryToolErrorBecomesToolMessage(t *testing.T) {
 	}
 	if tool.Content != "Error: no such file" {
 		t.Fatalf("tool error content = %q", tool.Content)
+	}
+}
+
+func TestAppendAssignsEventVersion(t *testing.T) {
+	l := New()
+	ev, err := l.Append(EventUserMessage, NewUserMessage("hi"))
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if ev.Version != EventVersion {
+		t.Fatalf("version = %d, want %d", ev.Version, EventVersion)
+	}
+}
+
+// TestRestoreRebuildsLogAndContinuesSeq verifies startup replay rebuilds the
+// log from persisted events and the next Append continues the sequence.
+func TestRestoreRebuildsLogAndContinuesSeq(t *testing.T) {
+	stored := []Event{
+		{Seq: 1, Type: EventUserMessage, At: time.Now().UTC(), Version: 1, Data: json.RawMessage(`{"text":"hello"}`)},
+		{Seq: 2, Type: EventAssistantMessage, At: time.Now().UTC(), Version: 1, Data: json.RawMessage(`{"text":"hi"}`)},
+	}
+	l := New()
+	if err := l.Restore(stored); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if len(l.Events()) != 2 {
+		t.Fatalf("events = %d, want 2", len(l.Events()))
+	}
+	ev, err := l.Append(EventUserMessage, NewUserMessage("next"))
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if ev.Seq != 3 {
+		t.Fatalf("seq = %d, want 3 (continues after restored seq 2)", ev.Seq)
+	}
+	msgs := l.DeriveHistory()
+	if len(msgs) != 3 {
+		t.Fatalf("derived %d messages, want 3", len(msgs))
+	}
+}
+
+func TestRestoreRejectsNonMonotonicSeq(t *testing.T) {
+	l := New()
+	if err := l.Restore([]Event{
+		{Seq: 2, Type: EventUserMessage},
+		{Seq: 1, Type: EventUserMessage},
+	}); err == nil {
+		t.Fatal("expected non-monotonic seq error")
+	}
+}
+
+// TestAppendSinkPersistsEvent verifies the durable sink receives every
+// committed event (dispatch-m2: 事件追加写入).
+func TestAppendSinkPersistsEvent(t *testing.T) {
+	var got []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		got = append(got, ev)
+		return nil
+	})
+	if _, err := l.Append(EventUserMessage, NewUserMessage("hi")); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if len(got) != 1 || got[0].Type != EventUserMessage {
+		t.Fatalf("sink got %+v", got)
+	}
+}
+
+// TestAppendSinkErrorRollsBack verifies a failing sink rolls the event back
+// out of the log and fails the Append, so memory never drifts from disk.
+func TestAppendSinkErrorRollsBack(t *testing.T) {
+	l := New()
+	l.SetSink(func(Event) error { return errors.New("disk full") })
+	if _, err := l.Append(EventUserMessage, NewUserMessage("hi")); err == nil {
+		t.Fatal("expected sink error")
+	}
+	if len(l.Events()) != 0 {
+		t.Fatalf("log has %d events after failed persist, want 0", len(l.Events()))
+	}
+}
+
+// TestRestoreDoesNotInvokeSink verifies replay never writes back through the
+// sink (loading is not appending).
+func TestRestoreDoesNotInvokeSink(t *testing.T) {
+	var calls int
+	l := New()
+	l.SetSink(func(Event) error { calls++; return nil })
+	if err := l.Restore([]Event{{Seq: 1, Type: EventUserMessage, Version: 1}}); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("sink invoked %d times during restore, want 0", calls)
 	}
 }

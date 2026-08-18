@@ -5,6 +5,7 @@ package session
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"personal-agent/internal/llm"
@@ -19,13 +20,22 @@ const (
 	EventToolError        = "tool/error"
 )
 
+// EventVersion is the current event vocabulary version. It is stored per event
+// (design.md D8) so a future event type or payload shape never requires
+// migrating old rows: readers that do not understand a version keep the row as
+// opaque data and derive history only from the types they know.
+const EventVersion = 1
+
 // Event is one append-only row of the session log. Seq is monotonically
-// increasing and becomes the cross-restart primary key once persisted (M2).
+// increasing and becomes the cross-restart primary key once persisted. Version
+// carries the event vocabulary version (see EventVersion); Data is an opaque
+// JSON blob whose shape is owned by Type.
 type Event struct {
-	Seq  uint64
-	Type string
-	At   time.Time
-	Data json.RawMessage
+	Seq     uint64
+	Type    string
+	At      time.Time
+	Version int
+	Data    json.RawMessage
 }
 
 // Log is an in-memory append-only event log. It is not safe for concurrent
@@ -33,6 +43,7 @@ type Event struct {
 type Log struct {
 	events []Event
 	seq    uint64
+	sink   func(Event) error // optional durable sink (D8), called after each append
 }
 
 // New returns an empty in-memory log.
@@ -40,15 +51,50 @@ func New() *Log {
 	return &Log{}
 }
 
-// Append marshals data and appends one event, assigning the next Seq and At.
+// SetSink installs an optional durable sink that receives every committed
+// event (typically forwarding it to a store). A sink error rolls the event
+// back out of the in-memory log and fails the Append, so the log never drifts
+// from what was actually persisted (D1: the log is the source of truth).
+func (l *Log) SetSink(sink func(Event) error) {
+	l.sink = sink
+}
+
+// Restore rebuilds the log from scratch with previously persisted events
+// (startup replay, D8). Events must arrive in strictly increasing Seq order;
+// after a successful Restore the next Append continues after the last Seq.
+// Restore never invokes the sink — replaying is loading, not appending.
+func (l *Log) Restore(events []Event) error {
+	l.events = nil
+	l.seq = 0
+	var last uint64
+	for _, ev := range events {
+		if ev.Seq <= last {
+			return fmt.Errorf("session: non-monotonic seq %d after %d in replay", ev.Seq, last)
+		}
+		l.events = append(l.events, ev)
+		last = ev.Seq
+	}
+	l.seq = last
+	return nil
+}
+
+// Append marshals data and appends one event, assigning the next Seq, At and
+// Version. When a durable sink is installed it is called with the committed
+// event; a sink error rolls the event back and is returned.
 func (l *Log) Append(typ string, data any) (Event, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return Event{}, err
 	}
 	l.seq++
-	ev := Event{Seq: l.seq, Type: typ, At: time.Now().UTC(), Data: raw}
+	ev := Event{Seq: l.seq, Type: typ, At: time.Now().UTC(), Version: EventVersion, Data: raw}
 	l.events = append(l.events, ev)
+	if l.sink != nil {
+		if err := l.sink(ev); err != nil {
+			l.events = l.events[:len(l.events)-1]
+			return Event{}, fmt.Errorf("session: persist %s event: %w", typ, err)
+		}
+	}
 	return ev, nil
 }
 

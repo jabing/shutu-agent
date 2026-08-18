@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"personal-agent/internal/llm"
 )
@@ -203,5 +204,110 @@ func TestStreamMalformedPayload(t *testing.T) {
 	}
 	if _, err := reader.Next(); err == nil {
 		t.Fatal("expected malformed payload error")
+	}
+}
+
+// newRetryClient returns a Client with fast, zero-delay retries for tests.
+func newRetryClient(t *testing.T, handler http.HandlerFunc) *Client {
+	t.Helper()
+	c := newTestClient(t, handler)
+	c.maxRetries = 2
+	c.backoff = func(int) time.Duration { return 0 }
+	return c
+}
+
+// TestStreamRetries429ThenSucceeds verifies the 429→200 backoff retry path
+// (dispatch-m2 §5; acceptance requires an httptest 429→200 case).
+func TestStreamRetries429ThenSucceeds(t *testing.T) {
+	var calls int
+	c := newRetryClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"error":"rate limited"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(sse(
+			`{"choices":[{"delta":{"content":"ok"},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+			"[DONE]",
+		)))
+	})
+
+	reader, err := c.Stream(context.Background(), llm.ChatRequest{})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	var text strings.Builder
+	for {
+		ev, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("next: %v", err)
+		}
+		if ev.Kind == llm.StreamTextDelta {
+			text.WriteString(ev.Text)
+		}
+	}
+	if text.String() != "ok" {
+		t.Fatalf("text = %q, want ok", text.String())
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2 (429 then 200)", calls)
+	}
+}
+
+// TestStreamDoesNotRetry4xx verifies auth/4xx errors are returned immediately
+// without retry (dispatch-m2 §5).
+func TestStreamDoesNotRetry4xx(t *testing.T) {
+	var calls int
+	c := newRetryClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	if _, err := c.Stream(context.Background(), llm.ChatRequest{}); err == nil {
+		t.Fatal("expected error on 401")
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1 (4xx must not retry)", calls)
+	}
+}
+
+// TestStreamRetries5xxExhausted verifies 5xx is retried maxRetries times and
+// then the last error is returned.
+func TestStreamRetries5xxExhausted(t *testing.T) {
+	var calls int
+	c := newRetryClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	if _, err := c.Stream(context.Background(), llm.ChatRequest{}); err == nil {
+		t.Fatal("expected error after retries exhausted")
+	}
+	if calls != 3 {
+		t.Fatalf("calls = %d, want 3 (initial + 2 retries)", calls)
+	}
+}
+
+// TestStreamRetryAbortsOnCancellation verifies a cancelled context aborts the
+// backoff wait instead of sleeping out the full delay.
+func TestStreamRetryAbortsOnCancellation(t *testing.T) {
+	var calls int
+	ctx, cancel := context.WithCancel(context.Background())
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		cancel() // cancel right after the first 429 so the backoff aborts
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	c.maxRetries = 5
+	c.backoff = func(int) time.Duration { return time.Hour } // would hang without cancellation
+	if _, err := c.Stream(ctx, llm.ChatRequest{}); err == nil {
+		t.Fatal("expected error")
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1 (retry aborted by cancellation)", calls)
 	}
 }

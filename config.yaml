@@ -1,0 +1,16 @@
+# Personal Agent runtime configuration.
+# All values shown are the defaults; an omitted field uses its default.
+# API keys are NEVER stored here — they only come from environment variables.
+
+# Chat model to use.
+model: deepseek-chat
+
+# Optional OpenAI-compatible base URL. Empty means the provider default
+# (https://api.deepseek.com).
+base_url: ""
+
+# Directory for runtime data (the session database pa.db lives here).
+data_dir: data
+
+# Directory of prompt section files (see config/prompts/README.md).
+prompts_dir: config/prompts

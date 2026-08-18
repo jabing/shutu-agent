@@ -19,6 +19,10 @@ import (
 // Tool is one capability the agent can invoke.
 type Tool interface {
 	Name() string
+	// Description is a short human-readable summary of what the tool does. It
+	// feeds the prompt's automatic tool catalog (design.md §7) and the
+	// model-facing request schema.
+	Description() string
 	Schema() map[string]any // JSON Schema of the arguments; also sent to the model
 	Execute(ctx context.Context, args json.RawMessage) (string, error)
 }
@@ -72,8 +76,9 @@ func (r *Registry) Specs() []llm.ToolSchema {
 	specs := make([]llm.ToolSchema, 0, len(names))
 	for _, name := range names {
 		specs = append(specs, llm.ToolSchema{
-			Name:       name,
-			Parameters: r.tools[name].Schema(),
+			Name:        name,
+			Description: r.tools[name].Description(),
+			Parameters:  r.tools[name].Schema(),
 		})
 	}
 	return specs
