@@ -47,9 +47,9 @@ type Loop struct {
 	prompt  *prompt.Builder
 	model   string
 	recall  func(context.Context, string) []llm.Message // M4b hook, kept as the first injector
-	preStep []PreStepInjector                            // additional injectors, in registration order
-	onText  func(string)                                 // optional sink for streamed assistant text (REPL)
-	onError func(error)                                  // optional sink for stream errors (REPL)
+	preStep []PreStepInjector                           // additional injectors, in registration order
+	onText  func(string)                                // optional sink for streamed assistant text (REPL)
+	onError func(error)                                 // optional sink for stream errors (REPL)
 }
 
 // Config wires the loop's dependencies. All fields are required except the
