@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
 
 	"personal-agent/internal/llm"
 	"personal-agent/internal/prompt"
@@ -21,6 +22,23 @@ import (
 // model cannot loop forever.
 const maxSteps = 10
 
+// maxInjectorChars bounds the total context text a single pre-step injector may
+// contribute to the first request of a turn (ADR 2026-08-18-m5-agent-core.md
+// 总体决策: pre_step.max_chars_per_injector, default 4000). Over-budget context
+// is truncated UTF-8-safely (fail-open: it can never block the answer).
+const maxInjectorChars = 4000
+
+// PreStepInjector is one registered pre-step context injector (ADR 2026-08-18
+// -m5-agent-core.md 总体决策: the unified pre-step injection extension point that
+// supersedes the single M4b Recall hook). Inject is called once per turn —
+// after user/message is appended, before the first step's model request — and
+// returns extra context messages injected into that first request only.
+// tool-call follow-up steps never re-carry the injected context.
+type PreStepInjector struct {
+	Name   string // informational (logging/config); not a registration key
+	Inject func(ctx context.Context, userText string) []llm.Message
+}
+
 // Loop drives one conversation turn against the session log.
 type Loop struct {
 	llm     llm.LLM
@@ -28,9 +46,10 @@ type Loop struct {
 	tools   *tools.Registry
 	prompt  *prompt.Builder
 	model   string
-	recall  func(context.Context, string) []llm.Message
-	onText  func(string) // optional sink for streamed assistant text (REPL)
-	onError func(error)  // optional sink for stream errors (REPL)
+	recall  func(context.Context, string) []llm.Message // M4b hook, kept as the first injector
+	preStep []PreStepInjector                            // additional injectors, in registration order
+	onText  func(string)                                 // optional sink for streamed assistant text (REPL)
+	onError func(error)                                  // optional sink for stream errors (REPL)
 }
 
 // Config wires the loop's dependencies. All fields are required except the
@@ -42,13 +61,22 @@ type Config struct {
 	Prompt *prompt.Builder
 	Model  string
 	// Recall, if set, is the proactive knowledge recall extension point
-	// (design.md §8, D4: new features hang on extension points). It is called
-	// once at the start of each turn — after user/message is appended, before
-	// the first step's model request — and returns extra context messages
-	// injected into that first request only. The recall orchestration (query,
-	// KB.Recall, fail-open, kb/recall logging) lives entirely in cmd/pa; the
-	// loop just injects what it returns. The turn/step structure is unchanged.
+	// (design.md §8, D4: new features hang on extension points). It is the
+	// first pre-step injector ("recall", ADR 2026-08-18-m5-agent-core.md 总体
+	// 决策): called once at the start of each turn — after user/message is
+	// appended, before the first step's model request — and returns extra
+	// context messages injected into that first request only. The recall
+	// orchestration (query, KB.Recall, fail-open, kb/recall logging) lives
+	// entirely in cmd/pa; the loop just injects what it returns. Kept for
+	// backward compatibility with M4b; when both Recall and PreStep are set,
+	// Recall runs first and PreStep follows. The turn/step structure is
+	// unchanged.
 	Recall func(ctx context.Context, userText string) []llm.Message
+	// PreStep registers additional pre-step context injectors beyond Recall
+	// (ADR 2026-08-18-m5-agent-core.md 总体决策). Each injector runs once per
+	// turn, in registration order after Recall, with its returned context
+	// bounded to maxInjectorChars; a panicking injector is skipped (fail-open).
+	PreStep []PreStepInjector
 	// OnText, if set, is called with each streamed assistant text delta.
 	OnText func(string)
 	// OnError, if set, is called when a step's stream fails after start.
@@ -64,6 +92,7 @@ func New(cfg Config) *Loop {
 		prompt:  cfg.Prompt,
 		model:   cfg.Model,
 		recall:  cfg.Recall,
+		preStep: append([]PreStepInjector(nil), cfg.PreStep...),
 		onText:  cfg.OnText,
 		onError: cfg.OnError,
 	}
@@ -76,11 +105,15 @@ func (l *Loop) Run(ctx context.Context, userText string) error {
 	if _, err := l.log.Append(session.EventUserMessage, session.NewUserMessage(userText)); err != nil {
 		return err
 	}
-	// The recall context is computed once per turn and applied to the first
-	// request only (dsh-knowledge gates its pre-step recall on step === 1).
+	// The pre-step context is collected once per turn and applied to the first
+	// request only (the step === 1 gate below is unchanged): Recall (M4b) runs
+	// first as the "recall" injector, then the registered PreStep injectors in
+	// order. Each injector's contribution is bounded to maxInjectorChars and a
+	// panicking injector is skipped (fail-open), so a misbehaving injector can
+	// never block the answer or blow up the first request.
 	var contextMsgs []llm.Message
-	if l.recall != nil {
-		contextMsgs = l.recall(ctx, userText)
+	for _, inj := range l.effectiveInjectors() {
+		contextMsgs = append(contextMsgs, l.safeInject(inj, ctx, userText)...)
 	}
 	for step := 0; step < maxSteps; step++ {
 		if err := ctx.Err(); err != nil {
@@ -93,9 +126,75 @@ func (l *Loop) Run(ctx context.Context, userText string) error {
 		if done {
 			return nil
 		}
-		contextMsgs = nil // only the turn's first request carries the recall
+		contextMsgs = nil // only the turn's first request carries the pre-step context
 	}
 	return fmt.Errorf("loop: exceeded %d steps per turn", maxSteps)
+}
+
+// effectiveInjectors returns the ordered pre-step injector list for one turn:
+// the M4b Recall hook first (as "recall", kept for backward compatibility),
+// then the registered PreStep injectors in order. Building it per turn lets the
+// composition root swap the Recall hook between turns. A nil Recall hook
+// contributes no injector.
+func (l *Loop) effectiveInjectors() []PreStepInjector {
+	var out []PreStepInjector
+	if l.recall != nil {
+		out = append(out, PreStepInjector{Name: "recall", Inject: l.recall})
+	}
+	out = append(out, l.preStep...)
+	return out
+}
+
+// safeInject calls one injector and bounds its contribution, containing a
+// panic so a throwing injector is skipped (fail-open) instead of aborting the
+// turn.
+func (l *Loop) safeInject(inj PreStepInjector, ctx context.Context, userText string) (msgs []llm.Message) {
+	if inj.Inject == nil {
+		return nil
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			msgs = nil
+		}
+	}()
+	return truncateInjectorContext(inj.Inject(ctx, userText))
+}
+
+// truncateInjectorContext bounds the total context text one injector may
+// contribute to maxInjectorChars runes (config pre_step.max_chars_per_injector,
+// default 4000): messages are kept in registration order until the budget is
+// exhausted, the message that overflows is truncated UTF-8-safely, and the rest
+// are dropped. Over-budget context never blocks the answer (fail-open).
+func truncateInjectorContext(msgs []llm.Message) []llm.Message {
+	budget := maxInjectorChars
+	keep := len(msgs)
+	for i := range msgs {
+		n := utf8.RuneCountInString(msgs[i].Content)
+		if n > budget {
+			if budget <= 0 {
+				keep = i
+				break
+			}
+			msgs[i].Content = truncateRunes(msgs[i].Content, budget)
+			keep = i + 1
+			break
+		}
+		budget -= n
+	}
+	return msgs[:keep]
+}
+
+// truncateRunes shortens s to at most max runes, never splitting a UTF-8
+// sequence (mirrors internal/jobs/local.go's truncateUTF8, but counts runes).
+func truncateRunes(s string, max int) string {
+	if max <= 0 || len(s) == 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max])
 }
 
 // step performs one model request and its tool executions. It returns
