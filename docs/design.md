@@ -44,7 +44,11 @@ personal-agent/
 │   ├── prompt/               # 系统提示词分节组装（persona / skills / 能力声明）
 │   ├── loop/                 # agent 循环（turn = 0..N step）
 │   ├── store/                # 持久化抽象 + sqlite 实现（M2）；事件追加、版本号字段
-│   └── kb/                   # 知识库能力（M4）：service + sqlite provider + kb_* 工具 + 提取回写
+│   ├── kb/                   # 知识库能力（M4）：service + sqlite provider + kb_* 工具 + 提取回写
+│   ├── jobs/                 # 后台任务（M5a）：owner-fenced job 注册表 + 本地实现 + job_* 工具
+│   ├── subagent/             # 子代理（M5b）：provider 注册表 + spawn 实现 + 委托/控制/报告工具
+│   ├── compaction/           # 上下文压缩（M5c）：压缩接缝 + 摘要 provider + /compact
+│   └── skill/                # 技能（M5d）：provider 注册表 + 文件系统发现 + skill 加载工具
 ├── docs/
 │   ├── design.md             # 本文件（设计基线）
 │   └── decisions/            # 决策记录 ADR：YYYY-MM-DD-<slug>.md
@@ -69,6 +73,7 @@ type Event struct {
 
 - **v1 事件类型**：`user/message`、`assistant/chunk`（流式保真）、`assistant/message`、`tool/result`、`tool/error`。
 - **M4 增加**：`kb/recall`（主动召回注入）、`kb/extract`（提取回写结果）、`kb/add`（显式写入）。
+- **M5 增加**（参照 dsh 四个能力族，ADR `2026-08-18-m5-agent-core.md`）：`job/start|status|done`（后台任务）、`subagent/start|end|report`（子代理）、`compaction/start|summary|end|prune`（上下文压缩，摘要本身作为带 `surfaceOp: replace` 的 `user/message` 遮蔽旧范围）、`skill/catalog|load`（技能目录与加载）。全部 log-only，`DeriveHistory` 视为不透明数据（compaction 除外：其为派生规则输入，折叠时跳过被遮蔽 seq）。
 - **新输入 ⇒ 新事件类型**，绝不在内存里拼 prompt 而不记录。
 - `DeriveHistory() []llm.Message` 是纯函数：从日志折叠出模型历史；未来加过滤（如截断/压缩）只改折叠规则。
 - 持久化 = 追加写入（SQLite 单表或 JSONL），启动时重放重建内存日志。事件类型带 `Version` 字段预留迁移。
@@ -93,6 +98,8 @@ turn/end
 ```
 
 循环只做这一件事。**任何产品功能都不得修改此结构**（防漂移 D4）。
+
+**pre-step 扩展点（M5 起）**：`loop.Config.PreStep` 是可注册多个注入器的钩子，在 `user/message` 追加后、首个 step 请求前调用，返回值（如召回上下文、子代理/技能目录）仅注入首个请求。M4b 的 `Config.Recall`（kb 主动召回）是它的首个消费者，M5b/M5d 的子代理目录与技能目录随后接入。turn/step 结构零改动（D4），扩展点预算有界、fail-open。
 
 ---
 
@@ -195,8 +202,8 @@ kb 能力 = 三部分（严格对应 seam 结构）：
 | D1 | 会话 = 追加式事件日志；历史是派生值 | 直接持久化 messages 数组 | 出现性能瓶颈且测得为日志折叠时 |
 | D2 | 新能力 = Service/Provider/Tool 三件套 | 在循环里 `if kb {...}` | 永不允许 |
 | D3 | 模型可见 ⇒ 已落日志；新输入 ⇒ 新事件类型 | 内存拼 prompt 不记录 | 永不允许 |
-| D4 | 薄核心；v1 用 Go 接口+注册表，无插件系统 | 引入插件框架/事件总线 | M5 有明确需求时 |
-| D5 | 循环串行同步；并发/后台任务推迟 | 提前上 goroutine 编排 | M5，且有明确用例（子代理/任务） |
+| D4 | 薄核心；v1 用 Go 接口+注册表，无插件系统；新功能挂扩展点（M5 起：`Config.PreStep` 统一 pre-step 注入器） | 引入插件框架/事件总线 | 永不允许 |
+| D5 | 循环串行同步；后台任务/子代理走 `internal/jobs` owner-fenced 注册表（受控并发，M5a 落地） | 把并发直接编排进主循环 turn/step | M5 已落地（ADR `2026-08-18-m5-agent-core.md` 决策 ①），持续保持主循环串行 |
 | D6 | LLM 适配器第一天支持 SSE 流式 | 先整块响应后补流式 | 永不允许（返工成本极高） |
 | D7 | 工具参数 Execute 前统一 JSON Schema 校验 | 各工具自行解析裸 JSON | 永不允许 |
 | D8 | store 接口抽象，SQLite 后端；事件带版本号 | 代码里直接写死文件格式 | 无，接口已预留 |
@@ -213,7 +220,7 @@ kb 能力 = 三部分（严格对应 seam 结构）：
 | M2 | 持久化 + 多会话 + 提示词组装 + 配置 | 3–5 天 | 重启可恢复会话；新增事件类型不改历史结构 |
 | M3 | 安全白名单 + 超时/输出截断 + CLI 完善（Web 可选） | ~1 周 | 工具仅白名单内可执行；取消即时生效 |
 | M4 | 知识库能力（拆三段：M4a 内核 → M4b 工具与召回 → M4c 提取回写） | 1–2 周 | 对话产生可复用知识能被提取并检索引用（含中文）；显式 `kb_add` 可写；`kb_search`/`kb_read`/`kb/recall`/`kb/extract`/`kb/add` 落日志；换 Provider 不改消费方 |
-| M5 | 远期可选：子代理、后台任务、压缩、技能、插件评估 | 按需 | 每个都有独立决策记录 |
+| M5 | 核心能力四段（ADR `2026-08-18-m5-agent-core.md`）：M5a 后台任务 → M5b 子代理 → M5c 上下文压缩 → M5d 技能 | 按四段逐段验收 | 四段各自验收标准（见各 dispatch 文档）全部达标才算 M5 完成 |
 
 ---
 

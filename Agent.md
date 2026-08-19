@@ -24,7 +24,7 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 
 ## 3. 当前状态
 
-**2026-08-18**：M3 完成并通过验收（提交 `1dda2ed`，ADR `2026-08-18-m3-sandbox-scope`）。M4 知识库**三段全部完成并通过验收**：M4a 内核（`682f07e`）、M4b 工具与召回（`bdd903d`）、M4c 提取回写（`5e98fa7`）。方向：**参照 dsh-knowledge（已下载 `../dsh-knowledge`，FTS5 全文检索 + 提取回写，非向量 RAG，方案已实测）**，调研见 `docs/research-m4-kb.md`，派发见 `docs/dispatch-m4a/b/c.md`，ADR `2026-08-18-m4-kb-architecture.md` 完整定稿七项决策。**下一步：M5 远期按需**（子代理/后台任务/压缩/技能，先决策后实现）。
+**2026-08-18**：M3 完成并通过验收（提交 `1dda2ed`，ADR `2026-08-18-m3-sandbox-scope`）。M4 知识库**三段全部完成并通过验收**：M4a 内核（`682f07e`）、M4b 工具与召回（`bdd903d`）、M4c 提取回写（`5e98fa7`）。方向：**参照 dsh-knowledge（已下载 `../dsh-knowledge`，FTS5 全文检索 + 提取回写，非向量 RAG，方案已实测）**，调研见 `docs/research-m4-kb.md`，派发见 `docs/dispatch-m4a/b/c.md`，ADR `2026-08-18-m4-kb-architecture.md` 完整定稿七项决策。**下一步：M5 核心能力四段**（用户拍板"必须、先实现"；ADR `2026-08-18-m5-agent-core.md` 已定稿）：M5a 后台任务 → M5b 子代理 → M5c 上下文压缩 → M5d 技能，逐段派发验收。
 
 ## 4. 路线图
 
@@ -38,7 +38,11 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 | **M4b 工具与召回** | `kb_search`/`kb_read`/`kb_add` 工具（默认关）+ `cmd/pa` 召回注入（catalog + 有界 recall）+ `/kb-status` `/kb-reindex` + `kb/add` 事件 | 工具默认关闭且参数校验；注入走 `kb/recall` 落日志；fail-open | ✅ 2026-08-18 验收通过（`bdd903d`） |
 | **M4c 提取回写** | `KB.Extract`（幂等 `session:turn`、严格 JSON fail-closed、不阻断回答）+ `kb/extract` 事件 + config；补 ADR | 对话产生可复用知识能被提取写入并被后续检索；坏输出 fail-closed | ✅ 2026-08-18 验收通过（`5e98fa7`） |
 | **M4 知识库**（三段） | 拆为 M4a/b/c 依次验收 | 全部达标才算 M4 完成 | ✅ 三段全部完成 |
-| **M5 远期（按需）** | 子代理、后台任务、上下文压缩、技能分节、插件化评估 | 每个功能先有决策记录 | ⬜ |
+| **M5 核心能力**（四段，ADR `2026-08-18-m5-agent-core.md`） | 拆为 M5a/b/c/d 依次验收 | 全部达标才算 M5 完成 | ⬜ 已定稿 ADR，派发中 |
+| **M5a 后台任务** | `jobs` 接口（owner-fenced 注册表）+ 本地实现 + `job_*` 工具 + `job/*` 事件 + config | 后台工作可观察/取消/等待/通知；owner 隔离；主循环保持串行；默认关闭 | ⬜ |
+| **M5b 子代理** | `subagent` 接口（多 Provider 注册表）+ spawn 实现 + 委托/控制/报告工具 + `subagent/*` 事件 + config | 子代理独立会话日志可回放；结果回传父会话；后台续跑走 job；默认关闭 | ⬜ |
+| **M5c 上下文压缩** | `compaction` 接缝 + 摘要 provider + tool-result 剪枝 + `/compact` + `compaction/*` 事件 | 超预算触发压缩；摘要遮蔽旧范围且日志仍追加式；tool-call/result 配对不被切断；默认关闭 | ⬜ |
+| **M5d 技能** | `skill` 接口（多 Provider 注册表）+ 文件系统发现 + 目录注入 + `skill` 加载工具 + `skill/*` 事件 + config | 目录注入有界；按需加载完整正文；默认关闭 | ⬜ |
 
 ## 5. 开发纪律（每轮工作前过一遍）
 
@@ -70,7 +74,7 @@ go run ./cmd/pa       # 启动 REPL（M1 后可用，需 DEEPSEEK_API_KEY）
 
 **流程**：
 
-1. **交接**：控制会话把开场白模板（见下）发给实施会话，指定里程碑；各里程碑的完整派发消息存于 `docs/dispatch-*.md`（最新：`docs/dispatch-m4a.md` → `docs/dispatch-m4b.md` → `docs/dispatch-m4c.md` 依序派发；历史：`docs/dispatch-m3.md`、`docs/dispatch-m2.md`）。
+1. **交接**：控制会话把开场白模板（见下）发给实施会话，指定里程碑；各里程碑的完整派发消息存于 `docs/dispatch-*.md`（最新：`docs/dispatch-m5a.md` → `dispatch-m5b.md` → `dispatch-m5c.md` → `dispatch-m5d.md` 依序派发；历史：`docs/dispatch-m4a/b/c.md`、`docs/dispatch-m3.md`、`docs/dispatch-m2.md`）。
 2. **实施**：实施会话按 design.md 实现，自测通过后提交，并报告：改动文件清单、实现决策、跑过的命令、测试结果。
 3. **验收**：控制会话亲自跑 `go build` / `go test` / `go vet`，审查 `git diff`，对照 D1–D10 逐条检查（日志先行、工具入口校验、接口隔离、无循环改动、无越界功能）。
 4. **收尾**：通过 → 更新第 3/4 节状态 → 准备下一里程碑交接；不通过 → 把问题清单发回实施会话修订。
@@ -93,6 +97,7 @@ go run ./cmd/pa       # 启动 REPL（M1 后可用，需 DEEPSEEK_API_KEY）
 - dsh 会话日志：[`../deepseek-harness/docs/subsystems/session.md`](../deepseek-harness/docs/subsystems/session.md)
 - dsh 能力接缝：[`../deepseek-harness/docs/capability-seams.md`](../deepseek-harness/docs/capability-seams.md)
 - M4 参照插件（知识库，FTS5 + 提取回写）：[`../dsh-knowledge/`](../dsh-knowledge/)（[GitHub](https://github.com/lemoncat7/dsh-knowledge)）+ 调研 [`docs/research-m4-kb.md`](docs/research-m4-kb.md)
+- M5 参照四个能力族：[`../deepseek-harness/packages/jobs/`](../deepseek-harness/packages/jobs/)、[`../deepseek-harness/packages/subagent/`](../deepseek-harness/packages/subagent/)、[`../deepseek-harness/packages/compaction/`](../deepseek-harness/packages/compaction/)、[`../deepseek-harness/packages/skill/`](../deepseek-harness/packages/skill/) + 子系统文档 [`docs/subsystems/{jobs,subagent,compaction,skills}.md`](../deepseek-harness/docs/subsystems/jobs.md)；M5 主 ADR `docs/decisions/2026-08-18-m5-agent-core.md`
 
 ### 源码参考（`../deepseek-harness/packages/`）
 
@@ -107,3 +112,7 @@ go run ./cmd/pa       # 启动 REPL（M1 后可用，需 DEEPSEEK_API_KEY）
 | `llm` | `llm/llm/` + `llm/llm-deepseek/` | 适配器接口、流式、DeepSeek 实现 |
 | `store`（M2） | `session/session-persistence*` | 持久化与重放 |
 | `kb`（M4） | `../dsh-knowledge/src/`（domain/local-provider/retrieval/extraction/tools/recall）+ `web/`（seam 三件套模板） | 知识条目模型、FTS5 检索 + 中文二元组兜底、提取回写、能力接缝的包划分 |
+| `jobs`（M5a） | `../deepseek-harness/packages/jobs/{jobs,jobs-local,tool-jobs}/` | owner-fenced 后台任务注册表、生命周期契约、模型侧控制工具 |
+| `subagent`（M5b） | `../deepseek-harness/packages/subagent/{subagent,subagent-spawn-in-process,tool-subagent,tool-subagent-control,tool-subagent-report}/` | Provider 注册表、委托/控制/报告、子代理会话 |
+| `compaction`（M5c） | `../deepseek-harness/packages/compaction/{compaction,compaction-basic,compaction-tool-result-pruner,command-compact}/` | 压缩接缝、摘要 provider、tool-result 剪枝、人工命令 |
+| `skill`（M5d） | `../deepseek-harness/packages/skill/{skill,skill-filesystem,tool-skill}/` | 技能 provider 注册表、文件系统发现、目录/加载工具 |
