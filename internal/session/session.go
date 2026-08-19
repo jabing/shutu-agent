@@ -42,6 +42,19 @@ const (
 	EventJobStart  = "job/start"
 	EventJobStatus = "job/status"
 	EventJobDone   = "job/done"
+
+	// M5b subagent events (design.md §3 / ADR 2026-08-18-m5-agent-core.md
+	// 决策 ② / dispatch-m5b-2 §1): subagent/start lands when a delegation
+	// registers successfully, subagent/end when a child settles (observed on
+	// the serial tool path, exactly once per child), subagent/report for an
+	// explicit child→parent report. They are log-only (D3): the model sees
+	// subagent state/output through the subagent_* tools' tool/result events,
+	// and DeriveHistory treats these types as opaque data, so adding them
+	// never changes the turn/step structure (D4). The payloads are pure data
+	// projections — the session package never imports the subagent package.
+	EventSubagentStart  = "subagent/start"
+	EventSubagentEnd    = "subagent/end"
+	EventSubagentReport = "subagent/report"
 )
 
 // EventVersion is the current event vocabulary version. It is stored per event
@@ -371,7 +384,8 @@ func NewJobDone(id, status, detail, output string) any {
 
 // summaryHead returns a bounded, whitespace-compacted head of s for a log
 // summary (mirrors kb.Snippet's bound; kept here so the session package owns
-// the on-disk bound it serializes).
+// the on-disk bound it serializes). It is shared by job/done and subagent/end
+// (both bounded to 200 runes, dispatch-m5a-2 §1 / dispatch-m5b-2 §1).
 func summaryHead(s string) string {
 	compact := strings.Join(strings.Fields(s), " ")
 	runes := []rune(compact)
@@ -379,4 +393,54 @@ func summaryHead(s string) string {
 		return string(runes[:jobOutputSummaryMax]) + "…"
 	}
 	return compact
+}
+
+// subagentStartData is the subagent/start payload: the provider-issued child
+// session id, the provider name, the delegating parent session, and the
+// delegation label. DeriveHistory treats it as opaque data.
+type subagentStartData struct {
+	ID            string `json:"id"`
+	Provider      string `json:"provider"`
+	ParentSession string `json:"parentSession,omitempty"`
+	Label         string `json:"label,omitempty"`
+}
+
+// subagentEndData is the subagent/end payload: a terminal settle (stop reason
+// from the subagent vocabulary: completed | aborted | error | max-tokens |
+// refusal) plus a bounded output summary — the full output the model reads
+// through subagent_status' tool/result. DeriveHistory treats it as opaque
+// data.
+type subagentEndData struct {
+	ID            string `json:"id"`
+	Provider      string `json:"provider"`
+	StopReason    string `json:"stopReason"`
+	OutputSummary string `json:"outputSummary,omitempty"`
+}
+
+// subagentReportData is the subagent/report payload: an explicit child→parent
+// report (child session id + delegating parent session + report content).
+// DeriveHistory treats it as opaque data.
+type subagentReportData struct {
+	ID            string `json:"id"`
+	ParentSession string `json:"parentSession,omitempty"`
+	Content       string `json:"content"`
+}
+
+// NewSubagentStart builds the subagent/start payload recorded when a
+// delegation registers successfully (dispatch-m5b-2 §1 / D3).
+func NewSubagentStart(childID, provider, parentSessionID, label string) any {
+	return subagentStartData{ID: childID, Provider: provider, ParentSession: parentSessionID, Label: label}
+}
+
+// NewSubagentEnd builds the subagent/end payload recorded when a child settles
+// (dispatch-m5b-2 §1 / D3). output is bounded to a summary head (200 runes,
+// the same on-disk bound as job/done) so the payload is always lean.
+func NewSubagentEnd(childID, provider, stopReason, outputSummary string) any {
+	return subagentEndData{ID: childID, Provider: provider, StopReason: stopReason, OutputSummary: summaryHead(outputSummary)}
+}
+
+// NewSubagentReport builds the subagent/report payload recorded when a child
+// explicitly reports to its parent session (dispatch-m5b-2 §1 / D3).
+func NewSubagentReport(childID, parentSessionID, content string) any {
+	return subagentReportData{ID: childID, ParentSession: parentSessionID, Content: content}
 }

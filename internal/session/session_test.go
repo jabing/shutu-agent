@@ -465,3 +465,87 @@ func TestJobEventsAppendAndReplay(t *testing.T) {
 		t.Fatalf("job/* events must not derive into messages: %+v", msgs)
 	}
 }
+
+// TestSubagentEventsAppendAndReplay verifies the M5b subagent/* event types
+// (subagent/start, subagent/end, subagent/report — dispatch-m5b-2 §1 / D3):
+// each appends with the right vocabulary, survives the JSON round-trip and
+// restart replay, and stays opaque to history derivation (subagent state is
+// surfaced to the model through the subagent_* tools' tool/result, not through
+// these log-only events).
+func TestSubagentEventsAppendAndReplay(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	if _, err := l.Append(EventSubagentStart, NewSubagentStart("spawn-1", "spawn", "s-abc", "researcher")); err != nil {
+		t.Fatalf("append subagent/start: %v", err)
+	}
+	if _, err := l.Append(EventSubagentEnd, NewSubagentEnd("spawn-1", "spawn", "completed", strings.Repeat("very long output ", 50))); err != nil {
+		t.Fatalf("append subagent/end: %v", err)
+	}
+	if _, err := l.Append(EventSubagentReport, NewSubagentReport("spawn-1", "s-abc", "done researching")); err != nil {
+		t.Fatalf("append subagent/report: %v", err)
+	}
+	events := l.Events()
+	if len(events) != 3 {
+		t.Fatalf("events = %d, want 3", len(events))
+	}
+	if events[0].Type != EventSubagentStart || events[1].Type != EventSubagentEnd || events[2].Type != EventSubagentReport {
+		t.Fatalf("types = %q/%q/%q", events[0].Type, events[1].Type, events[2].Type)
+	}
+	for i, ev := range events {
+		if ev.Version != EventVersion {
+			t.Fatalf("event %d version = %d, want %d", i, ev.Version, EventVersion)
+		}
+	}
+	// JSON round-trip of each payload.
+	var st subagentStartData
+	if err := json.Unmarshal(events[0].Data, &st); err != nil {
+		t.Fatalf("unmarshal subagent/start: %v", err)
+	}
+	if st.ID != "spawn-1" || st.Provider != "spawn" || st.ParentSession != "s-abc" || st.Label != "researcher" {
+		t.Fatalf("subagent/start payload = %+v", st)
+	}
+	var se subagentEndData
+	if err := json.Unmarshal(events[1].Data, &se); err != nil {
+		t.Fatalf("unmarshal subagent/end: %v", err)
+	}
+	if se.ID != "spawn-1" || se.Provider != "spawn" || se.StopReason != "completed" {
+		t.Fatalf("subagent/end payload = %+v", se)
+	}
+	// The output summary must be bounded (dispatch-m5b-2 §1: 输出只记摘要，有界
+	// 200 rune).
+	if got := len([]rune(se.OutputSummary)); got > jobOutputSummaryMax+1 {
+		t.Fatalf("subagent/end summary = %d runes, want <= %d+ellipsis", got, jobOutputSummaryMax)
+	}
+	if !strings.Contains(se.OutputSummary, "very long output") {
+		t.Fatalf("subagent/end summary = %q, want it to carry the output head", se.OutputSummary)
+	}
+	var sr subagentReportData
+	if err := json.Unmarshal(events[2].Data, &sr); err != nil {
+		t.Fatalf("unmarshal subagent/report: %v", err)
+	}
+	if sr.ID != "spawn-1" || sr.ParentSession != "s-abc" || sr.Content != "done researching" {
+		t.Fatalf("subagent/report payload = %+v", sr)
+	}
+	if len(persisted) != 3 || persisted[0].Type != EventSubagentStart {
+		t.Fatalf("sink (append path) = %+v", persisted)
+	}
+	// Restart replay: a fresh log rebuilt from what was persisted still sees
+	// every subagent event, and deriving history treats them all as opaque
+	// data.
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	for i, want := range []string{EventSubagentStart, EventSubagentEnd, EventSubagentReport} {
+		if got := fresh.Events()[i].Type; got != want {
+			t.Fatalf("replayed type %d = %q, want %q", i, got, want)
+		}
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
+		t.Fatalf("subagent/* events must not derive into messages: %+v", msgs)
+	}
+}
