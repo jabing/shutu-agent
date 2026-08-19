@@ -31,6 +31,7 @@ import (
 	"personal-agent/internal/llm"
 	"personal-agent/internal/llm/deepseek"
 	"personal-agent/internal/loop"
+	"personal-agent/internal/mcp"
 	"personal-agent/internal/plan"
 	"personal-agent/internal/prompt"
 	"personal-agent/internal/schedule"
@@ -234,6 +235,27 @@ func main() {
 	if app.code != nil {
 		defer app.code.Close()
 	}
+	// M6f-2: wire the MCP tool-ecosystem seam — stdio Factory + the
+	// mcp_list/mcp_call tools + per-server tool bridging (mcp.<server>.<tool>)
+	// + the D3 event sink — when mcp.enabled (默认关闭, D10). config.
+	// applyDefaults already whitelisted mcp_list/mcp_call when mcp.enabled was
+	// true; bridged names are whitelisted as each server tool is registered.
+	// registerMcps runs before registerInteracts so the sensitive-tool gate can
+	// wrap the mcp tools too. The deferred Close terminates every bridged
+	// server at shutdown (lifecycle reversible, ADR 决策 M6f). Bridging and the
+	// mcp_* tools execute on the serial tool path (D5) — no background
+	// goroutine.
+	if err := app.registerMcps(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
+	if len(app.mcp) > 0 {
+		defer func() {
+			for _, c := range app.mcp {
+				_ = c.Close()
+			}
+		}()
+	}
 	// M6d-2: wire the interact seam — in-memory Provider + Engine + the two
 	// interact_* tools + the D3 event sink + the sensitive-tool gate — when
 	// interact.enabled (默认关闭, D10). config.applyDefaults already whitelisted
@@ -278,12 +300,18 @@ type app struct {
 	spills     spill.Engine      // nil when spill disabled (D10)
 	interacts  interact.Engine   // nil when interact disabled (D10)
 	code       code.Engine       // nil when code disabled (D10)
+	mcp        []mcp.Client      // nil when mcp disabled (D10); one live bridged client per configured server
 
 	// approveInput feeds the sensitive-tool gate's y/n read (nil => os.Stdin).
 	// It exists so the wiring tests can inject canned approval answers; in the
 	// REPL the gate reads the user's answer directly from the terminal on the
 	// serial path (D5).
 	approveInput io.Reader
+
+	// mcpFactory builds MCP clients for the mcp_* tools and the server bridge;
+	// nil uses mcp.NewStdioFactory(). It exists so the wiring tests can inject
+	// a fake factory pointed at an in-memory fake server.
+	mcpFactory mcp.Factory
 
 	// skillProjectRoot / skillUserHome override the filesystem skill provider's
 	// project/user roots when non-empty; empty uses the provider defaults (the
@@ -540,6 +568,15 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 			a.cfg.Code.Timeout.Duration, a.cfg.Code.MaxOutput, a.cfg.Code.SandboxDir, a.cfg.Code.AllowNetwork)
 	} else {
 		fmt.Println("code sandbox: disabled (code.enabled=false)")
+	}
+	if a.cfg.Mcp.Enabled {
+		if len(a.cfg.Mcp.Servers) > 0 {
+			fmt.Printf("mcp: enabled (servers: %s)\n", mcpServerNames(a.cfg.Mcp.Servers))
+		} else {
+			fmt.Println("mcp: enabled (no servers — mcp_list/mcp_call only)")
+		}
+	} else {
+		fmt.Println("mcp: disabled (mcp.enabled=false)")
 	}
 }
 

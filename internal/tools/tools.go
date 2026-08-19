@@ -97,6 +97,20 @@ func (r *Registry) SetGate(gate func(ctx context.Context, name string, args json
 	r.gate = gate
 }
 
+// Allow adds names to the policy whitelist after it was installed. The
+// composition root uses it for dynamically discovered tool names that cannot
+// be known at config time — the MCP server tools bridged as mcp.<server>.<tool>
+// (M6f-2 §4). Idempotent for names already whitelisted; empty names are
+// ignored.
+func (r *Registry) Allow(names ...string) {
+	for _, name := range names {
+		if name == "" || r.policy.Allows(name) {
+			continue
+		}
+		r.policy.Enabled = append(r.policy.Enabled, name)
+	}
+}
+
 // Register adds a tool. A duplicate name is rejected. The argument schema is
 // compiled once at registration so Execute has no per-call compile cost.
 func (r *Registry) Register(t Tool) error {

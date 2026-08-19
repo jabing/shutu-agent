@@ -238,7 +238,7 @@ func (t McpCallTool) Execute(ctx context.Context, args json.RawMessage) (string,
 	// server reported a tool-level failure; the full content lives in the
 	// tool/result the loop logs.
 	t.t.emit(session.EventMcpCall, session.NewMcpCall(a.Tool, res.IsError))
-	return formatCallResult(res), nil
+	return FormatCallResult(res), nil
 }
 
 // formatToolList renders a tools/list result as model-facing text: the sorted
@@ -259,10 +259,12 @@ func formatToolList(tools []Tool) string {
 	return strings.TrimSuffix(sb.String(), "\n")
 }
 
-// formatCallResult renders a tools/call result as model-facing text: an
+// FormatCallResult renders a tools/call result as model-facing text: an
 // [isError] marker when the server reported a tool-level failure, then the
 // content items (each item's "text" when it is a text block, else its JSON).
-func formatCallResult(res CallResult) string {
+// It is shared by mcp_call and by cmd/pa's bridged mcp.<server>.<tool> tools so
+// a server tool's result reads identically through either path.
+func FormatCallResult(res CallResult) string {
 	var sb strings.Builder
 	if res.IsError {
 		sb.WriteString("[isError]\n")
