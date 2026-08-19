@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -547,5 +548,171 @@ func TestSubagentEventsAppendAndReplay(t *testing.T) {
 	}
 	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
 		t.Fatalf("subagent/* events must not derive into messages: %+v", msgs)
+	}
+}
+
+// M5c-1a compaction fold rule: a user/message carrying surfaceOp.replace
+// substitutes a summary for the shadowed surface range [Start, End] in the
+// derived history, while the shadowed events stay in the append-only log (D1).
+
+func TestDeriveHistoryReplaceFoldsSummaryPlusTail(t *testing.T) {
+	l := New()
+	// Shadowed surface: seqs 1-4 (an old exchange).
+	l.Append(EventUserMessage, NewUserMessage("old question"))
+	l.Append(EventAssistantMessage, NewAssistantMessage("old answer", nil, "stop"))
+	l.Append(EventUserMessage, NewUserMessage("old question 2"))
+	l.Append(EventAssistantMessage, NewAssistantMessage("old answer 2", nil, "stop"))
+	// Compaction summary marker appended after the shadowed range (D1).
+	l.Append(EventUserMessage, NewUserMessageReplace("summarized", 1, 4))
+	// Unshadowed tail continues after the compaction.
+	l.Append(EventUserMessage, NewUserMessage("new question"))
+	l.Append(EventAssistantMessage, NewAssistantMessage("new answer", nil, "stop"))
+
+	msgs := l.DeriveHistory()
+	if len(msgs) != 3 {
+		t.Fatalf("derived %d messages, want 3: %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "summarized" {
+		t.Fatalf("msg0 = %+v, want user summary", msgs[0])
+	}
+	if msgs[1].Role != llm.RoleUser || msgs[1].Content != "new question" {
+		t.Fatalf("msg1 = %+v, want unshadowed tail user", msgs[1])
+	}
+	if msgs[2].Role != llm.RoleAssistant || msgs[2].Content != "new answer" {
+		t.Fatalf("msg2 = %+v, want unshadowed tail assistant", msgs[2])
+	}
+	// D1: shadowed events are still physically in the log.
+	if got := len(l.Events()); got != 7 {
+		t.Fatalf("log events = %d, want 7 (append-only, shadowed events retained)", got)
+	}
+}
+
+func TestDeriveHistoryWithoutReplaceUnchanged(t *testing.T) {
+	l := New()
+	l.Append(EventUserMessage, NewUserMessage("a"))
+	l.Append(EventAssistantChunk, NewAssistantChunk("A"))
+	l.Append(EventAssistantMessage, NewAssistantMessage("A", nil, "stop"))
+	l.Append(EventUserMessage, NewUserMessage("b"))
+	l.Append(EventAssistantMessage, NewAssistantMessage("B", []llm.ToolCall{
+		{ID: "call_x", Name: "get_time", Arguments: `{}`},
+	}, "tool_calls"))
+	l.Append(EventToolResult, NewToolResult("call_x", "get_time", "12:00", nil))
+
+	want := []llm.Message{
+		{Role: llm.RoleUser, Content: "a"},
+		{Role: llm.RoleAssistant, Content: "A"},
+		{Role: llm.RoleUser, Content: "b"},
+		{Role: llm.RoleAssistant, Content: "B", ToolCalls: []llm.ToolCall{{ID: "call_x", Name: "get_time", Arguments: `{}`}}},
+		{Role: llm.RoleTool, ToolCallID: "call_x", Content: "12:00"},
+	}
+	if msgs := l.DeriveHistory(); !reflect.DeepEqual(msgs, want) {
+		t.Fatalf("derived = %+v, want %+v (no replace marker must not change folding)", msgs, want)
+	}
+}
+
+func TestDeriveHistoryReplaceShadowingMixedEvents(t *testing.T) {
+	l := New()
+	// Shadowed range spans user, assistant (with a tool call) and tool/result.
+	l.Append(EventUserMessage, NewUserMessage("read the file")) // 1
+	l.Append(EventAssistantMessage, NewAssistantMessage("", []llm.ToolCall{
+		{ID: "call_1", Name: "read_file", Arguments: `{"path":"/tmp/x"}`},
+	}, "tool_calls")) // 2
+	l.Append(EventToolResult, NewToolResult("call_1", "read_file", "file contents", nil)) // 3
+	l.Append(EventAssistantMessage, NewAssistantMessage("Here it is", nil, "stop"))       // 4
+	l.Append(EventUserMessage, NewUserMessageReplace("compacted 1-4", 1, 4))              // 5
+	l.Append(EventUserMessage, NewUserMessage("continue"))                                // 6
+	l.Append(EventAssistantMessage, NewAssistantMessage("continuing", nil, "stop"))       // 7
+
+	msgs := l.DeriveHistory()
+	if len(msgs) != 3 {
+		t.Fatalf("derived %d messages, want 3: %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "compacted 1-4" {
+		t.Fatalf("msg0 = %+v, want summary over mixed shadowed events", msgs[0])
+	}
+	if msgs[1].Role != llm.RoleUser || msgs[1].Content != "continue" {
+		t.Fatalf("msg1 = %+v, want tail user", msgs[1])
+	}
+	if msgs[2].Role != llm.RoleAssistant || msgs[2].Content != "continuing" {
+		t.Fatalf("msg2 = %+v, want tail assistant", msgs[2])
+	}
+}
+
+func TestDeriveHistoryReplaceEmptySummaryPreserved(t *testing.T) {
+	l := New()
+	l.Append(EventUserMessage, NewUserMessage("old"))                            // 1
+	l.Append(EventAssistantMessage, NewAssistantMessage("old reply", nil, "stop")) // 2
+	l.Append(EventUserMessage, NewUserMessageReplace("", 1, 2))                  // 3: empty summary text
+	l.Append(EventUserMessage, NewUserMessage("new"))                            // 4
+
+	msgs := l.DeriveHistory()
+	if len(msgs) != 2 {
+		t.Fatalf("derived %d messages, want 2: %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "" {
+		t.Fatalf("msg0 = %+v, want preserved empty summary user message", msgs[0])
+	}
+	if msgs[1].Role != llm.RoleUser || msgs[1].Content != "new" {
+		t.Fatalf("msg1 = %+v, want tail user", msgs[1])
+	}
+}
+
+func TestNewUserMessageReplaceJSONRoundTrip(t *testing.T) {
+	// surfaceOp serializes with the replace marker on the replace payload.
+	raw, err := json.Marshal(NewUserMessageReplace("summary", 2, 7))
+	if err != nil {
+		t.Fatalf("marshal replace payload: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal replace payload: %v", err)
+	}
+	if m["text"] != "summary" {
+		t.Fatalf("text = %v, want summary", m["text"])
+	}
+	so, ok := m["surfaceOp"].(map[string]any)
+	if !ok {
+		t.Fatalf("surfaceOp missing in %s", raw)
+	}
+	if so["op"] != "replace" || so["start"] != float64(2) || so["end"] != float64(7) {
+		t.Fatalf("surfaceOp = %+v, want {op:replace start:2 end:7}", so)
+	}
+
+	// NewUserMessage stays surfaceOp-free (omitempty, backward compatible).
+	plain, err := json.Marshal(NewUserMessage("hi"))
+	if err != nil {
+		t.Fatalf("marshal plain payload: %v", err)
+	}
+	var pm map[string]any
+	if err := json.Unmarshal(plain, &pm); err != nil {
+		t.Fatalf("unmarshal plain payload: %v", err)
+	}
+	if _, ok := pm["surfaceOp"]; ok {
+		t.Fatalf("plain user/message payload must not carry surfaceOp: %s", plain)
+	}
+
+	// surfaceOp deserializes back into the typed payload.
+	var d userMessageData
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatalf("unmarshal into userMessageData: %v", err)
+	}
+	if d.Text != "summary" || d.SurfaceOp == nil || d.SurfaceOp.Op != "replace" ||
+		d.SurfaceOp.Start != 2 || d.SurfaceOp.End != 7 {
+		t.Fatalf("userMessageData = %+v", d)
+	}
+
+	// Full round trip through Append + Restore: the persisted surfaceOp payload
+	// folds the shadowed range out after a restart replay.
+	l := New()
+	l.Append(EventUserMessage, NewUserMessage("x"))                            // 1
+	l.Append(EventAssistantMessage, NewAssistantMessage("y", nil, "stop"))     // 2
+	l.Append(EventUserMessage, NewUserMessageReplace("s", 1, 2))               // 3
+	fresh := New()
+	if err := fresh.Restore(l.Events()); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	msgs := fresh.DeriveHistory()
+	if len(msgs) != 1 || msgs[0].Role != llm.RoleUser || msgs[0].Content != "s" {
+		t.Fatalf("round-trip derived = %+v, want [user s]", msgs)
 	}
 }

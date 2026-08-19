@@ -156,46 +156,101 @@ func (l *Log) DeriveHistory() []llm.Message {
 }
 
 func derive(events []Event) []llm.Message {
-	var msgs []llm.Message
+	// tagged pairs each derived message with the Seq of the event it came from,
+	// so a compaction summary marker (user/message with surfaceOp.replace, M5c)
+	// can drop the messages derived from its shadowed seq range and substitute
+	// the summary in their place. Without such a marker the tagged pass rebuilds
+	// exactly the same []llm.Message as a plain pass (no-replace behavior is
+	// unchanged).
+	type tagged struct {
+		msg llm.Message
+		seq uint64
+	}
+	var out []tagged
+	var skipUntil uint64 // >0: also skip events whose Seq <= skipUntil (defensive forward skip)
 	for _, ev := range events {
+		if skipUntil != 0 && ev.Seq <= skipUntil {
+			continue
+		}
 		switch ev.Type {
 		case EventUserMessage:
 			var d userMessageData
 			if json.Unmarshal(ev.Data, &d) != nil {
 				continue
 			}
-			msgs = append(msgs, llm.Message{Role: llm.RoleUser, Content: d.Text})
+			if op := d.SurfaceOp; op != nil && op.Op == surfaceReplaceOp {
+				// The summary substitutes the shadowed surface range [Start, End].
+				// Its events precede this marker in the append-only log (seq is
+				// monotonic, so the marker's own Seq is > End), so drop the messages
+				// already derived from that range and put the summary where they
+				// began; then keep skipping any subsequent Seq in the range until
+				// Seq > End (contract M5c-1a). Only Seq comparison is used — the
+				// shadowed event contents are never parsed.
+				start, end := op.Start, op.End
+				if start >= 0 && end >= start {
+					first, last := -1, -1
+					for i, t := range out {
+						if s := int64(t.seq); s >= start && s <= end {
+							if first < 0 {
+								first = i
+							}
+							last = i
+						}
+					}
+					summary := llm.Message{Role: llm.RoleUser, Content: d.Text}
+					if first >= 0 {
+						head := out[:first]
+						tail := out[last+1:]
+						rebuilt := make([]tagged, 0, len(head)+1+len(tail))
+						rebuilt = append(rebuilt, head...)
+						rebuilt = append(rebuilt, tagged{msg: summary, seq: ev.Seq})
+						rebuilt = append(rebuilt, tail...)
+						out = rebuilt
+					} else {
+						out = append(out, tagged{msg: summary, seq: ev.Seq})
+					}
+					skipUntil = uint64(end)
+					continue
+				}
+				// malformed range (negative Start or End < Start): no shadowing,
+				// keep the message as a plain user turn.
+			}
+			out = append(out, tagged{msg: llm.Message{Role: llm.RoleUser, Content: d.Text}, seq: ev.Seq})
 		case EventAssistantMessage:
 			var d assistantMessageData
 			if json.Unmarshal(ev.Data, &d) != nil {
 				continue
 			}
-			msgs = append(msgs, llm.Message{
+			out = append(out, tagged{msg: llm.Message{
 				Role:      llm.RoleAssistant,
 				Content:   d.Text,
 				ToolCalls: d.ToolCalls,
-			})
+			}, seq: ev.Seq})
 		case EventToolResult:
 			var d toolResultData
 			if json.Unmarshal(ev.Data, &d) != nil {
 				continue
 			}
-			msgs = append(msgs, llm.Message{
+			out = append(out, tagged{msg: llm.Message{
 				Role:       llm.RoleTool,
 				ToolCallID: d.CallID,
 				Content:    d.Output,
-			})
+			}, seq: ev.Seq})
 		case EventToolError:
 			var d toolErrorData
 			if json.Unmarshal(ev.Data, &d) != nil {
 				continue
 			}
-			msgs = append(msgs, llm.Message{
+			out = append(out, tagged{msg: llm.Message{
 				Role:       llm.RoleTool,
 				ToolCallID: d.CallID,
 				Content:    "Error: " + d.Error,
-			})
+			}, seq: ev.Seq})
 		}
+	}
+	msgs := make([]llm.Message, len(out))
+	for i, t := range out {
+		msgs[i] = t.msg
 	}
 	return msgs
 }
@@ -205,7 +260,23 @@ func derive(events []Event) []llm.Message {
 // New* helpers below so model-visible inputs cannot be logged ad hoc.
 
 type userMessageData struct {
-	Text string `json:"text"`
+	Text      string          `json:"text"`
+	SurfaceOp *SurfaceReplace `json:"surfaceOp,omitempty"` // set by compaction summaries (M5c)
+}
+
+// surfaceReplaceOp is the only SurfaceReplace operation currently defined: the
+// user/message carries a summary that substitutes the shadowed surface range
+// [Start, End] (old events stay in the log, D1; derive() folds them out).
+const surfaceReplaceOp = "replace"
+
+// SurfaceReplace marks a user/message as a compaction summary that shadows the
+// surface events whose Seq falls in [Start, End] (M5c, 决策 ③). Op is
+// surfaceReplaceOp ("replace"); Start/End are the first/last shadowed event
+// Seq, recorded at append time (Seq is monotonic, so End < the marker's Seq).
+type SurfaceReplace struct {
+	Op    string `json:"op"`
+	Start int64  `json:"start"`
+	End   int64  `json:"end"`
 }
 
 type assistantChunkData struct {
@@ -243,6 +314,16 @@ type toolErrorData struct {
 
 // NewUserMessage builds the user/message payload.
 func NewUserMessage(text string) any { return userMessageData{Text: text} }
+
+// NewUserMessageReplace builds a user/message payload for a compaction summary
+// (M5c, 决策 ③): it carries the summary text plus a surfaceOp.replace marker
+// shadowing the surface events whose Seq is in [start, end]. derive() then
+// substitutes the summary for those events. The events themselves stay in the
+// log (D1, append-only). NewUserMessage remains unchanged and is what normal
+// turns use; only a compaction writes this payload.
+func NewUserMessageReplace(text string, start, end int64) any {
+	return userMessageData{Text: text, SurfaceOp: &SurfaceReplace{Op: surfaceReplaceOp, Start: start, End: end}}
+}
 
 // NewAssistantChunk builds one assistant/chunk payload (streaming fidelity).
 func NewAssistantChunk(text string) any { return assistantChunkData{Text: text} }
