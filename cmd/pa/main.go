@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"personal-agent/internal/compaction"
 	"personal-agent/internal/config"
 	"personal-agent/internal/jobs"
 	"personal-agent/internal/kb"
@@ -139,6 +140,17 @@ func main() {
 	if app.subagents != nil {
 		defer app.subagents.Close()
 	}
+	// M5c-2b: wire the compaction seam — BasicEngine for the /compact command
+	// and the loop "compaction" pre-step injector — when compaction.enabled
+	// (默认关闭, D10). Compaction whitelists no consumer tools (it has none:
+	// automatic triggering runs through the loop pre-step injector, manual
+	// through the /compact command), so config.applyDefaults already handled
+	// the whole gate. The engine shares the caller-owned LLM and holds no
+	// closable resources, so there is no deferred Close.
+	if err := app.registerCompaction(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
 	if err := app.startup(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
@@ -159,6 +171,8 @@ type app struct {
 	log       *session.Log
 	jobs      *jobs.Local // nil when jobs disabled (D10)
 	subagents subagent.Runtime // nil when subagent disabled (D10)
+
+	compaction compaction.Engine // nil when compaction disabled (D10)
 }
 
 // startup resumes the most recently updated session, or starts a fresh one.
@@ -321,6 +335,8 @@ func (a *app) command(ctx context.Context, line string) error {
 		return a.kbStatus(ctx)
 	case "/kb-reindex":
 		return a.kbReindex(ctx)
+	case "/compact":
+		return a.compactCommand(ctx, fields[1:])
 	default:
 		return fmt.Errorf("unknown command %q (try /help)", fields[0])
 	}
@@ -335,6 +351,8 @@ func (a *app) printHelp() {
   /resume <id>      resume an existing session by id
   /kb-status        knowledge-base status (entries / db size / recent writes)
   /kb-reindex       rebuild the knowledge-base FTS index
+  /compact          compact the session now (fold old context into a summary)
+  /compact region <start> <end>  compact only the given surface event range
   /help             show this command table
   /exit             quit (alias: /quit)
   anything else     send to the agent as a message
@@ -351,6 +369,12 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 		fmt.Printf("jobs: enabled (max_concurrent_jobs_per_owner=%d)\n", a.cfg.Jobs.MaxConcurrentJobsPerOwner)
 	} else {
 		fmt.Println("jobs: disabled (jobs.enabled=false)")
+	}
+	if a.cfg.Compaction.Enabled {
+		fmt.Printf("compaction: enabled (token_threshold=%d, retain_turns=%d)\n",
+			a.cfg.Compaction.TokenThreshold, a.cfg.Compaction.RetainTurns)
+	} else {
+		fmt.Println("compaction: disabled (compaction.enabled=false)")
 	}
 }
 
