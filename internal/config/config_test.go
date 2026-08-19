@@ -381,3 +381,77 @@ func TestLoadKBDBPathFollowsDataDir(t *testing.T) {
 		t.Error("kb must stay disabled by default (D10)")
 	}
 }
+
+// M5a: jobs is off by default (D10), and the per-owner active-job cap defaults
+// to 10 (dispatch-m5a-2 §3).
+func TestLoadJobsDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Jobs.Enabled {
+		t.Error("jobs must be disabled by default (D10)")
+	}
+	if cfg.Jobs.MaxConcurrentJobsPerOwner != DefaultMaxConcurrentJobsPerOwner {
+		t.Errorf("jobs.max_concurrent_jobs_per_owner = %d, want default %d",
+			cfg.Jobs.MaxConcurrentJobsPerOwner, DefaultMaxConcurrentJobsPerOwner)
+	}
+	// With jobs disabled no job tool may be whitelisted.
+	for _, name := range jobsToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when jobs disabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// M5a: jobs.enabled: true is the single switch that turns the whole capability
+// on — the five job_* tools must also become whitelisted (dispatch-m5a-2 §3,
+// mirrors kb). An absent max falls back to the default 10.
+func TestLoadJobsEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("jobs:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range jobsToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after jobs.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+	if cfg.Jobs.MaxConcurrentJobsPerOwner != DefaultMaxConcurrentJobsPerOwner {
+		t.Errorf("absent jobs.max_concurrent_jobs_per_owner = %d, want default %d",
+			cfg.Jobs.MaxConcurrentJobsPerOwner, DefaultMaxConcurrentJobsPerOwner)
+	}
+}
+
+// M5a: an explicit max_concurrent_jobs_per_owner is honored, and a
+// non-positive value falls back to the default 10 (dispatch-m5a-2 §3).
+func TestLoadJobsMaxConcurrentExplicitAndDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("jobs:\n  enabled: true\n  max_concurrent_jobs_per_owner: 3\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Jobs.MaxConcurrentJobsPerOwner != 3 {
+		t.Errorf("jobs.max_concurrent_jobs_per_owner = %d, want 3", cfg.Jobs.MaxConcurrentJobsPerOwner)
+	}
+
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("jobs:\n  enabled: true\n  max_concurrent_jobs_per_owner: 0\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Jobs.MaxConcurrentJobsPerOwner != DefaultMaxConcurrentJobsPerOwner {
+		t.Errorf("jobs.max_concurrent_jobs_per_owner 0 = %d, want default %d",
+			cfg2.Jobs.MaxConcurrentJobsPerOwner, DefaultMaxConcurrentJobsPerOwner)
+	}
+}

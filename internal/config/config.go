@@ -39,6 +39,11 @@ const (
 	// KBConfig.RecallLimitValue / KBConfig.CatalogValue, which apply the
 	// defaults when the YAML field is absent.
 	DefaultKBRecallLimit = 3
+
+	// M5a jobs defaults (dispatch-m5a-2 §3): the per-owner active-job cap is
+	// 10 when jobs.max_concurrent_jobs_per_owner is absent or non-positive
+	// (mirrors dsh jobs-local and internal/jobs' own default).
+	DefaultMaxConcurrentJobsPerOwner = 10
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
@@ -55,6 +60,21 @@ type Config struct {
 	PromptsDir string      `yaml:"prompts_dir"` // directory of prompt section files; default "config/prompts"
 	Tools      ToolsConfig `yaml:"tools"`       // tool-execution policy (M3)
 	KB         KBConfig    `yaml:"kb"`          // knowledge-base policy (M4a kernel)
+	Jobs       JobsConfig  `yaml:"jobs"`        // background-job policy (M5a)
+}
+
+// JobsConfig is the background-job policy (dispatch-m5a-2 §3 / ADR
+// 2026-08-18-m5-agent-core.md 决策 ①). Jobs are off by default (D10): when
+// disabled the composition root neither initializes a registry nor registers
+// or whitelists the job_* tools.
+type JobsConfig struct {
+	// Enabled gates the whole capability: when false, no registry is created
+	// (jobs.NewLocal is never called) and the job_* tools are neither
+	// registered nor whitelisted (D10).
+	Enabled bool `yaml:"enabled"`
+	// MaxConcurrentJobsPerOwner caps the running+stopping jobs in one owner
+	// bucket (and the shared unowned bucket); <= 0 means the default 10.
+	MaxConcurrentJobsPerOwner int `yaml:"max_concurrent_jobs_per_owner"`
 }
 
 // KBConfig is the knowledge-base policy (dispatch-m4a §3 / dispatch-m4b §5).
@@ -238,6 +258,20 @@ func applyDefaults(cfg *Config) {
 	if cfg.KB.TopK <= 0 {
 		cfg.KB.TopK = DefaultKBTopK
 	}
+	// Enabling jobs whitelists its five consumer tools as well, so the single
+	// jobs.enabled switch turns the whole capability (registry + tools + event
+	// logging) on; default off (D10, dispatch-m5a-2 §3 — mirrors kb).
+	if cfg.Jobs.Enabled {
+		for _, name := range jobsToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
+	// M5a jobs defaults: off by default; the per-owner active-job cap is 10.
+	if cfg.Jobs.MaxConcurrentJobsPerOwner <= 0 {
+		cfg.Jobs.MaxConcurrentJobsPerOwner = DefaultMaxConcurrentJobsPerOwner
+	}
 }
 
 // kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /
@@ -245,6 +279,12 @@ func applyDefaults(cfg *Config) {
 // enabled; keeping the names here makes the "kb.enabled ⇒ 工具自动白名单" rule a
 // single, tested fact shared by applyDefaults and the composition root.
 var kbToolNames = []string{"kb_search", "kb_read", "kb_add"}
+
+// jobsToolNames are the background-job consumer tools (dispatch-m5a-2 §2).
+// They are registered and whitelisted only when jobs is enabled; keeping the
+// names here makes the "jobs.enabled ⇒ 工具自动白名单" rule a single, tested fact
+// shared by applyDefaults and the composition root.
+var jobsToolNames = []string{"job_start", "job_status", "job_cancel", "job_wait", "job_read"}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {
