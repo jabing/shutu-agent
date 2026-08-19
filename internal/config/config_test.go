@@ -803,3 +803,72 @@ func TestLoadScheduleEnabledAppendsToolsToWhitelist(t *testing.T) {
 		}
 	}
 }
+
+// M6b-2: plan is off by default (D10) and the plan_* tools must not be
+// whitelisted while disabled (dispatch-m6b-2 §2).
+func TestLoadPlanDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Plan.Enabled {
+		t.Error("plan must be disabled by default (D10)")
+	}
+	for _, name := range planToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when plan disabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// M6b-2: an explicit plan section is honored, and an explicit plan.enabled:
+// false leaves the default whitelist untouched (D10).
+func TestLoadPlanParsesSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("plan:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Plan.Enabled {
+		t.Error("plan.enabled should be true")
+	}
+
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("plan:\n  enabled: false\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Plan.Enabled {
+		t.Error("plan.enabled = true, want false (explicitly disabled)")
+	}
+	for _, name := range planToolNames {
+		if contains(cfg2.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when plan explicitly disabled", cfg2.Tools.Enabled, name)
+		}
+	}
+}
+
+// M6b-2: plan.enabled: true is the single switch that turns the whole
+// capability on — the six plan_* tools must also become whitelisted
+// (dispatch-m6b-2 §2, mirrors kb/jobs/subagent/skill/schedule).
+func TestLoadPlanEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("plan:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range planToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after plan.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+}

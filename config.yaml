@@ -166,3 +166,17 @@ schedule:
   # Cadence of the serial schedule-clock advancement (per-turn pre-step
   # Engine.Tick). M6a-2 has no background ticker (D5); 0/absent ⇒ 1m.
   tick_interval: 1m
+
+# Task-planning capability (M6b; design.md §10 D2 / ADR 2026-08-19-m6-agent-full.md
+# 决策 M6b). Off by default (D10): when disabled no Provider/Engine is
+# initialized and no plan_* tool is registered or whitelisted. When enabled,
+# plan_goal / plan_plan / plan_todo build a goal → plan → todo tree bottom-up,
+# plan_status advances or blocks one record, plan_list returns the aggregation
+# tree, and plan_remove deletes a goal (cascading to its plans), a plan or a
+# todo. The model observes the tree through the tools' tool/result; plan/create,
+# plan/status, plan/delete and plan/list are logged as facts (D3). The tree is
+# in-memory only — a process restart clears it (no persistence in M6b).
+plan:
+  # Master switch. false ⇒ no plan Provider/Engine is created and the plan_*
+  # tools are neither registered nor whitelisted (默认关闭，不初始化).
+  enabled: false

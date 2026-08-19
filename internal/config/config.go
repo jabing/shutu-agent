@@ -98,6 +98,7 @@ type Config struct {
 	Compaction CompactionConfig `yaml:"compaction"`  // context-compaction policy (M5c)
 	Skill      SkillConfig      `yaml:"skill"`       // skill policy (M5d)
 	Schedule   ScheduleConfig   `yaml:"schedule"`    // schedule policy (M6a)
+	Plan       PlanConfig       `yaml:"plan"`        // task-planning policy (M6b)
 }
 
 // JobsConfig is the background-job policy (dispatch-m5a-2 §3 / ADR
@@ -192,6 +193,17 @@ type ScheduleConfig struct {
 	// (D5); the value is parsed and defaulted here so a future gated advance
 	// can consume it. <= 0 means the default 1m.
 	TickInterval Duration `yaml:"tick_interval"`
+}
+
+// PlanConfig is the task-planning policy (dispatch-m6b-2 §2 / ADR
+// 2026-08-19-m6-agent-full.md 决策 M6b). Planning is off by default (D10): when
+// disabled the composition root neither creates an Engine nor registers or
+// whitelists the plan_* tools.
+type PlanConfig struct {
+	// Enabled gates the whole capability: when false, no Provider/Engine is
+	// created and the plan_* tools are neither registered nor whitelisted
+	// (D10).
+	Enabled bool `yaml:"enabled"`
 }
 
 // KBConfig is the knowledge-base policy (dispatch-m4a §3 / dispatch-m4b §5).
@@ -457,6 +469,17 @@ func applyDefaults(cfg *Config) {
 	if cfg.Schedule.TickInterval.Duration <= 0 {
 		cfg.Schedule.TickInterval.Duration = DefaultScheduleTickInterval
 	}
+	// M6b-2 plan defaults: off by default (D10). Enabling plan whitelists its
+	// six consumer tools, so the one plan.enabled switch turns the whole
+	// capability (Provider + Engine + tools + event logging) on (mirrors
+	// kb/jobs/subagent/skill/schedule).
+	if cfg.Plan.Enabled {
+		for _, name := range planToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
 }
 
 // kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /
@@ -488,6 +511,12 @@ var skillToolNames = []string{"skill_load"}
 // names here makes the "schedule.enabled ⇒ 工具自动白名单" rule a single, tested
 // fact shared by applyDefaults and the composition root.
 var scheduleToolNames = []string{"schedule_create", "schedule_list", "schedule_delete"}
+
+// planToolNames are the plan consumer tools (dispatch-m6b-2 §3). They are
+// registered and whitelisted only when plan is enabled; keeping the names here
+// makes the "plan.enabled ⇒ 工具自动白名单" rule a single, tested fact shared by
+// applyDefaults and the composition root.
+var planToolNames = []string{"plan_goal", "plan_plan", "plan_todo", "plan_status", "plan_list", "plan_remove"}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {
