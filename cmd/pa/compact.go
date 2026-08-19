@@ -1,15 +1,14 @@
 // compact.go — the M5c-2b composition-root orchestration (dispatch-m5c-2b
 // §1/§2/§3). This is where the context-compaction capability seam is wired into
 // the REPL: registerCompaction creates the BasicEngine when compaction.enabled
-// (D10), /compact (+ /compact region) are the manual command, and (Pass 2) the
-// loop's "compaction" pre-step injector runs the token-pressure auto-compaction.
-// The compaction/start → compaction/summary → compaction/end observation events
-// are appended to the active session log on the serial path — the command
-// handler or the pre-step injector — never from a background goroutine (D5),
-// mirroring the job/subagent onEvent sink pattern (D3). The log stays
-// append-only (D1): the engine appends the summary as a surfaceOp.replace
-// user/message (M5c-1a) and these events only record that fact; nothing is ever
-// physically deleted.
+// (D10), /compact (+ /compact region) are the manual command, and the loop's
+// "compaction" pre-step injector runs the token-pressure auto-compaction. The
+// compaction/start → compaction/summary → compaction/end observation events are
+// appended to the active session log on the serial path — the command handler
+// or the pre-step injector — never from a background goroutine (D5), mirroring
+// the job/subagent onEvent sink pattern (D3). The log stays append-only (D1):
+// the engine appends the summary as a surfaceOp.replace user/message (M5c-1a)
+// and these events only record that fact; nothing is ever physically deleted.
 package main
 
 import (
@@ -19,8 +18,38 @@ import (
 	"strconv"
 
 	"personal-agent/internal/compaction"
+	"personal-agent/internal/config"
+	"personal-agent/internal/llm"
+	"personal-agent/internal/loop"
 	"personal-agent/internal/session"
 )
+
+// compactedNotice is the short "context was compacted" hint injected by the
+// auto-compaction pre-step injector. It is deliberately not the summary body —
+// the folded history already carries the summary as a user/message
+// (surfaceOp.replace, M5c-1a) — and the injection budget is bounded by the loop
+// (per-injector 4000 rune cap, fail-open).
+const compactedNotice = "Context notice: earlier conversation context was auto-compacted to free space. Continue from the summary message above and the retained recent turns."
+
+// compactionEstimator estimates the model-visible surface tokens of a log. It
+// is injectable so tests can drive pressure deterministically; the default
+// mirrors BasicEngine's zero-dependency estimate (len/4 per string), keeping
+// the wiring's pressure pre-check consistent with the engine's own gate.
+type compactionEstimator func(log *session.Log) int
+
+// defaultCompactionEstimator mirrors compaction.defaultTokenEstimate over the
+// derived history (content + tool-call name/arguments), exactly like
+// BasicEngine.estimateTokens.
+func defaultCompactionEstimator(log *session.Log) int {
+	total := 0
+	for _, m := range log.DeriveHistory() {
+		total += len(m.Content) / 4
+		for _, tc := range m.ToolCalls {
+			total += len(tc.Name)/4 + len(tc.Arguments)/4
+		}
+	}
+	return total
+}
 
 // registerCompaction creates the default BasicEngine when compaction.enabled,
 // and wires nothing when disabled (D10, mirrors registerJobs/registerSubagent).
@@ -39,6 +68,72 @@ func (a *app) registerCompaction() error {
 		RetainTurns:    a.cfg.Compaction.RetainTurns,
 	})
 	return nil
+}
+
+// preStepInjectors returns the loop's registered pre-step injectors for the
+// current configuration: the "compaction" injector appended when the capability
+// is enabled. The loop runs the M4b Recall hook ("recall") first and then the
+// PreStep injectors in order, so the compaction injector lands after recall as
+// required (dispatch-m5c-2 §4). The turn/step structure is unchanged (D4).
+func (a *app) preStepInjectors() []loop.PreStepInjector {
+	var injectors []loop.PreStepInjector
+	if a.compaction != nil {
+		injectors = append(injectors, a.compactionInjector(defaultCompactionEstimator))
+	}
+	return injectors
+}
+
+// compactionInjector builds the "compaction" pre-step injector (ADR 决策 ③ /
+// dispatch-m5c-2b §2): once per turn — after user/message is appended, before
+// the first step's model request — it estimates the current surface tokens and,
+// when the estimate exceeds the configured threshold, triggers CompactIfNeeded
+// under TriggerPressure and appends the compaction/start → compaction/summary →
+// compaction/end observation events (D3). The injected context is a short
+// notice, not the summary body — the folded history already carries the summary
+// marker (M5c-1a). Every append happens here on the serial pre-step path (D5);
+// a failing compaction is surfaced as a stderr warning and contributes no
+// context (fail-open, the same contract as the kb recall injector).
+func (a *app) compactionInjector(est compactionEstimator) loop.PreStepInjector {
+	return loop.PreStepInjector{
+		Name:   "compaction",
+		Inject: a.compactionPreStep(est),
+	}
+}
+
+func (a *app) compactionPreStep(est compactionEstimator) func(context.Context, string) []llm.Message {
+	return func(ctx context.Context, userText string) []llm.Message {
+		if a.compaction == nil {
+			return nil
+		}
+		if !a.overPressure(est) {
+			return nil
+		}
+		res, err := a.compactAndLog(ctx, "surface token estimate exceeded threshold", "pressure",
+			func() (*compaction.Result, error) {
+				return a.compaction.CompactIfNeeded(ctx, a.log, compaction.TriggerPressure)
+			})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "[compaction failed open]", err)
+			return nil
+		}
+		if res == nil {
+			return nil
+		}
+		return []llm.Message{{Role: llm.RoleUser, Content: compactedNotice}}
+	}
+}
+
+// overPressure reports whether the current surface token estimate exceeds the
+// configured pressure threshold — the same gate BasicEngine applies under
+// TriggerPressure, checked up front so a turn that does not need compaction
+// never logs a compaction/start. Thresholds are clamped to the config default
+// so a raw config (tests) never disables the gate accidentally.
+func (a *app) overPressure(est compactionEstimator) bool {
+	threshold := a.cfg.Compaction.TokenThreshold
+	if threshold <= 0 {
+		threshold = config.DefaultCompactionTokenThreshold
+	}
+	return threshold > 0 && est(a.log) > threshold
 }
 
 // compactAndLog runs one compaction attempt through the engine and appends the

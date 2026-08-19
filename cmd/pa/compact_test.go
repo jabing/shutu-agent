@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -12,7 +13,9 @@ import (
 	"personal-agent/internal/compaction"
 	"personal-agent/internal/config"
 	"personal-agent/internal/llm"
+	"personal-agent/internal/prompt"
 	"personal-agent/internal/session"
+	"personal-agent/internal/tools"
 )
 
 // byteTokens is a deterministic 1-token-per-byte surface estimator for tests
@@ -27,6 +30,11 @@ func byteTokens(log *session.Log) int {
 	}
 	return total
 }
+
+// byteTokensStr is the matching 1-token-per-byte estimator for BasicEngine's
+// Tokenizer (a per-string estimator), so engine pressure and wiring pressure
+// agree in tests.
+func byteTokensStr(s string) int { return len(s) }
 
 // compactStubLLM answers every summary request with a fixed text (or an error).
 type compactStubLLM struct {
@@ -141,6 +149,11 @@ func basicEngine(est compaction.TokenEstimator, llm llm.LLM) compaction.Engine {
 	})
 }
 
+// byteTokensEngine is basicEngine with the byte-counting tokenizer.
+func byteTokensEngine(llm llm.LLM) compaction.Engine {
+	return basicEngine(byteTokensStr, llm)
+}
+
 // markerRange decodes the shadowed [start, end] of the summary marker
 // user/message in the log (surfaceOp.replace), or returns ok=false when none
 // exists.
@@ -165,8 +178,8 @@ func markerRange(t *testing.T, log *session.Log) ([2]int64, bool) {
 }
 
 // TestRegisterCompactionDisabledCreatesNothing verifies the D10 gate: with
-// compaction.enabled=false the composition root creates no engine (dispatch
-// -m5c-2b §2; the no-injector assertion lives in the Pass-2 PreStep test).
+// compaction.enabled=false the composition root creates no engine and registers
+// no pre-step injector (dispatch-m5c-2b §2).
 func TestRegisterCompactionDisabledCreatesNothing(t *testing.T) {
 	app := makeCompactApp(false)
 	if err := app.registerCompaction(); err != nil {
@@ -175,11 +188,14 @@ func TestRegisterCompactionDisabledCreatesNothing(t *testing.T) {
 	if app.compaction != nil {
 		t.Fatal("compaction engine must be nil when compaction.enabled=false")
 	}
+	if got := app.preStepInjectors(); len(got) != 0 {
+		t.Fatalf("pre-step injectors = %+v, want none when compaction disabled", got)
+	}
 }
 
 // TestRegisterCompactionEnabledCreatesEngine verifies the enabled path: the
-// BasicEngine is created (the "compaction" pre-step injector registration is
-// asserted by the Pass-2 PreStep test).
+// BasicEngine is created and exactly one "compaction" pre-step injector is
+// registered.
 func TestRegisterCompactionEnabledCreatesEngine(t *testing.T) {
 	app := makeCompactApp(true)
 	app.llm = &compactStubLLM{text: "S"}
@@ -188,6 +204,10 @@ func TestRegisterCompactionEnabledCreatesEngine(t *testing.T) {
 	}
 	if app.compaction == nil {
 		t.Fatal("compaction engine must be created when compaction.enabled=true")
+	}
+	inj := app.preStepInjectors()
+	if len(inj) != 1 || inj[0].Name != "compaction" {
+		t.Fatalf("pre-step injectors = %+v, want one named \"compaction\"", inj)
 	}
 }
 
@@ -291,5 +311,234 @@ func TestCompactCommandRegion(t *testing.T) {
 	}
 	if err := app.compactCommand(context.Background(), []string{"nonsense"}); err == nil {
 		t.Fatal("unknown /compact args must be rejected")
+	}
+}
+
+// compactScriptedLLM serves one fixed stream per Stream call (the compaction
+// summary first, then the loop turn), recording every request.
+type compactScriptedLLM struct {
+	steps [][]llm.StreamEvent
+	calls []llm.ChatRequest
+}
+
+func (s *compactScriptedLLM) Stream(_ context.Context, req llm.ChatRequest) (llm.StreamReader, error) {
+	s.calls = append(s.calls, req)
+	if len(s.steps) == 0 {
+		return &compactScriptedReader{}, nil
+	}
+	events := s.steps[0]
+	s.steps = s.steps[1:]
+	return &compactScriptedReader{events: events}, nil
+}
+
+type compactScriptedReader struct {
+	events []llm.StreamEvent
+	i      int
+}
+
+func (r *compactScriptedReader) Next() (llm.StreamEvent, error) {
+	if r.i >= len(r.events) {
+		return llm.StreamEvent{}, io.EOF
+	}
+	ev := r.events[r.i]
+	r.i++
+	return ev, nil
+}
+
+// longSession builds 3 turns whose content is long enough that the default
+// len/4 estimator exceeds the test threshold of 5 (20 bytes/message → 5
+// tokens/message, 30 tokens total).
+func longSession(t *testing.T) *session.Log {
+	t.Helper()
+	l := session.New()
+	for i := 0; i < 3; i++ {
+		if _, err := l.Append(session.EventUserMessage, session.NewUserMessage(strings.Repeat("q", 20))); err != nil {
+			t.Fatalf("append user: %v", err)
+		}
+		if _, err := l.Append(session.EventAssistantMessage, session.NewAssistantMessage(strings.Repeat("a", 20), nil, "stop")); err != nil {
+			t.Fatalf("append assistant: %v", err)
+		}
+	}
+	return l
+}
+
+// TestCompactionInjectorTriggersAndLogsExactlyOnce verifies the pre-step
+// injector's pressure path (dispatch-m5c-2b §2/§3): when the estimated surface
+// exceeds the threshold it calls CompactIfNeeded (summary marker + fold), logs
+// compaction/start → compaction/summary → compaction/end each exactly once in
+// order (D3, serial path), and injects only the short notice — not the summary
+// body.
+func TestCompactionInjectorTriggersAndLogsExactlyOnce(t *testing.T) {
+	app := makeCompactApp(true)
+	app.log = threeTurnLog(t) // byteTokens surface = 12 > threshold 5
+	app.compaction = byteTokensEngine(&compactStubLLM{text: "S"})
+
+	msgs := app.compactionInjector(byteTokens).Inject(context.Background(), "hello")
+	if len(msgs) != 1 || msgs[0].Role != llm.RoleUser {
+		t.Fatalf("injected = %+v, want exactly one user notice", msgs)
+	}
+	if !strings.Contains(msgs[0].Content, "compacted") {
+		t.Fatalf("notice content = %q, want a compacted hint", msgs[0].Content)
+	}
+	if strings.Contains(msgs[0].Content, "summary:") || msgs[0].Content == "S" {
+		t.Fatalf("injected content must not be the summary body: %q", msgs[0].Content)
+	}
+	// The summary marker landed (D1: old events stay, the marker shadows them).
+	if _, ok := markerRange(t, app.log); !ok {
+		t.Fatal("summary marker missing after auto-compaction")
+	}
+	// start → summary → end, each exactly once, in that order.
+	types := eventTypes(app.log.Events())
+	if n := countEvent(app.log, session.EventCompactionStart); n != 1 {
+		t.Fatalf("compaction/start count = %d, want exactly 1 (%v)", n, types)
+	}
+	if n := countEvent(app.log, session.EventCompactionSummary); n != 1 {
+		t.Fatalf("compaction/summary count = %d, want exactly 1 (%v)", n, types)
+	}
+	if n := countEvent(app.log, session.EventCompactionEnd); n != 1 {
+		t.Fatalf("compaction/end count = %d, want exactly 1 (%v)", n, types)
+	}
+	if si, mi, ei := indexOf(types, session.EventCompactionStart), indexOf(types, session.EventCompactionSummary), indexOf(types, session.EventCompactionEnd); !(si < mi && mi < ei) {
+		t.Fatalf("event order = start(%d) summary(%d) end(%d), want start<summary<end", si, mi, ei)
+	}
+	// The model-visible history is folded: summary substitutes the prefix.
+	msgsD := app.log.DeriveHistory()
+	if len(msgsD) != 3 || msgsD[0].Content != "S" || msgsD[1].Content != "q3" || msgsD[2].Content != "a3" {
+		t.Fatalf("derived = %+v, want [S q3 a3]", msgsD)
+	}
+}
+
+// TestCompactionInjectorUnderPressureNoEvents verifies the no-op path: under
+// the threshold the injector compacts nothing, logs no compaction/* event and
+// injects no context (a per-turn no-op, so over-limit turns never spam the log
+// with orphan compaction/start rows).
+func TestCompactionInjectorUnderPressureNoEvents(t *testing.T) {
+	app := makeCompactApp(true)
+	app.cfg.Compaction.TokenThreshold = 1 << 20
+	app.log = threeTurnLog(t)
+	app.compaction = compaction.NewBasic(compaction.BasicOpts{
+		Tokenizer:      byteTokensStr,
+		LLM:            &compactStubLLM{text: "S"},
+		Model:          "m",
+		TokenThreshold: 1 << 20,
+		RetainTurns:    1,
+	})
+	msgs := app.compactionInjector(byteTokens).Inject(context.Background(), "hi")
+	if msgs != nil {
+		t.Fatalf("injected %+v under threshold, want nil", msgs)
+	}
+	if n := countEvent(app.log, session.EventCompactionStart); n != 0 {
+		t.Fatalf("compaction/start logged %d times under threshold, want 0", n)
+	}
+	if got := len(app.log.Events()); got != 6 {
+		t.Fatalf("log grew to %d events under threshold, want 6", got)
+	}
+}
+
+// TestCompactionInjectorNilEngineNoOp verifies the injector is inert when the
+// engine is absent (the disabled guard, D10).
+func TestCompactionInjectorNilEngineNoOp(t *testing.T) {
+	app := makeCompactApp(false)
+	app.log = threeTurnLog(t)
+	if msgs := app.compactionInjector(byteTokens).Inject(context.Background(), "hi"); msgs != nil {
+		t.Fatalf("injected %+v with a nil engine, want nil", msgs)
+	}
+	if got := len(app.log.Events()); got != 6 {
+		t.Fatalf("log grew to %d events with a nil engine, want 6", got)
+	}
+}
+
+// TestCompactionInjectorSummaryFailureIsFailOpen verifies a failing summary
+// model does not abort the turn: the injector returns nil context (fail-open),
+// leaves only the compaction/start attempt marker, and never appends the notice.
+func TestCompactionInjectorSummaryFailureIsFailOpen(t *testing.T) {
+	app := makeCompactApp(true)
+	app.log = threeTurnLog(t)
+	app.compaction = byteTokensEngine(&compactStubLLM{err: errors.New("model down")})
+	msgs := app.compactionInjector(byteTokens).Inject(context.Background(), "hi")
+	if msgs != nil {
+		t.Fatalf("injected %+v on summary failure, want nil (fail-open)", msgs)
+	}
+	if n := countEvent(app.log, session.EventCompactionSummary); n != 0 {
+		t.Fatalf("compaction/summary logged %d times after a failed summary, want 0", n)
+	}
+	if n := countEvent(app.log, session.EventCompactionEnd); n != 0 {
+		t.Fatalf("compaction/end logged %d times after a failed summary, want 0", n)
+	}
+	// The attempt marker remains — an orphan start reveals the interrupted
+	// attempt (ADR 决策 ③).
+	if n := countEvent(app.log, session.EventCompactionStart); n != 1 {
+		t.Fatalf("compaction/start count = %d, want exactly 1 (the attempt marker)", n)
+	}
+}
+
+// TestLoopPreStepAutoCompacts is the end-to-end wiring test: a turn driven
+// through app.newLoop() runs the "compaction" pre-step injector before the
+// first step's model request, folds the over-threshold prefix, logs the
+// compaction/* chain exactly once and injects the notice into the first request
+// only (turn/step structure unchanged, D4).
+func TestLoopPreStepAutoCompacts(t *testing.T) {
+	app := makeCompactApp(true)
+	app.log = longSession(t) // default len/4 estimator: 30 tokens > threshold 5
+	model := &compactScriptedLLM{steps: [][]llm.StreamEvent{
+		{ // call 1: the compaction summary request
+			{Kind: llm.StreamTextDelta, Text: "S"},
+			{Kind: llm.StreamFinish, FinishReason: "stop"},
+		},
+		{ // call 2: the turn's first request
+			{Kind: llm.StreamTextDelta, Text: "ok"},
+			{Kind: llm.StreamFinish, FinishReason: "stop"},
+		},
+	}}
+	app.llm = model
+	// The engine uses the default (len/4) tokenizer so its pressure gate agrees
+	// with preStepInjectors' defaultCompactionEstimator.
+	app.compaction = compaction.NewBasic(compaction.BasicOpts{
+		LLM:            model,
+		Model:          "m",
+		TokenThreshold: 5,
+		RetainTurns:    1,
+	})
+	app.reg = tools.New()
+	app.prompt = prompt.New("You are helpful.")
+
+	lp := app.newLoop()
+	captureStdout(func() {
+		if err := lp.Run(context.Background(), "hello"); err != nil {
+			t.Errorf("loop run: %v", err)
+		}
+	})
+
+	// The summary model was called before the turn's first request.
+	if len(model.calls) != 2 {
+		t.Fatalf("llm calls = %d, want 2 (summary then turn)", len(model.calls))
+	}
+	// The compaction/* chain landed exactly once in order.
+	types := eventTypes(app.log.Events())
+	if n := countEvent(app.log, session.EventCompactionStart); n != 1 {
+		t.Fatalf("compaction/start count = %d, want exactly 1 (%v)", n, types)
+	}
+	if n := countEvent(app.log, session.EventCompactionSummary); n != 1 {
+		t.Fatalf("compaction/summary count = %d, want exactly 1 (%v)", n, types)
+	}
+	if n := countEvent(app.log, session.EventCompactionEnd); n != 1 {
+		t.Fatalf("compaction/end count = %d, want exactly 1 (%v)", n, types)
+	}
+	// The first request carries the notice, the folded summary and the user
+	// message; the turn still completed normally.
+	req := model.calls[1].Messages
+	var noticeSeen, summarySeen, userSeen bool
+	for _, m := range req {
+		switch {
+		case m.Content == "hello":
+			userSeen = true
+		case m.Content == "S":
+			summarySeen = true
+		case strings.Contains(m.Content, "compacted"):
+			noticeSeen = true
+		}
+	}
+	if !noticeSeen || !summarySeen || !userSeen {
+		t.Fatalf("first request = %+v, want notice + folded summary + user message", req)
 	}
 }

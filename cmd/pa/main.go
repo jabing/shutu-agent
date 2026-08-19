@@ -265,6 +265,11 @@ func (a *app) newLoop() *loop.Loop {
 		Prompt: a.prompt,
 		Model:  a.cfg.Model,
 		Recall: a.recall,
+		// M5c-2b: the "compaction" pre-step injector (auto token-pressure
+		// compaction) is appended when compaction is enabled; it runs after the
+		// M4b recall hook, inside the loop's existing pre-step extension point
+		// (D4 — the turn/step structure is unchanged).
+		PreStep: a.preStepInjectors(),
 		OnText: func(delta string) { fmt.Print(delta) },
 		OnError: func(err error) {
 			fmt.Fprintln(os.Stderr, "\n[stream error]", err)
