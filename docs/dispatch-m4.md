@@ -4,7 +4,7 @@
 
 ---
 
-请阅读 `D:\dev-projects\Agent\personal-agent\Agent.md` 和 `docs/design.md`，按设计基线实现 **M4 知识库**（里程碑验收标准见 Agent.md 第 4 节，能力结构见 design.md §8）。
+请阅读 `D:\dev-projects\Agent\personal-agent\Agent.md`、`docs/design.md` **和 `docs/research-m4-kb.md`（M4 开源调研，控制会话 2026-08-18 编制，选型前必读）**，按设计基线实现 **M4 知识库**（里程碑验收标准见 Agent.md 第 4 节，能力结构见 design.md §8）。
 
 **M4 范围**：
 
@@ -18,7 +18,7 @@
    ```
    消费方（工具）只依赖接口（D2/D9）。任何 Provider 实现同一接口。
 
-2. **向量 Provider（本地优先，可换）**：默认实现为**纯 Go 进程内向量索引**（余弦相似度），持久化到 `data/kb/`（已 gitignore）。**必须评估 sqlite-vec 是否可用并记录结论于 ADR**：本项目硬约束 CGO-free（design.md §9），若 sqlite-vec 的 Go 绑定在 Windows 无 CGO 工具链下可用则优先，否则纯 Go 索引即为默认并写明依据。远程 Provider（pgvector / Qdrant）只留接口，M4 不必实现。
+2. **向量 Provider（本地优先，可换）**：依据 `docs/research-m4-kb.md` 三档评估后落定，**默认推荐 A（进程内暴力余弦索引，持久化到 `data/kb/`）**；若 B（`modernc.org/sqlite` ≥v1.56.0 内置 `vec`，需升级依赖）经实测低代价可用则改选 B；两者都须在 ADR 写明结论与依据。远程 Provider（pgvector / Qdrant）只留接口，M4 不必实现。
 
 3. **嵌入 Provider（独立，与对话模型解耦，D9）**：实现**一个 OpenAI 兼容的 embeddings 客户端**（`POST {base_url}/embeddings`，入参 `{model, input: []string}`）。这一个实现同时覆盖两种场景——默认指向本地 Ollama（`http://localhost:11434/v1`，模型如 `nomic-embed-text` 或 `bge-m3`），远程 API 只需改 base_url + model。**API Key 仍只走环境变量**：config 里只写环境变量名（如 `kb.embed.key_env: EMBED_API_KEY`），空表示免鉴权（Ollama 场景）。
 
@@ -46,7 +46,7 @@
        key_env: ""        # 环境变量名；空 = 免鉴权（本地）
    ```
 
-**决策记录（必交）**：写 `docs/decisions/2026-08-18-m4-kb-architecture.md`，至少覆盖三件事：① 向量存储选型结论（sqlite-vec vs 纯 Go，对照 CGO-free 硬约束给出实测或明确依据）；② 嵌入 provider 默认（本地 Ollama 优先、OpenAI 兼容覆盖远程，为何一个实现够用）；③ `kb/retrieval` 落日志机制（如何在不改 loop 结构的前提下满足 D3）。
+**决策记录（必交）**：写 `docs/decisions/2026-08-18-m4-kb-architecture.md`，至少覆盖三件事：① 向量存储选型结论（按 research-m4-kb 的 A/B/C 三档，对照 CGO-free 硬约束给出实测或明确依据；若选 B 记录依赖升级；若选 A 说明为何个人规模暴力索引足够）；② 嵌入 provider 默认（本地 Ollama 优先、OpenAI 兼容覆盖远程，为何一个实现够用）；③ `kb/retrieval` 落日志机制（如何在不改 loop 结构的前提下满足 D3）。
 
 **约束**（严格遵守 design.md 第 10 节 D1–D10）：
 
@@ -57,7 +57,7 @@
 - 保持 CGO-free；Go 沙箱绕行沿用项目内缓存（`.gomodcache` / `.gocache` / `.gopath`）。
 - 原有测试必须保持绿色；索引数据落 `data/kb/`（不入库）。
 
-**参考源码**：dsh 没有 RAG/知识库实现，设计以 design.md §8 为准。参考结构模板：`D:\dev-projects\Agent\deepseek-harness\packages\web\`（能力三件套：Service Definition + Provider 注册 + tool Consumer 的包划分）、`packages\core\tools\`（工具 schema 与执行管道）。只借鉴思路，不照搬代码。
+**参考源码**：dsh 没有 RAG/知识库实现，设计以 design.md §8 为准，外部选型依据以 `docs/research-m4-kb.md` 为准。参考结构模板：`D:\dev-projects\Agent\deepseek-harness\packages\web\`（能力三件套：Service Definition + Provider 注册 + tool Consumer 的包划分）、`packages\core\tools\`（工具 schema 与执行管道）。只借鉴思路，不照搬代码。
 
 **自测（全部通过后提交，提交信息含 M4）**：`go vet ./...`、`go test ./...`、`go build ./...`。新增测试至少覆盖：检索返回正确片段+来源（mock 嵌入 + 临时目录 Markdown 样本）、**换 Provider 消费方代码不变**（同一工具代码对两个 Provider 跑通，验证接口边界）、分块（标题感知 + 上限）、`kb/retrieval` 事件落日志、`kb_search` 结果含来源、增量索引跳过未变文件、kb 默认关闭。
 

@@ -147,9 +147,9 @@ kb 能力 = 三部分（严格对应 seam 结构）：
 ├── Service（接口，internal/kb/service）:
 │     Ingest(source, chunks) / Retrieve(query, topK) → []Chunk{Text, Source, Score}
 ├── Provider（后端，可换）:
-│     local: SQLite + 向量扩展（sqlite-vec，M4 评估 CGO 需求；
-│             若不便利则纯 Go 向量索引，接口不变）
-│     remote: pgvector / Qdrant + API 嵌入（备选）
+│     local: 进程内暴力余弦索引 / modernc sqlite vec 扩展（CGO-free，
+│             选型依据见 docs/research-m4-kb.md；M4 落地时 ADR 定夺）
+│     remote: pgvector / Qdrant + API 嵌入（备选，接口预留）
 └── Consumer（工具，注册进 tools）:
       kb_search(query, topK)   → 片段 + 来源
       kb_add(source, text)     → 分块入库
