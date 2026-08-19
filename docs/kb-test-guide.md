@@ -5,12 +5,15 @@
 
 ## 0. 启用（用独立测试配置，不影响默认 config.yaml）
 
-配置文件已就绪：`config.kb-test.yaml`（`kb.enabled: true`，独立库 `data/kb/knowledge.sqlite`）。
+配置文件已就绪：`config.kb-test.yaml`（`kb.enabled: true`，独立库 `data/kb/knowledge.sqlite`）。一键脚本已就绪：`run-kb-test.ps1`（自动检查 API Key → 缺 pa.exe 则构建 → 用测试配置启动）。
 
 ```powershell
-# 首次：构建
-C:\Program Files\Go\bin\go.exe build -o pa.exe ./cmd/pa
-# 启动（指定测试配置）
+# 方式 A：一键脚本（推荐）
+.\run-kb-test.ps1
+
+# 方式 B：手动
+$env:DEEPSEEK_API_KEY = "sk-..."          # 环境变量，绝不写进配置
+go build -o pa.exe ./cmd/pa               # 缺 pa.exe 时先构建（构建产物不入 git）
 .\pa.exe --config config.kb-test.yaml
 ```
 
