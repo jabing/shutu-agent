@@ -169,7 +169,7 @@ M5 立项前必须回答三个基线问题：
       ModelInvocable, UserInvocable bool
   }
   ```
-  - **注册表**：多 Provider 按名共存；同名按 rank 优先后 provider 序、注册序裁决（dsh 同款）。默认文件系统 Provider 扫描根（按 rank）：`<projectRoot>/.dsh/skills`（100）、`<projectRoot>/.agents/skills`（200）、用户目录 `<userHome>/.dsh/skills`（300，config 可加自定义目录）。技能身份：kebab-case 名，`<name>/SKILL.md` 目录束或 `<name>.md` 平铺文件（不递归发现）。frontmatter 支持 `disable-model-invocation` / `user-invocable`。
+  - **注册表**：多 Provider 按名共存；同名按 rank 优先后 provider 序、注册序裁决（dsh 同款）。默认文件系统 Provider 扫描根（按 rank）：`<projectRoot>/.dsh/skills`（100）、`<projectRoot>/.agents/skills`（200）、config 自定义目录 `skill.dirs`（300）、用户目录 `<userHome>/.dsh/skills`（400）。技能身份：kebab-case 名，`<name>/SKILL.md` 目录束或 `<name>.md` 平铺文件（不递归发现）。frontmatter 支持 `disable-model-invocation` / `user-invocable`（缺省均 true），描述取 frontmatter `description` 或正文首行。
   - **目录注入（D3）**：会话开始时（pre-step 扩展点注入器，M5b 统一机制的消费者），把**技能目录**（排序后的 `name + description`，不塞正文/路径/来源）注入为 `user/message`（或 system-reminder），并在 `skill/catalog` 事件落日志。目录变更重读（组合根轮询或变更回调）。
   - **Consumer（工具）**：`skill_load(name)`——校验 kebab-case → 查目录 → 加载完整正文返回给模型（`<skill_content>`）。默认关（D10）。模型按需调用。
   - **事件（D3）**：`skill/catalog`（目录注入，含条目数/版本）、`skill/load`（加载记录，含技能名/来源/正文摘要）。`DeriveHistory` 视为不透明数据。
@@ -177,6 +177,8 @@ M5 立项前必须回答三个基线问题：
   - **本段明确不做（dsh 裁剪）**：scope 分层/宿主+按 scope 分层（无插件系统）、chokidar 文件监视自动失效（v1 用组合根按需重读，变更后下一次 pre-step 重取）、远程技能 Provider、打包 badge 技能（bundled 技能可后续用 `skill.dirs` 指向项目内目录实现）。
 
 **理由**：技能 = "可复用指令的发现与按需加载"，与个人 agent"把常用流程沉淀成可复用能力"直接同构（本项目自身的 `skills/` 就是活例）。dsh 的 provider 注册表 + 文件系统发现 + 目录注入 + `skill` 加载工具四件套是干净模板，Go 裁剪后零新依赖。
+
+**实施说明（M5d-1，2026-08-19）**：前半（注册表接缝 + 文件系统 Provider）已交付。一处相对上文措辞的修正：**发现优先级 rank 采用 dispatch-m5d 的 100 `project-dsh` / 200 `project-agents` / 300 `custom`（`skill.dirs`）/ 400 `user-dsh`**（上段原文误把用户目录记为 300，已更正；顺带明确"描述取 frontmatter `description` 或正文首行"）。实现决策：注册表对 provider `List` 失败或非法 candidate 采取 **fail-closed**（错误上抛；文件系统 Provider 对缺失根返回空目录而非错误，故日常发现不报错）；`Get` 对无效 kebab-case 名返回 `ErrInvalidName`、未命中返回 `(nil, nil)`、加载定义 name 与请求名失配则拒绝报错。frontmatter 解析用项目已钉的 `gopkg.in/yaml.v3`（零新依赖）。工具 / `skill/*` 事件 / config / PreStep 目录注入接线为 M5d-2。
 
 ---
 
