@@ -51,7 +51,7 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 | **M6a 定时调度** | `schedule` 接口（多 Provider 注册表）+ 间隔/cron 实现 + `schedule_*` 工具 + `schedule/*` 事件 + config | 定时任务到期触发（事件 + 入队 job，D5）；可观察/取消；默认关闭 | ✅ 2026-08-19 验收通过（M6a-1 `85cd9a3`+`5aeb9e5`+`ef9011a`；M6a-2 `2d5aed4`+`d599e4f`+`84b0346`+`3fb43fd`） |
 | **M6b 任务规划** | `plan` 接口（goal→plan→todo 三层）+ 规划/推进工具 + `plan/*` 事件 + config | 多步任务拆解/跟踪/推进（执行可委托子代理）；默认关闭 | ✅ 2026-08-19 验收通过（M6b-1 `e006a9e`+`eaf13e9`；M6b-2 `69e57cd`+`437028c`+`1b6b62b`+`512896f`） |
 | **M6c 长期记忆** | `spill` 接口（跨会话记忆 Provider）+ 自动沉淀/召回 + `spill/*` 事件 + config | 对话衍生记忆自动沉淀并可召回；与 kb（显式知识）接缝独立；默认关闭 | ✅ 2026-08-19 验收通过（M6c-1 `b087b22`+`949c84e`+`4ae6a42`；M6c-2 `f88ad7b`+`9f80bf8`+`32ec136`+`717ed92`） |
-| **M6d 人工审批** | `interact` 接口（审批请求/响应）+ 敏感工具门 + `interact/*` 事件 + config | 敏感操作执行前经人工确认（CLI 侧）；默认关闭 | ⬜ |
+| **M6d 人工审批** | `interact` 接口（审批请求/响应）+ 敏感工具门 + `interact/*` 事件 + config | 敏感操作执行前经人工确认（CLI y/n，fail-closed）；默认关闭 | ✅ 2026-08-19 验收通过（M6d-1 `6d32daa`+`d277ba2`；M6d-2 `8a3ad1b`+`6cd032a`+`0b01683`+`fb578e3`+`0118169`） |
 | **M6e 代码沙箱** | `code` 接口（沙箱 Provider）+ 本地子进程隔离实现 + `code_run` 工具 + `code/*` 事件 + config | 模型生成代码在受控沙箱执行（超时/配额/默认无网络）；补强 M3 `run_command`；默认关闭 | ⬜ |
 | **M6f 工具生态** | `mcp` 接口（MCP 客户端，JSON-RPC 自实现优先）+ `fs`/workspace 统一封装 + 工具 + `mcp/*` 事件 + config | 外部工具/服务经 MCP 接入；文件操作统一封装；默认关闭 | ⬜ |
 
