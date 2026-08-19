@@ -30,6 +30,7 @@ import (
 	"personal-agent/internal/prompt"
 	"personal-agent/internal/session"
 	"personal-agent/internal/store"
+	"personal-agent/internal/subagent"
 	"personal-agent/internal/tools"
 )
 
@@ -125,6 +126,19 @@ func main() {
 	if app.jobs != nil {
 		defer app.jobs.Close()
 	}
+	// M5b-2: wire the subagent seam — spawn provider + Runtime + the four
+	// subagent_* tools + the D3 event sink — when subagent.enabled (默认关闭,
+	// D10). config.applyDefaults already whitelisted the subagent_* names when
+	// subagent.enabled was true. The deferred Close cancels and awaits every
+	// live child at shutdown so no background goroutine leaks (lifecycle
+	// reversible, ADR 决策 ②).
+	if err := app.registerSubagent(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
+	if app.subagents != nil {
+		defer app.subagents.Close()
+	}
 	if err := app.startup(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
@@ -144,6 +158,7 @@ type app struct {
 	currentID string
 	log       *session.Log
 	jobs      *jobs.Local // nil when jobs disabled (D10)
+	subagents subagent.Runtime // nil when subagent disabled (D10)
 }
 
 // startup resumes the most recently updated session, or starts a fresh one.
