@@ -1363,3 +1363,94 @@ func TestInteractEventsMixedWithConversationDeriveOnlyConversation(t *testing.T)
 		t.Fatalf("log events = %d, want 4 (append-only)", got)
 	}
 }
+
+// TestCodeRunEventAppendsAndReplays verifies the M6e-2 code/run vocabulary
+// (dispatch-m6e-2 §1 / D3): it appends with the next Seq/version, round-trips
+// its payload through the durable sink, survives a restart replay, and never
+// derives into model messages (log-only — the model sees the run outcome
+// through code_run's tool/result).
+func TestCodeRunEventAppendsAndReplays(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	if _, err := l.Append(EventCodeRun, NewCodeRun("sh", 0, false, false)); err != nil {
+		t.Fatalf("append code/run: %v", err)
+	}
+	if _, err := l.Append(EventCodeRun, NewCodeRun("sh", 3, true, true)); err != nil {
+		t.Fatalf("append code/run (timed out): %v", err)
+	}
+	events := l.Events()
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want 2", len(events))
+	}
+	for i, ev := range events {
+		if ev.Type != EventCodeRun {
+			t.Fatalf("type %d = %q, want %q", i, ev.Type, EventCodeRun)
+		}
+		if ev.Version != EventVersion {
+			t.Fatalf("event %d version = %d, want %d", i, ev.Version, EventVersion)
+		}
+	}
+	// JSON round-trip of each payload.
+	var ok codeRunData
+	if err := json.Unmarshal(events[0].Data, &ok); err != nil {
+		t.Fatalf("unmarshal code/run: %v", err)
+	}
+	if ok.Lang != "sh" || ok.ExitCode != 0 || ok.TimedOut || ok.Truncated {
+		t.Fatalf("code/run payload = %+v, want lang sh / exit 0 / no markers", ok)
+	}
+	var ko codeRunData
+	if err := json.Unmarshal(events[1].Data, &ko); err != nil {
+		t.Fatalf("unmarshal code/run (timed out): %v", err)
+	}
+	if ko.Lang != "sh" || ko.ExitCode != 3 || !ko.TimedOut || !ko.Truncated {
+		t.Fatalf("code/run timed-out payload = %+v, want lang sh / exit 3 / timedOut+truncated", ko)
+	}
+	if len(persisted) != 2 || persisted[0].Type != EventCodeRun {
+		t.Fatalf("sink (append path) = %+v", persisted)
+	}
+	// Restart replay: a fresh log rebuilt from what was persisted still sees
+	// every code/run event, and deriving history treats them all as opaque data
+	// (log-only, like the M5/M6 events).
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	for i, ev := range fresh.Events() {
+		if ev.Type != EventCodeRun {
+			t.Fatalf("replayed type %d = %q, want %q", i, ev.Type, EventCodeRun)
+		}
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
+		t.Fatalf("code/run events must not derive into messages: %+v", msgs)
+	}
+}
+
+// TestCodeRunEventMixedWithConversationDeriveOnlyConversation verifies the
+// log-only contract: code/run rows interleaved with a real conversation do not
+// appear in the derived history, and the conversation round-trips unchanged
+// (D4 — adding the event never changes the turn/step structure).
+func TestCodeRunEventMixedWithConversationDeriveOnlyConversation(t *testing.T) {
+	l := New()
+	l.Append(EventUserMessage, NewUserMessage("run a quick script"))
+	l.Append(EventCodeRun, NewCodeRun("sh", 0, false, false))
+	l.Append(EventAssistantMessage, NewAssistantMessage("Ran it.", nil, "stop"))
+	l.Append(EventCodeRun, NewCodeRun("sh", 7, true, true))
+	msgs := l.DeriveHistory()
+	if len(msgs) != 2 {
+		t.Fatalf("derived %d messages, want 2 (conversation only): %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "run a quick script" {
+		t.Fatalf("msg0 = %+v", msgs[0])
+	}
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Ran it." {
+		t.Fatalf("msg1 = %+v", msgs[1])
+	}
+	// D1: the code/run rows stay physically in the log.
+	if got := len(l.Events()); got != 4 {
+		t.Fatalf("log events = %d, want 4 (append-only)", got)
+	}
+}

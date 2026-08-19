@@ -152,6 +152,17 @@ const (
 	EventInteractResolve = "interact/resolve"
 	EventInteractDeny    = "interact/deny"
 	EventInteractStatus  = "interact/status"
+
+	// M6e-2 code-sandbox events (design.md §3 / ADR 2026-08-19-m6-agent-full.md
+	// 决策 M6e / dispatch-m6e-2 §1): code/run lands when code_run completes a
+	// sandbox execution (a run that happened — zero or non-zero exit, with or
+	// without a timeout/truncation marker; a run that failed to happen at all
+	// surfaces as tool/error instead). It is log-only (D3): the model sees the
+	// run outcome through code_run's tool/result, and DeriveHistory treats this
+	// type as opaque data, so adding it never changes the turn/step structure
+	// (D4). The payload is a pure data projection — the session package never
+	// imports the code package.
+	EventCodeRun = "code/run"
 )
 
 // EventVersion is the current event vocabulary version. It is stored per event
@@ -960,4 +971,21 @@ func NewInteractDeny(id string) any {
 // interact_status reports a request's current status (dispatch-m6d-2 §1 / D3).
 func NewInteractStatus(id, status string) any {
 	return interactStatusData{ID: id, Status: status}
+}
+
+// codeRunData is the code/run payload: the executed language and the outcome
+// markers of one sandbox run. The full stdout/stderr live in the tool/result
+// event — this record is a lean log fact. DeriveHistory treats it as opaque
+// data.
+type codeRunData struct {
+	Lang      string `json:"lang"`
+	ExitCode  int    `json:"exitCode"`
+	TimedOut  bool   `json:"timedOut"`
+	Truncated bool   `json:"truncated"`
+}
+
+// NewCodeRun builds the code/run payload recorded when code_run completes a
+// sandbox execution (dispatch-m6e-2 §1 / D3).
+func NewCodeRun(lang string, exitCode int, timedOut, truncated bool) any {
+	return codeRunData{Lang: lang, ExitCode: exitCode, TimedOut: timedOut, Truncated: truncated}
 }
