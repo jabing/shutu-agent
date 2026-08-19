@@ -180,6 +180,8 @@ M5 立项前必须回答三个基线问题：
 
 **实施说明（M5d-1，2026-08-19）**：前半（注册表接缝 + 文件系统 Provider）已交付。一处相对上文措辞的修正：**发现优先级 rank 采用 dispatch-m5d 的 100 `project-dsh` / 200 `project-agents` / 300 `custom`（`skill.dirs`）/ 400 `user-dsh`**（上段原文误把用户目录记为 300，已更正；顺带明确"描述取 frontmatter `description` 或正文首行"）。实现决策：注册表对 provider `List` 失败或非法 candidate 采取 **fail-closed**（错误上抛；文件系统 Provider 对缺失根返回空目录而非错误，故日常发现不报错）；`Get` 对无效 kebab-case 名返回 `ErrInvalidName`、未命中返回 `(nil, nil)`、加载定义 name 与请求名失配则拒绝报错。frontmatter 解析用项目已钉的 `gopkg.in/yaml.v3`（零新依赖）。工具 / `skill/*` 事件 / config / PreStep 目录注入接线为 M5d-2。
 
+**实施说明（M5d-2，2026-08-19）**：Consumer 面（`skill/*` 事件 + `skill_load` 工具 + config + PreStep 目录注入接线）已交付。事件经组合根的 onEvent sink 落日志，全部在串行工具 / pre-step 路径（D5）。实现决策：`skill/catalog` 的 version 取排序目录（name+description）的 sha256 内容摘要（截断 8 字节，零新依赖，便于消费者检测目录漂移）；`skill_load` 把正文以 `<skill_content name=...>` 包裹返回、按 `body_max_chars`（默认 8000）Unicode 安全截断，正文摘要 200-rune 有界入 `skill/load` 事件；目录注入器 `Name: "skill"` 挂在 loop PreStep（compaction 之后），每 turn 重读（无文件监视），注入按 `catalog_max_chars`（默认 500）有界、只含 name+description。`disable-model-invocation` / `user-invocable` 已解析入库但 v1 工具不据此门控（dispatch-m5d-2 工具流程未含该门控），后续按需。组合根 `registerSkills` 在 `skill.enabled` 时创建 filesystem Provider（ProjectRoot/UserHome 默认 cwd / 用户主目录，app 级 override 供测试固定根）并注册 `skill_load`（config 自动白名单）；disabled 零操作（D10）。
+
 ---
 
 ## 后果
