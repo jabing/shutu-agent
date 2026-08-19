@@ -48,7 +48,14 @@ personal-agent/
 │   ├── jobs/                 # 后台任务（M5a）：owner-fenced job 注册表 + 本地实现 + job_* 工具
 │   ├── subagent/             # 子代理（M5b）：provider 注册表 + spawn 实现 + 委托/控制/报告工具
 │   ├── compaction/           # 上下文压缩（M5c）：压缩接缝 + 摘要 provider + /compact
-│   └── skill/                # 技能（M5d）：provider 注册表 + 文件系统发现 + skill 加载工具
+│   ├── skill/                # 技能（M5d）：provider 注册表 + 文件系统发现 + skill 加载工具
+│   ├── schedule/             # 定时调度（M6a）：provider 注册表 + 触发/入队 job
+│   ├── plan/                 # 任务规划（M6b）：goal→plan→todo + 规划/推进工具
+│   ├── spill/                # 长期记忆（M6c）：跨会话记忆 provider + 自动沉淀/召回
+│   ├── interact/             # 人工审批（M6d）：审批请求/响应接缝（CLI 侧）
+│   ├── code/                 # 代码沙箱（M6e）：沙箱 provider + 本地子进程隔离实现
+│   ├── mcp/                  # 外部工具生态（M6f）：MCP 客户端接缝（JSON-RPC 自实现优先）
+│   └── fs/                   # 文件/工作区统一封装（M6f）
 ├── docs/
 │   ├── design.md             # 本文件（设计基线）
 │   └── decisions/            # 决策记录 ADR：YYYY-MM-DD-<slug>.md
@@ -74,6 +81,7 @@ type Event struct {
 - **v1 事件类型**：`user/message`、`assistant/chunk`（流式保真）、`assistant/message`、`tool/result`、`tool/error`。
 - **M4 增加**：`kb/recall`（主动召回注入）、`kb/extract`（提取回写结果）、`kb/add`（显式写入）。
 - **M5 增加**（参照 dsh 四个能力族，ADR `2026-08-18-m5-agent-core.md`）：`job/start|status|done`（后台任务）、`subagent/start|end|report`（子代理）、`compaction/start|summary|end|prune`（上下文压缩，摘要本身作为带 `surfaceOp: replace` 的 `user/message` 遮蔽旧范围）、`skill/catalog|load`（技能目录与加载）。全部 log-only，`DeriveHistory` 视为不透明数据（compaction 除外：其为派生规则输入，折叠时跳过被遮蔽 seq）。
+- **M6 增加**（能力补全，ADR `2026-08-19-m6-agent-full.md`）：`schedule/*`（定时调度）、`plan/*`（任务规划）、`spill/*`（长期记忆）、`interact/*`（人工审批）、`code/*`（代码沙箱）、`mcp/*`（外部工具生态）。同样全部 log-only，逐段派发时细化各事件类型。
 - **新输入 ⇒ 新事件类型**，绝不在内存里拼 prompt 而不记录。
 - `DeriveHistory() []llm.Message` 是纯函数：从日志折叠出模型历史；未来加过滤（如截断/压缩）只改折叠规则。
 - 持久化 = 追加写入（SQLite 单表或 JSONL），启动时重放重建内存日志。事件类型带 `Version` 字段预留迁移。
@@ -221,6 +229,7 @@ kb 能力 = 三部分（严格对应 seam 结构）：
 | M3 | 安全白名单 + 超时/输出截断 + CLI 完善（Web 可选） | ~1 周 | 工具仅白名单内可执行；取消即时生效 |
 | M4 | 知识库能力（拆三段：M4a 内核 → M4b 工具与召回 → M4c 提取回写） | 1–2 周 | 对话产生可复用知识能被提取并检索引用（含中文）；显式 `kb_add` 可写；`kb_search`/`kb_read`/`kb/recall`/`kb/extract`/`kb/add` 落日志；换 Provider 不改消费方 |
 | M5 | 核心能力四段（ADR `2026-08-18-m5-agent-core.md`）：M5a 后台任务 → M5b 子代理 → M5c 上下文压缩 → M5d 技能 | 按四段逐段验收 | 四段各自验收标准（见各 dispatch 文档）全部达标才算 M5 完成 |
+| M6 | 能力补全六段（ADR `2026-08-19-m6-agent-full.md`）：M6a 定时调度 → M6b 任务规划 → M6c 长期记忆 → M6d 人工审批 → M6e 代码沙箱 → M6f 工具生态 | 按六段逐段验收 | 六段各自验收标准（见各 dispatch 文档）全部达标才算 M6 完成；默认关、零新依赖（M6f MCP 优先自实现，SDK 仅当协议超限才评估） |
 
 ---
 

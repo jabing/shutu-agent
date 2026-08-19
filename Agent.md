@@ -26,7 +26,9 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 
 **2026-08-18**：M3 完成并通过验收（提交 `1dda2ed`，ADR `2026-08-18-m3-sandbox-scope`）。M4 知识库**三段全部完成并通过验收**：M4a 内核（`682f07e`）、M4b 工具与召回（`bdd903d`）、M4c 提取回写（`5e98fa7`）。方向：**参照 dsh-knowledge（已下载 `../dsh-knowledge`，FTS5 全文检索 + 提取回写，非向量 RAG，方案已实测）**，调研见 `docs/research-m4-kb.md`，派发见 `docs/dispatch-m4a/b/c.md`，ADR `2026-08-18-m4-kb-architecture.md` 完整定稿七项决策。
 
-**2026-08-19**：M5 核心能力启动（用户拍板"必须、先实现"；ADR `2026-08-18-m5-agent-core.md` 定稿四段决策）。**M5 四段全部完成并通过验收**（每段由控制会话亲自 vet/test/build 验收、对照 D1–D10 审 diff）：M5a 后台任务（M5a-1 `34bf1e8`+`5f3abd4`、M5a-2 `4c0a25e`+`dbe07fc`+`b1d3535`+`6d91af7`）→ M5b 子代理（`55f1b63`+`34c302c`+`8a3f648`、`8c7f1b3`+`070039e`+`27acada`+`e8dcec0`+`78fd6a6`）→ M5c 上下文压缩（`76c41db`、`2188b4d`+`0ffa4e4`+`4669c2e`、`a5219ac`、`c4b5e88`+`e9b2b9c`）→ M5d 技能（`b2d93fc`+`453b288`+`0c38de5`+`400e06c`+`75d892c`、`cb09853`+`17cfe10`+`935ffdc`+`6859000`+`07a82ce`）。**下一步（后置）**：KB 最小集 ①②（文档摄取 + 条目 List/Delete/Markdown 导出），再全量 dsh-knowledge 功能。
+**2026-08-19**：M5 核心能力启动（用户拍板"必须、先实现"；ADR `2026-08-18-m5-agent-core.md` 定稿四段决策）。**M5 四段全部完成并通过验收**（每段由控制会话亲自 vet/test/build 验收、对照 D1–D10 审 diff）：M5a 后台任务（M5a-1 `34bf1e8`+`5f3abd4`、M5a-2 `4c0a25e`+`dbe07fc`+`b1d3535`+`6d91af7`）→ M5b 子代理（`55f1b63`+`34c302c`+`8a3f648`、`8c7f1b3`+`070039e`+`27adaca`+`e8dcec0`+`78fd6a6`）→ M5c 上下文压缩（`76c41db`、`2188b4d`+`0ffa4e4`+`4669c2e`、`a5219ac`、`c4b5e88`+`e9b2b9c`）→ M5d 技能（`b2d93fc`+`453b288`+`0c38de5`+`400e06c`+`75d892c`、`cb09853`+`17cfe10`+`935ffdc`+`6859000`+`07a82ce`）。
+
+**2026-08-19（续）**：与 dsh 差距评估——M5 后除知识库/Web 接口外，个人 Agent 的实质能力缺口为：定时调度、任务规划、长期记忆、人工审批（任务类）+ 代码沙箱、工具生态/fs 封装（代码类）。用户拍板"需要补全"→ 定稿 **M6 能力补全六段**（ADR `2026-08-19-m6-agent-full.md`）：M6a 定时调度 → M6b 任务规划 → M6c 长期记忆 → M6d 人工审批 → M6e 代码沙箱 → M6f 工具生态。全部接缝挂薄核心（D4）、默认关（D10）、零新依赖（M6f MCP 优先自实现）。**下一步：M6a 定时调度**（派发见 `docs/dispatch-m6a.md`）。
 
 ## 4. 路线图
 
@@ -45,6 +47,13 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 | **M5b 子代理** | `subagent` 接口（多 Provider 注册表）+ spawn 实现 + 委托/控制/报告工具 + `subagent/*` 事件 + config | 子代理独立会话日志可回放；结果回传父会话；后台续跑走 job；默认关闭 | ✅ 2026-08-19 验收通过（M5b-1 `55f1b63`+`34c302c`+`8a3f648`；M5b-2 `8c7f1b3`+`070039e`+`27acada`+`e8dcec0`+`78fd6a6`） |
 | **M5c 上下文压缩** | `compaction` 接缝 + 摘要 provider + tool-result 剪枝 + `/compact` + `compaction/*` 事件 + config + PreStep 自动压缩 | 超预算触发压缩；摘要经 surfaceOp.replace user/message 遮蔽旧范围且日志仍追加式；tool-call/result 配对不被切断；默认关闭 | ✅ 2026-08-19 验收通过（M5c-1a `76c41db`；M5c-1b `2188b4d`+`0ffa4e4`+`4669c2e`；M5c-2a `a5219ac`；M5c-2b `c4b5e88`+`e9b2b9c`） |
 | **M5d 技能** | `skill` 接口（多 Provider 注册表）+ 文件系统发现 + 目录注入 + `skill` 加载工具 + `skill/*` 事件 + config | 目录注入有界；按需加载完整正文；默认关闭 | ✅ 2026-08-19 验收通过（M5d-1 `b2d93fc`+`453b288`+`0c38de5`+`400e06c`+`75d892c`；M5d-2 `cb09853`+`17cfe10`+`935ffdc`+`6859000`+`07a82ce`） |
+| **M6 能力补全**（六段，ADR `2026-08-19-m6-agent-full.md`） | 拆为 M6a/b/c/d/e/f 依次验收 | 全部达标才算 M6 完成 | ⬜ 已定稿 ADR，待派发 |
+| **M6a 定时调度** | `schedule` 接口（多 Provider 注册表）+ 间隔/cron 实现 + `schedule_*` 工具 + `schedule/*` 事件 + config | 定时任务到期触发（事件 + 入队 job，D5）；可观察/取消；默认关闭 | ⬜ |
+| **M6b 任务规划** | `plan` 接口（goal→plan→todo 三层）+ 规划/推进工具 + `plan/*` 事件 + config | 多步任务拆解/跟踪/推进（执行可委托子代理）；默认关闭 | ⬜ |
+| **M6c 长期记忆** | `spill` 接口（跨会话记忆 Provider）+ 自动沉淀/召回 + `spill/*` 事件 + config | 对话衍生记忆自动沉淀并可召回；与 kb（显式知识）接缝独立；默认关闭 | ⬜ |
+| **M6d 人工审批** | `interact` 接口（审批请求/响应）+ 敏感工具门 + `interact/*` 事件 + config | 敏感操作执行前经人工确认（CLI 侧）；默认关闭 | ⬜ |
+| **M6e 代码沙箱** | `code` 接口（沙箱 Provider）+ 本地子进程隔离实现 + `code_run` 工具 + `code/*` 事件 + config | 模型生成代码在受控沙箱执行（超时/配额/默认无网络）；补强 M3 `run_command`；默认关闭 | ⬜ |
+| **M6f 工具生态** | `mcp` 接口（MCP 客户端，JSON-RPC 自实现优先）+ `fs`/workspace 统一封装 + 工具 + `mcp/*` 事件 + config | 外部工具/服务经 MCP 接入；文件操作统一封装；默认关闭 | ⬜ |
 
 ## 5. 开发纪律（每轮工作前过一遍）
 
@@ -100,6 +109,7 @@ go run ./cmd/pa       # 启动 REPL（M1 后可用，需 DEEPSEEK_API_KEY）
 - dsh 能力接缝：[`../deepseek-harness/docs/capability-seams.md`](../deepseek-harness/docs/capability-seams.md)
 - M4 参照插件（知识库，FTS5 + 提取回写）：[`../dsh-knowledge/`](../dsh-knowledge/)（[GitHub](https://github.com/lemoncat7/dsh-knowledge)）+ 调研 [`docs/research-m4-kb.md`](docs/research-m4-kb.md)
 - M5 参照四个能力族：[`../deepseek-harness/packages/jobs/`](../deepseek-harness/packages/jobs/)、[`../deepseek-harness/packages/subagent/`](../deepseek-harness/packages/subagent/)、[`../deepseek-harness/packages/compaction/`](../deepseek-harness/packages/compaction/)、[`../deepseek-harness/packages/skill/`](../deepseek-harness/packages/skill/) + 子系统文档 [`docs/subsystems/{jobs,subagent,compaction,skills}.md`](../deepseek-harness/docs/subsystems/jobs.md)；M5 主 ADR `docs/decisions/2026-08-18-m5-agent-core.md`
+- M6 参照六个能力族：[`../deepseek-harness/packages/schedule/`](../deepseek-harness/packages/schedule/)、[`goal/`](../deepseek-harness/packages/goal/)、[`plan/`](../deepseek-harness/packages/plan/)、[`todo/`](../deepseek-harness/packages/todo/)、[`spill/`](../deepseek-harness/packages/spill/)、[`interaction/`](../deepseek-harness/packages/interaction/)、[`code-runtime/`](../deepseek-harness/packages/code-runtime/)、[`mcp/`](../deepseek-harness/packages/mcp/)、[`fs/`](../deepseek-harness/packages/fs/)；M6 主 ADR `docs/decisions/2026-08-19-m6-agent-full.md`
 
 ### 源码参考（`../deepseek-harness/packages/`）
 
@@ -118,3 +128,9 @@ go run ./cmd/pa       # 启动 REPL（M1 后可用，需 DEEPSEEK_API_KEY）
 | `subagent`（M5b） | `../deepseek-harness/packages/subagent/{subagent,subagent-spawn-in-process,tool-subagent,tool-subagent-control,tool-subagent-report}/` | Provider 注册表、委托/控制/报告、子代理会话 |
 | `compaction`（M5c） | `../deepseek-harness/packages/compaction/{compaction,compaction-basic,compaction-tool-result-pruner,command-compact}/` | 压缩接缝、摘要 provider、tool-result 剪枝、人工命令 |
 | `skill`（M5d） | `../deepseek-harness/packages/skill/{skill,skill-filesystem,tool-skill}/` | 技能 provider 注册表、文件系统发现、目录/加载工具 |
+| `schedule`（M6a） | `../deepseek-harness/packages/schedule/` | 定时调度 provider 注册表、触发语义 |
+| `plan`（M6b） | `../deepseek-harness/packages/{goal,plan,todo}/` | goal→plan→todo 规划模型、推进工具 |
+| `spill`（M6c） | `../deepseek-harness/packages/spill/` | 跨会话记忆、自动沉淀/召回 |
+| `interact`（M6d） | `../deepseek-harness/packages/interaction/` | 审批请求/响应交互 |
+| `code`（M6e） | `../deepseek-harness/packages/{code-runtime,e2b}/` | 沙箱 provider 接口、代码执行 |
+| `mcp`/`fs`（M6f） | `../deepseek-harness/packages/{mcp,fs,workspace}/` | MCP 客户端、文件/工作区封装 |
