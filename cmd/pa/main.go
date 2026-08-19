@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"personal-agent/internal/code"
 	"personal-agent/internal/compaction"
 	"personal-agent/internal/config"
 	"personal-agent/internal/interact"
@@ -67,7 +68,12 @@ func main() {
 	// M3: the Execute pipeline's safety policy — whitelist, deadline, output
 	// cap with spill to <data_dir>/spill (design.md §5).
 	reg := tools.New()
-	reg.SetPolicy(tools.PolicyFromConfig(cfg.Tools, cfg.DataDir))
+	pol := tools.PolicyFromConfig(cfg.Tools, cfg.DataDir)
+	// M6e-2: code.timeout is the outer per-tool deadline bound for code_run
+	// (mirrors tools.run_command.timeout) — the config value, after
+	// applyDefaults, is authoritative for sandbox runs.
+	pol.CodeRun.Timeout = cfg.Code.Timeout.Duration
+	reg.SetPolicy(pol)
 	// The read-only built-ins are always registered; the whitelist gates their
 	// execution. The execution-class tool is registered only when enabled
 	// (默认关闭, D10).
@@ -214,6 +220,20 @@ func main() {
 	if app.spills != nil {
 		defer app.spills.Close()
 	}
+	// M6e-2: wire the code seam — local subprocess Provider + Engine + the
+	// code_run tool + the D3 event sink — when code.enabled (默认关闭, D10).
+	// config.applyDefaults already whitelisted code_run when code.enabled was
+	// true. registerCode runs before registerInteracts so the sensitive-tool
+	// gate can wrap code_run too. The deferred Close releases the provider and
+	// rejects further runs at shutdown (lifecycle reversible, ADR 决策 M6e).
+	// code_run executes on the serial tool path (D5) — no background goroutine.
+	if err := app.registerCode(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
+	if app.code != nil {
+		defer app.code.Close()
+	}
 	// M6d-2: wire the interact seam — in-memory Provider + Engine + the two
 	// interact_* tools + the D3 event sink + the sensitive-tool gate — when
 	// interact.enabled (默认关闭, D10). config.applyDefaults already whitelisted
@@ -257,6 +277,7 @@ type app struct {
 	plans      plan.Engine       // nil when plan disabled (D10)
 	spills     spill.Engine      // nil when spill disabled (D10)
 	interacts  interact.Engine   // nil when interact disabled (D10)
+	code       code.Engine       // nil when code disabled (D10)
 
 	// approveInput feeds the sensitive-tool gate's y/n read (nil => os.Stdin).
 	// It exists so the wiring tests can inject canned approval answers; in the
@@ -513,6 +534,12 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 		}
 	} else {
 		fmt.Println("interact: disabled (interact.enabled=false)")
+	}
+	if a.cfg.Code.Enabled {
+		fmt.Printf("code sandbox: enabled (timeout=%s, max_output=%d, sandbox_dir=%q, allow_network=%v)\n",
+			a.cfg.Code.Timeout.Duration, a.cfg.Code.MaxOutput, a.cfg.Code.SandboxDir, a.cfg.Code.AllowNetwork)
+	} else {
+		fmt.Println("code sandbox: disabled (code.enabled=false)")
 	}
 }
 
