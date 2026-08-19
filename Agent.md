@@ -24,7 +24,7 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 
 ## 3. 当前状态
 
-**2026-08-18**：M3 完成并通过验收（提交 `1dda2ed`，ADR `2026-08-18-m3-sandbox-scope`）。M4 方向定稿并拆三段：**参照 dsh-knowledge（已下载 `../dsh-knowledge`，FTS5 全文检索 + 提取回写，非向量 RAG，方案已实测）**，调研见 `docs/research-m4-kb.md`，派发见 `docs/dispatch-m4a/b/c.md`。**M4a 内核已完成并通过验收（提交 `682f07e`，ADR `2026-08-18-m4-kb-architecture.md`）**。**下一步：M4b 工具与召回注入**（按第 8 节交接协议派发）。
+**2026-08-18**：M3 完成并通过验收（提交 `1dda2ed`，ADR `2026-08-18-m3-sandbox-scope`）。M4 方向定稿并拆三段：**参照 dsh-knowledge（已下载 `../dsh-knowledge`，FTS5 全文检索 + 提取回写，非向量 RAG，方案已实测）**，调研见 `docs/research-m4-kb.md`，派发见 `docs/dispatch-m4a/b/c.md`。**M4a 内核已完成并通过验收（提交 `682f07e`）；M4b 工具与召回注入已完成并通过验收（提交 `bdd903d`）**。ADR `2026-08-18-m4-kb-architecture.md` 已定稿检索方案/Provider 抽象/事件机制/工具消费面/召回注入/CLI。**下一步：M4c 回答后提取回写**（按第 8 节交接协议派发）。
 
 ## 4. 路线图
 
@@ -35,7 +35,7 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 | **M3 安全与完善** | 工具白名单/权限；超时与输出截断；取消（Ctrl+C）；CLI 完善（Web 可选） | 未白名单工具拒绝执行；取消即时生效；长输出不爆上下文 | ✅ 2026-08-18 验收通过（`1dda2ed`，ADR `2026-08-18-m3-sandbox-scope`） |
 | **M4 知识库**（三段） | 拆为 M4a/b/c 依次验收 | 全部达标才算 M4 完成 | ⬜ |
 | **M4a 内核** | `kb` 接口（Search/Add/Recall）+ SQLite FTS5 Provider（BM25 + 中文二元组 LIKE 兜底）+ `kb/recall` 事件类型 + config；主 ADR 定稿检索方案 | 中文/英文/混合检索正确；`Add` 后能检索；换 Provider 不改消费方；零新依赖 | ✅ 2026-08-18 验收通过（`682f07e`，ADR `2026-08-18-m4-kb-architecture.md`） |
-| **M4b 工具与召回** | `kb_search`/`kb_read`/`kb_add` 工具（默认关）+ `cmd/pa` 召回注入（catalog + 有界 recall）+ `/kb-status` `/kb-reindex` + `kb/add` 事件 | 工具默认关闭且参数校验；注入走 `kb/recall` 落日志；fail-open | ⬜ |
+| **M4b 工具与召回** | `kb_search`/`kb_read`/`kb_add` 工具（默认关）+ `cmd/pa` 召回注入（catalog + 有界 recall）+ `/kb-status` `/kb-reindex` + `kb/add` 事件 | 工具默认关闭且参数校验；注入走 `kb/recall` 落日志；fail-open | ✅ 2026-08-18 验收通过（`bdd903d`） |
 | **M4c 提取回写** | `KB.Extract`（幂等 `session:turn`、严格 JSON fail-closed、不阻断回答）+ `kb/extract` 事件 + config；补 ADR | 对话产生可复用知识能被提取写入并被后续检索；坏输出 fail-closed | ⬜ |
 | **M5 远期（按需）** | 子代理、后台任务、上下文压缩、技能分节、插件化评估 | 每个功能先有决策记录 | ⬜ |
 
