@@ -50,10 +50,10 @@ const (
 
 // Todo is one actionable step of a plan (dsh tool-todo Todo).
 type Todo struct {
-	ID          string     // engine-issued id ("todo-N")
-	Title       string     // one-line step label
-	Status      Status     // pending by default
-	Details     string     // free-form step notes (optional)
+	ID          string // engine-issued id ("todo-N")
+	Title       string // one-line step label
+	Status      Status // pending by default
+	Details     string // free-form step notes (optional)
 	CreatedAt   time.Time
 	CompletedAt *time.Time // set when Status turns done; cleared on a live status
 }
@@ -62,23 +62,23 @@ type Todo struct {
 // Plan). A plan with an empty GoalID is standalone — it belongs to no goal and
 // is reachable via GetPlan, not through the goal aggregation tree.
 type Plan struct {
-	ID        string   // engine-issued id ("plan-N")
+	ID        string // engine-issued id ("plan-N")
 	Title     string
-	GoalID    string   // owning goal id; "" = independent plan
+	GoalID    string // owning goal id; "" = independent plan
 	Status    Status
-	Steps     []Todo   // ordered todos (creation order)
+	Steps     []Todo // ordered todos (creation order)
 	CreatedAt time.Time
 }
 
 // Goal is the root of the aggregation tree (dsh goal Goal): a one-paragraph
 // objective that owns an ordered list of plan ids.
 type Goal struct {
-	ID          string     // engine-issued id ("goal-N")
+	ID          string // engine-issued id ("goal-N")
 	Title       string
-	Objective   string     // one-paragraph goal description
+	Objective   string // one-paragraph goal description
 	Status      Status
-	Plans       []string   // plan id list in creation order (DAG under the goal)
-	Owner       string     // owning session id (optional)
+	Plans       []string // plan id list in creation order (DAG under the goal)
+	Owner       string   // owning session id (optional)
 	CreatedAt   time.Time
 	CompletedAt *time.Time // set when Status turns done; cleared on a live status
 }
