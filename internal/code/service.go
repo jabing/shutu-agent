@@ -32,6 +32,11 @@
 // killed) is a documented residual risk — it never blocks Run because output
 // is captured to temp files, not pipes.
 //
+// On Windows the code runs through cmd /C as a single non-interactive command
+// line (same boundary as M3's run_command); embedded double quotes must be
+// cmd-compatible because exec.Cmd re-quotes argv when it contains them. There
+// is deliberately no interactive shell and no per-command quoting layer in v1.
+//
 // Execution is foreground and serial (design.md §10 D5): Run blocks until the
 // child exits (or is hard-killed) and returns synchronously; there are no
 // background goroutines or timers. Close is idempotent on both Provider and
