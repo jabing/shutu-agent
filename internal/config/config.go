@@ -68,6 +68,15 @@ const (
 	// 正文有长度上限防超长注入).
 	DefaultSkillCatalogMaxChars = 500
 	DefaultSkillBodyMaxChars    = 8000
+
+	// M6a-2 schedule defaults (dispatch-m6a-2 §2): the serial pre-step clock
+	// advances at the configured cadence; tick_interval defaults to 1m when
+	// absent or non-positive. M6a-2 deliberately has no background ticker (D5)
+	// — the loop's per-turn "schedule" pre-step injector calls Engine.Tick on
+	// the serial path, and tick_interval is the documented cadence knob for
+	// that advancement (reserved for a future gated advance; the value is
+	// parsed and defaulted here regardless).
+	DefaultScheduleTickInterval = time.Minute
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
@@ -88,6 +97,7 @@ type Config struct {
 	Subagent   SubagentConfig   `yaml:"subagent"`    // subagent policy (M5b)
 	Compaction CompactionConfig `yaml:"compaction"`  // context-compaction policy (M5c)
 	Skill      SkillConfig      `yaml:"skill"`       // skill policy (M5d)
+	Schedule   ScheduleConfig   `yaml:"schedule"`    // schedule policy (M6a)
 }
 
 // JobsConfig is the background-job policy (dispatch-m5a-2 §3 / ADR
@@ -165,6 +175,23 @@ type SkillConfig struct {
 	// BodyMaxChars bounds the skill body skill_load returns to the model in
 	// chars (Unicode-safe truncation, 防超长注入); <= 0 means the default 8000.
 	BodyMaxChars int `yaml:"body_max_chars"`
+}
+
+// ScheduleConfig is the schedule policy (dispatch-m6a-2 §2 / ADR
+// 2026-08-19-m6-agent-full.md 决策 M6a). Schedules are off by default (D10):
+// when disabled the composition root neither creates an Engine nor registers
+// or whitelists the schedule_* tools, and no "schedule" pre-step injector is
+// wired.
+type ScheduleConfig struct {
+	// Enabled gates the whole capability: when false, no Provider/Engine is
+	// created and the schedule_* tools are neither registered nor whitelisted,
+	// and no schedule pre-step injector is wired (D10).
+	Enabled bool `yaml:"enabled"`
+	// TickInterval is the cadence of the serial schedule-clock advancement
+	// (per-turn pre-step Engine.Tick). There is no background ticker in M6a-2
+	// (D5); the value is parsed and defaulted here so a future gated advance
+	// can consume it. <= 0 means the default 1m.
+	TickInterval Duration `yaml:"tick_interval"`
 }
 
 // KBConfig is the knowledge-base policy (dispatch-m4a §3 / dispatch-m4b §5).
@@ -414,6 +441,22 @@ func applyDefaults(cfg *Config) {
 	if cfg.Skill.BodyMaxChars <= 0 {
 		cfg.Skill.BodyMaxChars = DefaultSkillBodyMaxChars
 	}
+	// M6a-2 schedule defaults: off by default (D10); the serial clock cadence
+	// is 1m. Enabling schedule whitelists its three consumer tools, so the one
+	// schedule.enabled switch turns the whole capability (Provider + Engine +
+	// tools + pre-step trigger + fire event/job wiring) on (mirrors
+	// kb/jobs/subagent/skill). Non-positive cadence is clamped to the default
+	// (校验非负: a negative configured value can never survive to the wiring).
+	if cfg.Schedule.Enabled {
+		for _, name := range scheduleToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
+	if cfg.Schedule.TickInterval.Duration <= 0 {
+		cfg.Schedule.TickInterval.Duration = DefaultScheduleTickInterval
+	}
 }
 
 // kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /
@@ -439,6 +482,12 @@ var subagentToolNames = []string{"subagent_spawn", "subagent_status", "subagent_
 // here makes the "skill.enabled ⇒ 工具自动白名单" rule a single, tested fact
 // shared by applyDefaults and the composition root.
 var skillToolNames = []string{"skill_load"}
+
+// scheduleToolNames are the schedule consumer tools (dispatch-m6a-2 §3). They
+// are registered and whitelisted only when schedule is enabled; keeping the
+// names here makes the "schedule.enabled ⇒ 工具自动白名单" rule a single, tested
+// fact shared by applyDefaults and the composition root.
+var scheduleToolNames = []string{"schedule_create", "schedule_list", "schedule_delete"}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {

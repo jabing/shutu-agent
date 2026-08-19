@@ -147,3 +147,22 @@ skill:
   # Bound on the skill body skill_load returns to the model, in chars
   # (Unicode-safe truncation, 防超长注入); 0/absent ⇒ 8000.
   body_max_chars: 8000
+
+# Schedule capability (M6a; design.md §10 D2 / ADR 2026-08-19-m6-agent-full.md
+# 决策 M6a). Off by default (D10): when disabled no Provider/Engine is
+# initialized, no schedule_* tool is registered or whitelisted, and no
+# schedule pre-step injector is wired. When enabled, schedule_create /
+# schedule_list / schedule_delete manage recurring interval and cron triggers
+# (in-memory only, cleared on restart), and each turn's serial pre-step path
+# advances the schedule clock — a due trigger logs a schedule/fire fact (D3)
+# and, when jobs is enabled, enqueues a background job executing the trigger's
+# payload (D5: no background ticker; every side effect happens on the serial
+# pre-step path). schedule/create, schedule/list, schedule/delete and
+# schedule/fire are logged as facts (D3).
+schedule:
+  # Master switch. false ⇒ no schedule Provider/Engine is created and the
+  # schedule_* tools are neither registered nor whitelisted (默认关闭，不初始化).
+  enabled: false
+  # Cadence of the serial schedule-clock advancement (per-turn pre-step
+  # Engine.Tick). M6a-2 has no background ticker (D5); 0/absent ⇒ 1m.
+  tick_interval: 1m

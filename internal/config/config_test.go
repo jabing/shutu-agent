@@ -728,3 +728,78 @@ func TestLoadSkillEnabledAppendsToolsToWhitelist(t *testing.T) {
 		}
 	}
 }
+
+// M6a-2: schedule is off by default (D10) and the serial clock cadence
+// defaults to 1m; the schedule_* tools must not be whitelisted while disabled
+// (dispatch-m6a-2 §2).
+func TestLoadScheduleDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Schedule.Enabled {
+		t.Error("schedule must be disabled by default (D10)")
+	}
+	if cfg.Schedule.TickInterval.Duration != DefaultScheduleTickInterval {
+		t.Errorf("schedule.tick_interval = %v, want default %v",
+			cfg.Schedule.TickInterval.Duration, DefaultScheduleTickInterval)
+	}
+	for _, name := range scheduleToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when schedule disabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// M6a-2: an explicit schedule section is honored (enabled, tick_interval as a
+// Go duration string), while a non-positive cadence falls back to the default
+// (校验非负: a negative value never survives) (dispatch-m6a-2 §2).
+func TestLoadScheduleParsesSectionAndFallsBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("schedule:\n  enabled: true\n  tick_interval: 30s\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Schedule.Enabled {
+		t.Error("schedule.enabled should be true")
+	}
+	if cfg.Schedule.TickInterval.Duration != 30*time.Second {
+		t.Errorf("schedule.tick_interval = %v, want 30s", cfg.Schedule.TickInterval.Duration)
+	}
+
+	// A non-positive (including negative) cadence falls back to the default.
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("schedule:\n  enabled: true\n  tick_interval: -1m\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Schedule.TickInterval.Duration != DefaultScheduleTickInterval {
+		t.Errorf("schedule.tick_interval -1m = %v, want default %v",
+			cfg2.Schedule.TickInterval.Duration, DefaultScheduleTickInterval)
+	}
+}
+
+// M6a-2: schedule.enabled: true is the single switch that turns the whole
+// capability on — the schedule_* tools must also become whitelisted
+// (dispatch-m6a-2 §2, mirrors kb/jobs/subagent/skill).
+func TestLoadScheduleEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("schedule:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range scheduleToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after schedule.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
