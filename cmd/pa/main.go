@@ -30,6 +30,7 @@ import (
 	"personal-agent/internal/loop"
 	"personal-agent/internal/prompt"
 	"personal-agent/internal/session"
+	"personal-agent/internal/skill"
 	"personal-agent/internal/store"
 	"personal-agent/internal/subagent"
 	"personal-agent/internal/tools"
@@ -151,6 +152,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
 	}
+	// M5d-2: wire the skill seam — filesystem provider + Registry + the
+	// skill_load tool + the "skill" pre-step catalog injector — when
+	// skill.enabled (默认关闭, D10). config.applyDefaults already whitelisted
+	// skill_load when skill.enabled was true. The deferred Close releases the
+	// registry and its providers at shutdown (lifecycle reversible, ADR
+	// 决策 ④).
+	if err := app.registerSkills(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
+	if app.skills != nil {
+		defer app.skills.Close()
+	}
 	if err := app.startup(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
@@ -169,10 +183,18 @@ type app struct {
 
 	currentID string
 	log       *session.Log
-	jobs      *jobs.Local // nil when jobs disabled (D10)
+	jobs      *jobs.Local      // nil when jobs disabled (D10)
 	subagents subagent.Runtime // nil when subagent disabled (D10)
 
 	compaction compaction.Engine // nil when compaction disabled (D10)
+	skills     skill.Registry    // nil when skill disabled (D10)
+
+	// skillProjectRoot / skillUserHome override the filesystem skill provider's
+	// project/user roots when non-empty; empty uses the provider defaults (the
+	// working directory and the user home). They exist so the wiring tests can
+	// pin deterministic roots.
+	skillProjectRoot string
+	skillUserHome    string
 }
 
 // startup resumes the most recently updated session, or starts a fresh one.
@@ -270,7 +292,7 @@ func (a *app) newLoop() *loop.Loop {
 		// M4b recall hook, inside the loop's existing pre-step extension point
 		// (D4 — the turn/step structure is unchanged).
 		PreStep: a.preStepInjectors(),
-		OnText: func(delta string) { fmt.Print(delta) },
+		OnText:  func(delta string) { fmt.Print(delta) },
 		OnError: func(err error) {
 			fmt.Fprintln(os.Stderr, "\n[stream error]", err)
 		},
@@ -380,6 +402,12 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 			a.cfg.Compaction.TokenThreshold, a.cfg.Compaction.RetainTurns)
 	} else {
 		fmt.Println("compaction: disabled (compaction.enabled=false)")
+	}
+	if a.cfg.Skill.Enabled {
+		fmt.Printf("skills: enabled (catalog_max_chars=%d, body_max_chars=%d)\n",
+			a.cfg.Skill.CatalogMaxChars, a.cfg.Skill.BodyMaxChars)
+	} else {
+		fmt.Println("skills: disabled (skill.enabled=false)")
 	}
 }
 

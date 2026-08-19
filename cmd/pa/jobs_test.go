@@ -26,8 +26,8 @@ func makeJobsApp(enabled bool) *app {
 // (in production config.applyDefaults + PolicyFromConfig do this).
 func jobsPolicy() tools.Policy {
 	return tools.Policy{
-		Enabled:    []string{"job_start", "job_status", "job_cancel", "job_wait", "job_read"},
-		Timeout:    0, // no per-tool deadline in tests
+		Enabled:     []string{"job_start", "job_status", "job_cancel", "job_wait", "job_read"},
+		Timeout:     0, // no per-tool deadline in tests
 		OutputLimit: 0,
 	}
 }
@@ -89,14 +89,14 @@ func TestRegisterJobsEnabledRegistersAndValidates(t *testing.T) {
 		name string
 		args string
 	}{
-		{"job_status", `{}`},                          // missing required id
-		{"job_status", `{"id":123}`},                  // id must be a string
-		{"job_start", `{}`},                           // missing required command
-		{"job_start", `{"command":""}`},               // empty command
-		{"job_cancel", `{}`},                          // missing required id
+		{"job_status", `{}`},                           // missing required id
+		{"job_status", `{"id":123}`},                   // id must be a string
+		{"job_start", `{}`},                            // missing required command
+		{"job_start", `{"command":""}`},                // empty command
+		{"job_cancel", `{}`},                           // missing required id
 		{"job_wait", `{"id":"x","timeout_seconds":0}`}, // timeout must be >= 1
-		{"job_read", `{"id":false}`},                  // wrong id type
-		{"job_status", `{"id":"x","extra":1}`},        // additional properties rejected
+		{"job_read", `{"id":false}`},                   // wrong id type
+		{"job_status", `{"id":"x","extra":1}`},         // additional properties rejected
 	} {
 		if _, err := app.reg.Execute(context.Background(), tc.name, json.RawMessage(tc.args)); err == nil {
 			t.Errorf("%s with args %s must be rejected (D7)", tc.name, tc.args)

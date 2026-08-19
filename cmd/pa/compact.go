@@ -71,14 +71,23 @@ func (a *app) registerCompaction() error {
 }
 
 // preStepInjectors returns the loop's registered pre-step injectors for the
-// current configuration: the "compaction" injector appended when the capability
-// is enabled. The loop runs the M4b Recall hook ("recall") first and then the
-// PreStep injectors in order, so the compaction injector lands after recall as
-// required (dispatch-m5c-2 §4). The turn/step structure is unchanged (D4).
+// current configuration: the "compaction" injector when the capability is
+// enabled, then the "skill" catalog injector when skill is enabled. The loop
+// runs the M4b Recall hook ("recall") first and then the PreStep injectors in
+// order, so the compaction injector lands after recall and the skill catalog
+// after compaction as required (dispatch-m5c-2 §4 / dispatch-m5d-2 §4). The
+// turn/step structure is unchanged (D4).
 func (a *app) preStepInjectors() []loop.PreStepInjector {
 	var injectors []loop.PreStepInjector
 	if a.compaction != nil {
 		injectors = append(injectors, a.compactionInjector(defaultCompactionEstimator))
+	}
+	// M5d-2: the "skill" catalog injector is appended after compaction so the
+	// bounded skill catalog (re-read each turn, no file watching) reaches the
+	// model's first request whenever skill is enabled (D10-gated here and by
+	// registerSkills).
+	if a.skills != nil {
+		injectors = append(injectors, a.skillCatalogInjector())
 	}
 	return injectors
 }

@@ -164,7 +164,7 @@ func markerRange(t *testing.T, log *session.Log) ([2]int64, bool) {
 			continue
 		}
 		var d struct {
-			Text      string                 `json:"text"`
+			Text      string                  `json:"text"`
 			SurfaceOp *session.SurfaceReplace `json:"surfaceOp,omitempty"`
 		}
 		if err := json.Unmarshal(ev.Data, &d); err != nil {

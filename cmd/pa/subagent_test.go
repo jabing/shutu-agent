@@ -46,7 +46,7 @@ func (r *subagentStubReader) Next() (llm.StreamEvent, error) {
 func makeSubagentApp(enabled bool) *app {
 	return &app{
 		cfg: config.Config{
-			Model: "m",
+			Model:    "m",
 			Subagent: config.SubagentConfig{Enabled: enabled, MaxDepth: 8, DefaultProvider: "spawn"},
 		},
 		reg:       tools.New(),
@@ -61,8 +61,8 @@ func makeSubagentApp(enabled bool) *app {
 // run them (in production config.applyDefaults + PolicyFromConfig do this).
 func subagentPolicy() tools.Policy {
 	return tools.Policy{
-		Enabled:    []string{"subagent_spawn", "subagent_status", "subagent_cancel", "subagent_list"},
-		Timeout:    0, // no per-tool deadline in tests
+		Enabled:     []string{"subagent_spawn", "subagent_status", "subagent_cancel", "subagent_list"},
+		Timeout:     0, // no per-tool deadline in tests
 		OutputLimit: 0,
 	}
 }
