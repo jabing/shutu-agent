@@ -26,7 +26,7 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 
 **2026-08-18**：M3 完成并通过验收（提交 `1dda2ed`，ADR `2026-08-18-m3-sandbox-scope`）。M4 知识库**三段全部完成并通过验收**：M4a 内核（`682f07e`）、M4b 工具与召回（`bdd903d`）、M4c 提取回写（`5e98fa7`）。方向：**参照 dsh-knowledge（已下载 `../dsh-knowledge`，FTS5 全文检索 + 提取回写，非向量 RAG，方案已实测）**，调研见 `docs/research-m4-kb.md`，派发见 `docs/dispatch-m4a/b/c.md`，ADR `2026-08-18-m4-kb-architecture.md` 完整定稿七项决策。
 
-**2026-08-19**：M5 核心能力启动（用户拍板"必须、先实现"；ADR `2026-08-18-m5-agent-core.md` 定稿四段决策）。**M5a 后台任务完成并通过验收**（分两半：M5a-1 内核 `34bf1e8`+`5f3abd4`、M5a-2 接线 `4c0a25e`+`dbe07fc`+`b1d3535`+`6d91af7`；控制会话亲自 vet/test/build 验收）。**下一步：M5b 子代理**（派发见 `docs/dispatch-m5b.md`）。
+**2026-08-19**：M5 核心能力启动（用户拍板"必须、先实现"；ADR `2026-08-18-m5-agent-core.md` 定稿四段决策）。**M5 四段全部完成并通过验收**（每段由控制会话亲自 vet/test/build 验收、对照 D1–D10 审 diff）：M5a 后台任务（M5a-1 `34bf1e8`+`5f3abd4`、M5a-2 `4c0a25e`+`dbe07fc`+`b1d3535`+`6d91af7`）→ M5b 子代理（`55f1b63`+`34c302c`+`8a3f648`、`8c7f1b3`+`070039e`+`27acada`+`e8dcec0`+`78fd6a6`）→ M5c 上下文压缩（`76c41db`、`2188b4d`+`0ffa4e4`+`4669c2e`、`a5219ac`、`c4b5e88`+`e9b2b9c`）→ M5d 技能（`b2d93fc`+`453b288`+`0c38de5`+`400e06c`+`75d892c`、`cb09853`+`17cfe10`+`935ffdc`+`6859000`+`07a82ce`）。**下一步（后置）**：KB 最小集 ①②（文档摄取 + 条目 List/Delete/Markdown 导出），再全量 dsh-knowledge 功能。
 
 ## 4. 路线图
 
@@ -40,11 +40,11 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 | **M4b 工具与召回** | `kb_search`/`kb_read`/`kb_add` 工具（默认关）+ `cmd/pa` 召回注入（catalog + 有界 recall）+ `/kb-status` `/kb-reindex` + `kb/add` 事件 | 工具默认关闭且参数校验；注入走 `kb/recall` 落日志；fail-open | ✅ 2026-08-18 验收通过（`bdd903d`） |
 | **M4c 提取回写** | `KB.Extract`（幂等 `session:turn`、严格 JSON fail-closed、不阻断回答）+ `kb/extract` 事件 + config；补 ADR | 对话产生可复用知识能被提取写入并被后续检索；坏输出 fail-closed | ✅ 2026-08-18 验收通过（`5e98fa7`） |
 | **M4 知识库**（三段） | 拆为 M4a/b/c 依次验收 | 全部达标才算 M4 完成 | ✅ 三段全部完成 |
-| **M5 核心能力**（四段，ADR `2026-08-18-m5-agent-core.md`） | 拆为 M5a/b/c/d 依次验收 | 全部达标才算 M5 完成 | ⬜ 已定稿 ADR，派发中 |
+| **M5 核心能力**（四段，ADR `2026-08-18-m5-agent-core.md`） | 拆为 M5a/b/c/d 依次验收 | 全部达标才算 M5 完成 | ✅ 四段全部完成（M5a/M5b/M5c/M5d，均 2026-08-19 验收通过） |
 | **M5a 后台任务** | `jobs` 接口（owner-fenced 注册表）+ 本地实现 + `job_*` 工具 + `job/*` 事件 + config | 后台工作可观察/取消/等待/通知；owner 隔离；主循环保持串行；默认关闭 | ✅ 2026-08-19 验收通过（M5a-1 `34bf1e8`+`5f3abd4`；M5a-2 `4c0a25e`+`dbe07fc`+`b1d3535`+`6d91af7`） |
 | **M5b 子代理** | `subagent` 接口（多 Provider 注册表）+ spawn 实现 + 委托/控制/报告工具 + `subagent/*` 事件 + config | 子代理独立会话日志可回放；结果回传父会话；后台续跑走 job；默认关闭 | ✅ 2026-08-19 验收通过（M5b-1 `55f1b63`+`34c302c`+`8a3f648`；M5b-2 `8c7f1b3`+`070039e`+`27acada`+`e8dcec0`+`78fd6a6`） |
 | **M5c 上下文压缩** | `compaction` 接缝 + 摘要 provider + tool-result 剪枝 + `/compact` + `compaction/*` 事件 + config + PreStep 自动压缩 | 超预算触发压缩；摘要经 surfaceOp.replace user/message 遮蔽旧范围且日志仍追加式；tool-call/result 配对不被切断；默认关闭 | ✅ 2026-08-19 验收通过（M5c-1a `76c41db`；M5c-1b `2188b4d`+`0ffa4e4`+`4669c2e`；M5c-2a `a5219ac`；M5c-2b `c4b5e88`+`e9b2b9c`） |
-| **M5d 技能** | `skill` 接口（多 Provider 注册表）+ 文件系统发现 + 目录注入 + `skill` 加载工具 + `skill/*` 事件 + config | 目录注入有界；按需加载完整正文；默认关闭 | ⬜ |
+| **M5d 技能** | `skill` 接口（多 Provider 注册表）+ 文件系统发现 + 目录注入 + `skill` 加载工具 + `skill/*` 事件 + config | 目录注入有界；按需加载完整正文；默认关闭 | ✅ 2026-08-19 验收通过（M5d-1 `b2d93fc`+`453b288`+`0c38de5`+`400e06c`+`75d892c`；M5d-2 `cb09853`+`17cfe10`+`935ffdc`+`6859000`+`07a82ce`） |
 
 ## 5. 开发纪律（每轮工作前过一遍）
 
@@ -76,7 +76,7 @@ go run ./cmd/pa       # 启动 REPL（M1 后可用，需 DEEPSEEK_API_KEY）
 
 **流程**：
 
-1. **交接**：控制会话把开场白模板（见下）发给实施会话，指定里程碑；各里程碑的完整派发消息存于 `docs/dispatch-*.md`（最新：`docs/dispatch-m5a.md` → `dispatch-m5b.md` → `dispatch-m5c.md` → `dispatch-m5d.md` 依序派发；历史：`docs/dispatch-m4a/b/c.md`、`docs/dispatch-m3.md`、`docs/dispatch-m2.md`）。
+1. **交接**：控制会话把开场白模板（见下）发给实施会话，指定里程碑；各里程碑的完整派发消息存于 `docs/dispatch-*.md`（M5 依序：`dispatch-m5a.md` → `dispatch-m5b.md` → `dispatch-m5c.md` → `dispatch-m5d.md`，均已完成派发；历史：`docs/dispatch-m4a/b/c.md`、`docs/dispatch-m3.md`、`docs/dispatch-m2.md`）。
 2. **实施**：实施会话按 design.md 实现，自测通过后提交，并报告：改动文件清单、实现决策、跑过的命令、测试结果。
 3. **验收**：控制会话亲自跑 `go build` / `go test` / `go vet`，审查 `git diff`，对照 D1–D10 逐条检查（日志先行、工具入口校验、接口隔离、无循环改动、无越界功能）。
 4. **收尾**：通过 → 更新第 3/4 节状态 → 准备下一里程碑交接；不通过 → 把问题清单发回实施会话修订。
