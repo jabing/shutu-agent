@@ -29,6 +29,7 @@ import (
 	"personal-agent/internal/llm/deepseek"
 	"personal-agent/internal/loop"
 	"personal-agent/internal/prompt"
+	"personal-agent/internal/schedule"
 	"personal-agent/internal/session"
 	"personal-agent/internal/skill"
 	"personal-agent/internal/store"
@@ -165,6 +166,21 @@ func main() {
 	if app.skills != nil {
 		defer app.skills.Close()
 	}
+	// M6a-2: wire the schedule seam — in-memory Provider + Engine + the three
+	// schedule_* tools + the D3 event sink + the "schedule" pre-step injector
+	// — when schedule.enabled (默认关闭, D10). config.applyDefaults already
+	// whitelisted the schedule_* names when schedule.enabled was true. The
+	// deferred Close releases the provider and rejects further operations at
+	// shutdown (lifecycle reversible, ADR 决策 M6a). There is no background
+	// ticker: the loop's per-turn "schedule" pre-step injector advances the
+	// clock on the serial path (D5).
+	if err := app.registerSchedules(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
+	if app.schedules != nil {
+		defer app.schedules.Close()
+	}
 	if err := app.startup(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
@@ -188,6 +204,7 @@ type app struct {
 
 	compaction compaction.Engine // nil when compaction disabled (D10)
 	skills     skill.Registry    // nil when skill disabled (D10)
+	schedules  schedule.Engine   // nil when schedule disabled (D10)
 
 	// skillProjectRoot / skillUserHome override the filesystem skill provider's
 	// project/user roots when non-empty; empty uses the provider defaults (the
@@ -408,6 +425,11 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 			a.cfg.Skill.CatalogMaxChars, a.cfg.Skill.BodyMaxChars)
 	} else {
 		fmt.Println("skills: disabled (skill.enabled=false)")
+	}
+	if a.cfg.Schedule.Enabled {
+		fmt.Printf("schedules: enabled (tick_interval=%s)\n", a.cfg.Schedule.TickInterval.Duration)
+	} else {
+		fmt.Println("schedules: disabled (schedule.enabled=false)")
 	}
 }
 
