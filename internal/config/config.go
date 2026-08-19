@@ -530,7 +530,7 @@ func applyDefaults(cfg *Config) {
 		}
 	}
 	// M6c-2 spill defaults: off by default (D10); auto_spill defaults on
-	// within an enabled spill (AutoSpillValue, mirroring kb extraction). 
+	// within an enabled spill (AutoSpillValue, mirroring kb extraction).
 	// Enabling spill whitelists its four consumer tools, so the one
 	// spill.enabled switch turns the whole capability (Provider + Engine +
 	// tools + event logging + auto-sedimentation) on (mirrors

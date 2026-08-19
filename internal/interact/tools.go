@@ -31,7 +31,7 @@ import (
 
 // Tool names (whitelisted when interact.enabled; see config.interactToolNames).
 const (
-	ToolAskName   = "interact_ask"
+	ToolAskName    = "interact_ask"
 	ToolStatusName = "interact_status"
 )
 
