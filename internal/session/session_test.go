@@ -1012,3 +1012,123 @@ func TestNewUserMessageReplaceJSONRoundTrip(t *testing.T) {
 		t.Fatalf("round-trip derived = %+v, want [user s]", msgs)
 	}
 }
+
+// M6b-2: the four plan event types append with a monotonic Seq, serialize
+// their payloads, persist through the sink and survive a restart replay, and
+// never derive into model-visible messages (log-only, D3 — dispatch-m6b-2 §1).
+func TestPlanEventsAppendAndReplay(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	if _, err := l.Append(EventPlanCreate, NewPlanCreate("goal", "goal-1", "Ship the agent")); err != nil {
+		t.Fatalf("append plan/create: %v", err)
+	}
+	if _, err := l.Append(EventPlanUpdate, NewPlanUpdate("plan", "plan-1")); err != nil {
+		t.Fatalf("append plan/update: %v", err)
+	}
+	if _, err := l.Append(EventPlanStatus, NewPlanStatus("todo", "todo-1", "done")); err != nil {
+		t.Fatalf("append plan/status: %v", err)
+	}
+	if _, err := l.Append(EventPlanDelete, NewPlanDelete("goal", "goal-1")); err != nil {
+		t.Fatalf("append plan/delete: %v", err)
+	}
+	if _, err := l.Append(EventPlanList, NewPlanList(2)); err != nil {
+		t.Fatalf("append plan/list: %v", err)
+	}
+	events := l.Events()
+	if len(events) != 5 {
+		t.Fatalf("events = %d, want 5", len(events))
+	}
+	wantTypes := []string{EventPlanCreate, EventPlanUpdate, EventPlanStatus, EventPlanDelete, EventPlanList}
+	for i, ev := range events {
+		if ev.Type != wantTypes[i] {
+			t.Fatalf("type %d = %q, want %q", i, ev.Type, wantTypes[i])
+		}
+		if ev.Version != EventVersion {
+			t.Fatalf("event %d version = %d, want %d", i, ev.Version, EventVersion)
+		}
+	}
+	// JSON round-trip of each payload.
+	var pc planCreateData
+	if err := json.Unmarshal(events[0].Data, &pc); err != nil {
+		t.Fatalf("unmarshal plan/create: %v", err)
+	}
+	if pc.Scope != "goal" || pc.ID != "goal-1" || pc.Title != "Ship the agent" {
+		t.Fatalf("plan/create payload = %+v", pc)
+	}
+	var pu planUpdateData
+	if err := json.Unmarshal(events[1].Data, &pu); err != nil {
+		t.Fatalf("unmarshal plan/update: %v", err)
+	}
+	if pu.Scope != "plan" || pu.ID != "plan-1" {
+		t.Fatalf("plan/update payload = %+v", pu)
+	}
+	var ps planStatusData
+	if err := json.Unmarshal(events[2].Data, &ps); err != nil {
+		t.Fatalf("unmarshal plan/status: %v", err)
+	}
+	if ps.Scope != "todo" || ps.ID != "todo-1" || ps.Status != "done" {
+		t.Fatalf("plan/status payload = %+v", ps)
+	}
+	var pd planDeleteData
+	if err := json.Unmarshal(events[3].Data, &pd); err != nil {
+		t.Fatalf("unmarshal plan/delete: %v", err)
+	}
+	if pd.Scope != "goal" || pd.ID != "goal-1" {
+		t.Fatalf("plan/delete payload = %+v", pd)
+	}
+	var pl planListData
+	if err := json.Unmarshal(events[4].Data, &pl); err != nil {
+		t.Fatalf("unmarshal plan/list: %v", err)
+	}
+	if pl.Count != 2 {
+		t.Fatalf("plan/list payload = %+v", pl)
+	}
+	if len(persisted) != 5 || persisted[0].Type != EventPlanCreate {
+		t.Fatalf("sink (append path) = %+v", persisted)
+	}
+	// Restart replay: a fresh log rebuilt from what was persisted still sees
+	// every plan event, and deriving history treats them all as opaque data
+	// (log-only, like the M5/M6a events).
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	for i, want := range wantTypes {
+		if got := fresh.Events()[i].Type; got != want {
+			t.Fatalf("replayed type %d = %q, want %q", i, got, want)
+		}
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
+		t.Fatalf("plan/* events must not derive into messages: %+v", msgs)
+	}
+}
+
+// TestPlanEventsMixedWithConversationDeriveOnlyConversation verifies the
+// log-only contract: plan/* rows interleaved with a real conversation do not
+// appear in the derived history, and the conversation round-trips unchanged
+// (D4 — adding the events never changes the turn/step structure).
+func TestPlanEventsMixedWithConversationDeriveOnlyConversation(t *testing.T) {
+	l := New()
+	l.Append(EventUserMessage, NewUserMessage("plan the release"))
+	l.Append(EventPlanCreate, NewPlanCreate("goal", "goal-1", "Ship"))
+	l.Append(EventAssistantMessage, NewAssistantMessage("Created goal-1.", nil, "stop"))
+	l.Append(EventPlanStatus, NewPlanStatus("goal", "goal-1", "in-progress"))
+	msgs := l.DeriveHistory()
+	if len(msgs) != 2 {
+		t.Fatalf("derived %d messages, want 2 (conversation only): %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "plan the release" {
+		t.Fatalf("msg0 = %+v", msgs[0])
+	}
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Created goal-1." {
+		t.Fatalf("msg1 = %+v", msgs[1])
+	}
+	// D1: the plan rows stay physically in the log.
+	if got := len(l.Events()); got != 4 {
+		t.Fatalf("log events = %d, want 4 (append-only)", got)
+	}
+}

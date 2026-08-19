@@ -103,6 +103,23 @@ const (
 	EventScheduleList   = "schedule/list"
 	EventScheduleDelete = "schedule/delete"
 	EventScheduleFire   = "schedule/fire"
+
+	// M6b-2 plan events (design.md §3 / ADR 2026-08-19-m6-agent-full.md
+	// 决策 M6b / dispatch-m6b-2 §1): plan/create lands when plan_goal /
+	// plan_plan / plan_todo store a goal/plan/todo (scope tells which tree
+	// level), plan/status when plan_status advances or blocks one record,
+	// plan/delete when plan_remove deletes one, plan/list when plan_list
+	// returns the aggregation tree. plan/update is reserved vocabulary for a
+	// future plan-editing tool (M6b-2 ships no editing tool). They are log-only
+	// (D3): the model sees the plan tree through the plan_* tools' tool/result
+	// events, and DeriveHistory treats these types as opaque data, so adding
+	// them never changes the turn/step structure (D4). The payloads are pure
+	// data projections — the session package never imports the plan package.
+	EventPlanCreate = "plan/create"
+	EventPlanUpdate = "plan/update"
+	EventPlanDelete = "plan/delete"
+	EventPlanStatus = "plan/status"
+	EventPlanList   = "plan/list"
 )
 
 // EventVersion is the current event vocabulary version. It is stored per event
@@ -729,4 +746,73 @@ func NewScheduleDelete(id string) any {
 // the same on-disk bound as job/done) so the payload is always lean.
 func NewScheduleFire(id, payload string) any {
 	return scheduleFireData{ID: id, Payload: summaryHead(payload)}
+}
+
+// planCreateData is the plan/create payload: the tree level (scope: goal |
+// plan | todo), the engine-issued id and the title of the stored record.
+// DeriveHistory treats it as opaque data.
+type planCreateData struct {
+	Scope string `json:"scope"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+// planUpdateData is the plan/update payload: the tree level and id of an
+// edited record. M6b-2 ships no plan-editing tool, so the type is reserved
+// vocabulary (the constructor is exported so a future edit tool can emit it).
+// DeriveHistory treats it as opaque data.
+type planUpdateData struct {
+	Scope string `json:"scope"`
+	ID    string `json:"id"`
+}
+
+// planDeleteData is the plan/delete payload: the tree level and id of the
+// removed record. DeriveHistory treats it as opaque data.
+type planDeleteData struct {
+	Scope string `json:"scope"`
+	ID    string `json:"id"`
+}
+
+// planStatusData is the plan/status payload: the tree level, id and new status
+// of a record whose status was set. DeriveHistory treats it as opaque data.
+type planStatusData struct {
+	Scope  string `json:"scope"`
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
+// planListData is the plan/list payload: the number of goals in the returned
+// aggregation tree. DeriveHistory treats it as opaque data.
+type planListData struct {
+	Count int `json:"count"`
+}
+
+// NewPlanCreate builds the plan/create payload recorded when plan_goal /
+// plan_plan / plan_todo store a goal/plan/todo (dispatch-m6b-2 §1 / D3).
+func NewPlanCreate(scope, id, title string) any {
+	return planCreateData{Scope: scope, ID: id, Title: title}
+}
+
+// NewPlanUpdate builds the plan/update payload — reserved vocabulary for a
+// future plan-editing tool (dispatch-m6b-2 §1 / D3).
+func NewPlanUpdate(scope, id string) any {
+	return planUpdateData{Scope: scope, ID: id}
+}
+
+// NewPlanDelete builds the plan/delete payload recorded when plan_remove
+// deletes a record (dispatch-m6b-2 §1 / D3).
+func NewPlanDelete(scope, id string) any {
+	return planDeleteData{Scope: scope, ID: id}
+}
+
+// NewPlanStatus builds the plan/status payload recorded when plan_status sets
+// a record's status (dispatch-m6b-2 §1 / D3).
+func NewPlanStatus(scope, id string, st string) any {
+	return planStatusData{Scope: scope, ID: id, Status: st}
+}
+
+// NewPlanList builds the plan/list payload recorded when plan_list returns the
+// aggregation tree (dispatch-m6b-2 §1 / D3).
+func NewPlanList(count int) any {
+	return planListData{Count: count}
 }
