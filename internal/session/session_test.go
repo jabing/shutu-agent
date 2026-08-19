@@ -656,6 +656,79 @@ func TestCompactionEventsAppendAndReplay(t *testing.T) {
 	}
 }
 
+// TestSkillEventsAppendAndReplay verifies the M5d-2 skill/* event types
+// (skill/catalog, skill/load — dispatch-m5d-2 §1 / D3): each appends with the
+// right vocabulary, survives the JSON round-trip and restart replay, and stays
+// opaque to history derivation (the model sees the catalog through the pre-step
+// injected message and the body through skill_load's tool/result, not through
+// these log-only events). The skill/load summary is bounded to 200 runes like
+// job/done and subagent/end.
+func TestSkillEventsAppendAndReplay(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	if _, err := l.Append(EventSkillCatalog, NewSkillCatalog(3, "abc123")); err != nil {
+		t.Fatalf("append skill/catalog: %v", err)
+	}
+	if _, err := l.Append(EventSkillLoad, NewSkillLoad("review-bash", "project-dsh", strings.Repeat("very long body ", 50))); err != nil {
+		t.Fatalf("append skill/load: %v", err)
+	}
+	events := l.Events()
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want 2", len(events))
+	}
+	if events[0].Type != EventSkillCatalog || events[1].Type != EventSkillLoad {
+		t.Fatalf("types = %q/%q", events[0].Type, events[1].Type)
+	}
+	for i, ev := range events {
+		if ev.Version != EventVersion {
+			t.Fatalf("event %d version = %d, want %d", i, ev.Version, EventVersion)
+		}
+	}
+	// JSON round-trip of each payload.
+	var sc skillCatalogData
+	if err := json.Unmarshal(events[0].Data, &sc); err != nil {
+		t.Fatalf("unmarshal skill/catalog: %v", err)
+	}
+	if sc.EntryCount != 3 || sc.Version != "abc123" {
+		t.Fatalf("skill/catalog payload = %+v", sc)
+	}
+	var sl skillLoadData
+	if err := json.Unmarshal(events[1].Data, &sl); err != nil {
+		t.Fatalf("unmarshal skill/load: %v", err)
+	}
+	if sl.Name != "review-bash" || sl.Source != "project-dsh" {
+		t.Fatalf("skill/load payload = %+v", sl)
+	}
+	// The body summary must be bounded (dispatch-m5d-2 §1: 正文摘要 200-rune 有界).
+	if got := len([]rune(sl.Summary)); got > jobOutputSummaryMax+1 {
+		t.Fatalf("skill/load summary = %d runes, want <= %d+ellipsis", got, jobOutputSummaryMax)
+	}
+	if !strings.Contains(sl.Summary, "very long body") {
+		t.Fatalf("skill/load summary = %q, want it to carry the body head", sl.Summary)
+	}
+	if len(persisted) != 2 || persisted[0].Type != EventSkillCatalog {
+		t.Fatalf("sink (append path) = %+v", persisted)
+	}
+	// Restart replay: a fresh log rebuilt from what was persisted still sees
+	// every skill event, and deriving history treats them all as opaque data.
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	for i, want := range []string{EventSkillCatalog, EventSkillLoad} {
+		if got := fresh.Events()[i].Type; got != want {
+			t.Fatalf("replayed type %d = %q, want %q", i, got, want)
+		}
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
+		t.Fatalf("skill/* events must not derive into messages: %+v", msgs)
+	}
+}
+
 // M5c-1a compaction fold rule: a user/message carrying surfaceOp.replace
 // substitutes a summary for the shadowed surface range [Start, End] in the
 // derived history, while the shadowed events stay in the append-only log (D1).

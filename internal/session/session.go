@@ -72,6 +72,21 @@ const (
 	EventCompactionSummary = "compaction/summary"
 	EventCompactionEnd     = "compaction/end"
 	EventCompactionPrune   = "compaction/prune"
+
+	// M5d-2 skill events (design.md §3 / ADR 2026-08-18-m5-agent-core.md
+	// 决策 ④ / dispatch-m5d-2): skill/catalog lands when the composition root
+	// injects the skill catalog (sorted name + description, bounded) as
+	// pre-step context, carrying the entry count and a catalog version
+	// (a digest over the catalog, so consumers can detect catalog drift);
+	// skill/load lands when skill_load loads a skill body for the model,
+	// carrying the skill name/source plus a bounded body summary. They are
+	// log-only (D3): the model sees the catalog through the pre-step injected
+	// message and the body through skill_load's tool/result, and DeriveHistory
+	// treats these types as opaque data, so adding them never changes the
+	// turn/step structure (D4). The payloads are pure data projections — the
+	// session package never imports the skill package.
+	EventSkillCatalog = "skill/catalog"
+	EventSkillLoad    = "skill/load"
 )
 
 // EventVersion is the current event vocabulary version. It is stored per event
@@ -482,9 +497,9 @@ func NewJobDone(id, status, detail, output string) any {
 
 // summaryHead returns a bounded, whitespace-compacted head of s for a log
 // summary (mirrors kb.Snippet's bound; kept here so the session package owns
-// the on-disk bound it serializes). It is shared by job/done, subagent/end
-// and compaction/summary (all bounded to 200 runes, dispatch-m5a-2 §1 /
-// dispatch-m5b-2 §1 / dispatch-m5c-2 §1).
+// the on-disk bound it serializes). It is shared by job/done, subagent/end,
+// compaction/summary and skill/load (all bounded to 200 runes, dispatch-m5a-2
+// §1 / dispatch-m5b-2 §1 / dispatch-m5c-2 §1 / dispatch-m5d-2 §1).
 func summaryHead(s string) string {
 	compact := strings.Join(strings.Fields(s), " ")
 	runes := []rune(compact)
@@ -606,4 +621,38 @@ func NewCompactionEnd(compactionID string, shadowedRange [2]int64, shadowedToken
 // tool-result prune settles (dispatch-m5c-2 §1 / D3).
 func NewCompactionPrune(compactionID string, replaced, savedBytes int) any {
 	return compactionPruneData{CompactionID: compactionID, Replaced: replaced, SavedBytes: savedBytes}
+}
+
+// skillCatalogData is the skill/catalog payload: the number of skills in the
+// injected catalog and an opaque catalog version (a digest over the sorted
+// catalog, computed by the composition root) so consumers can detect that the
+// catalog changed between turns. DeriveHistory treats it as opaque data.
+type skillCatalogData struct {
+	EntryCount int    `json:"entryCount"`
+	Version    string `json:"version,omitempty"`
+}
+
+// skillLoadData is the skill/load payload: the loaded skill's name and source
+// plus a bounded summary of the body the model is about to see. DeriveHistory
+// treats it as opaque data.
+type skillLoadData struct {
+	Name    string `json:"name"`
+	Source  string `json:"source,omitempty"`
+	Summary string `json:"summary"`
+}
+
+// NewSkillCatalog builds the skill/catalog payload recorded when the
+// composition root injects the skill catalog as pre-step context
+// (dispatch-m5d-2 §1 / D3). version is an opaque catalog version string
+// (normally a digest over the sorted catalog, so consumers can detect drift).
+func NewSkillCatalog(entryCount int, version string) any {
+	return skillCatalogData{EntryCount: entryCount, Version: version}
+}
+
+// NewSkillLoad builds the skill/load payload recorded when skill_load loads a
+// skill body for the model (dispatch-m5d-2 §1 / D3). summary is bounded to a
+// summary head (200 runes, the same on-disk bound as job/done and subagent/end)
+// so the payload is always lean.
+func NewSkillLoad(name, source, summary string) any {
+	return skillLoadData{Name: name, Source: source, Summary: summaryHead(summary)}
 }
