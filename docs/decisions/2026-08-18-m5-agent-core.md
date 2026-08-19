@@ -67,6 +67,7 @@ M5 立项前必须回答三个基线问题：
   - **并发上限**：本地实现 `max_concurrent_jobs_per_owner`（默认 10，配置可改），计数 running+stopping；上限由 owner 放行，终端结算释放配额。**主循环不被 job 阻塞**：job 后台执行，主循环继续。
   - **生命周期可逆**（D 系列"副作用必须可逆"）：`Close()` 取消并等待所有活 job；owner 会话销毁时同 owner job 被取消。job 表存内存（个人单进程），不持久化跨重启（重启即清空，重启后遗留 job 无法继续——`jobs` 只服务当前进程，M5b 的"子代理会话"持久化另论）。
   - **owner 存在性 preflight（M5a-1 实现说明）**：`internal/jobs` 包内无会话注册表可查（会话注册表属组合根/M5a-2 接线），故 `Start` 的 preflight 落为 spec 字段校验（kind/label 非空、Run 非 nil、OutputLimitBytes≥0）+ 并发上限检查；owner 授权在访问时（`get/read/kill/wait` 的 lookup）强制。组合根在工具层注入当前会话 id 作为 owner，保证 job 归属于真实存在的会话。
+  - **事件落日志的并发安全（M5a-2 实现决策）**：job 状态迁移发生在后台 goroutine，而 `session.Log` 非并发安全——若组合根在后台 goroutine 里直接 `a.log.Append`，会与主循环的串行追加竞态（D5）。因此 **`job/*` 事件全部在 job_* 工具的 `Execute` 内（主循环串行路径）落日志**：`job_start` 落 `job/start`，观察类工具（status/cancel/wait/read）通过共享 transition tracker 对每个 `(id,status)` 恰好落一次 `job/status`/`job/done`。M5b/c/d 的接线遵循同一模式：后台完成的模型可见输入，一律经串行工具路径或组合根回调落日志，绝不从后台 goroutine 直接追加会话日志。
 - **Consumer（工具）**：`job_start`（注册一个后台工作，返回 job id）、`job_status`、`job_cancel`、`job_wait`（有界）、`job_read`（读输出）。默认关（D10），白名单门同 kb 工具模式。组合根注册工具 + 事件落日志。
 - **config**：`jobs.enabled`（默认 false）、`jobs.max_concurrent_jobs_per_owner`。
 - **事件（D3）**：`job/start`（注册成功，含 id/kind/label/owner）、`job/status`（running→stopping 等状态迁移，含 detail）、`job/done`（终态，含输出摘要）。载荷有界（输出只记摘要 + spill 定位符，全文落 `data/spill/`）。
