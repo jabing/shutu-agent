@@ -201,3 +201,24 @@ spill:
   # session event log), folding memory-worthy fragments into new memos after
   # each completed turn. Only takes effect when spill is enabled; absent ⇒ true.
   auto_spill: true
+
+# Human-approval capability (M6d; design.md §10 D2 / ADR 2026-08-19-m6-agent-full.md
+# 决策 M6d). Off by default (D10): when disabled no Provider/Engine is
+# initialized, no interact_* tool is registered or whitelisted, and no
+# sensitive-tool gate is installed. When enabled, interact_ask raises a
+# question/approval request for the user (the CLI interaction happens on the
+# user's terminal; the model continues) and interact_status looks up a request's
+# current status (in-memory only, cleared on restart). When sensitive_tools is
+# non-empty, every requested execution of a listed tool first passes a human
+# approval on the CLI serial path (y/n) — approved lets the tool run, rejected
+# returns a denial to the model. interact/request, interact/resolve,
+# interact/deny and interact/status are logged as facts (D3).
+interact:
+  # Master switch. false ⇒ no interact Provider/Engine is created, the
+  # interact_* tools are neither registered nor whitelisted, and no
+  # sensitive-tool gate is installed (默认关闭，不初始化).
+  enabled: false
+  # Tools whose execution must first pass a human approval (e.g. run_command).
+  # Empty ⇒ no gating; an enabled interact still registers the interact_* tools
+  # but intercepts nothing.
+  sensitive_tools: []

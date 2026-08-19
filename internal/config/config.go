@@ -100,6 +100,7 @@ type Config struct {
 	Schedule   ScheduleConfig   `yaml:"schedule"`    // schedule policy (M6a)
 	Plan       PlanConfig       `yaml:"plan"`        // task-planning policy (M6b)
 	Spill      SpillConfig      `yaml:"spill"`       // long-term-memory policy (M6c)
+	Interact   InteractConfig   `yaml:"interact"`    // human-approval policy (M6d)
 }
 
 // JobsConfig is the background-job policy (dispatch-m5a-2 §3 / ADR
@@ -235,6 +236,23 @@ func (s SpillConfig) AutoSpillValue() bool {
 		return true
 	}
 	return *s.AutoSpill
+}
+
+// InteractConfig is the human-approval policy (dispatch-m6d-2 §2 / ADR
+// 2026-08-19-m6-agent-full.md 决策 M6d). Interact is off by default (D10): when
+// disabled the composition root neither creates an Engine nor registers or
+// whitelists the interact_* tools, and no sensitive-tool gate is installed.
+type InteractConfig struct {
+	// Enabled gates the whole capability: when false, no Provider/Engine is
+	// created, the interact_* tools are neither registered nor whitelisted,
+	// and no sensitive-tool gate is installed (D10).
+	Enabled bool `yaml:"enabled"`
+	// SensitiveTools names the tools whose execution must first pass a human
+	// approval (the ADR 决策 M6d sensitive-tool gate: approved before the tool
+	// runs, rejected returns a denial to the model). Empty means no gating —
+	// an enabled interact still registers the interact_* tools but intercepts
+	// nothing.
+	SensitiveTools []string `yaml:"sensitive_tools"`
 }
 
 // KBConfig is the knowledge-base policy (dispatch-m4a §3 / dispatch-m4b §5).
@@ -524,6 +542,19 @@ func applyDefaults(cfg *Config) {
 			}
 		}
 	}
+	// M6d-2 interact defaults: off by default (D10). Enabling interact
+	// whitelists its two consumer tools, so the one interact.enabled switch
+	// turns the whole capability (Provider + Engine + tools + event logging +
+	// the sensitive-tool gate) on (mirrors kb/jobs/subagent/skill/schedule/
+	// plan/spill). sensitive_tools is left verbatim: empty means the gate is
+	// not installed even when enabled (no gating by default).
+	if cfg.Interact.Enabled {
+		for _, name := range interactToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
 }
 
 // kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /
@@ -567,6 +598,12 @@ var planToolNames = []string{"plan_goal", "plan_plan", "plan_todo", "plan_status
 // makes the "spill.enabled ⇒ 工具自动白名单" rule a single, tested fact shared by
 // applyDefaults and the composition root.
 var spillToolNames = []string{"spill_write", "spill_recall", "spill_list", "spill_delete"}
+
+// interactToolNames are the human-approval consumer tools (dispatch-m6d-2 §3).
+// They are registered and whitelisted only when interact is enabled; keeping
+// the names here makes the "interact.enabled ⇒ 工具自动白名单" rule a single,
+// tested fact shared by applyDefaults and the composition root.
+var interactToolNames = []string{"interact_ask", "interact_status"}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {

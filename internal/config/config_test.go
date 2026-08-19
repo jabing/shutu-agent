@@ -953,3 +953,84 @@ func TestLoadSpillEnabledAppendsToolsToWhitelist(t *testing.T) {
 		}
 	}
 }
+
+// M6d-2: interact is off by default (D10), sensitive_tools is empty (no
+// gating), and the interact_* tools must not be whitelisted while disabled
+// (dispatch-m6d-2 §2).
+func TestLoadInteractDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Interact.Enabled {
+		t.Error("interact must be disabled by default (D10)")
+	}
+	if len(cfg.Interact.SensitiveTools) != 0 {
+		t.Errorf("interact.sensitive_tools = %v, want empty (no gating by default)", cfg.Interact.SensitiveTools)
+	}
+	for _, name := range interactToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when interact disabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// M6d-2: an explicit interact section is honored (enabled, sensitive_tools),
+// while an explicit enabled:false leaves the default whitelist untouched and an
+// empty sensitive_tools stays empty (D10, dispatch-m6d-2 §2).
+func TestLoadInteractParsesSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("interact:\n  enabled: true\n  sensitive_tools: [run_command, job_start]\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Interact.Enabled {
+		t.Error("interact.enabled should be true")
+	}
+	if len(cfg.Interact.SensitiveTools) != 2 || cfg.Interact.SensitiveTools[0] != "run_command" || cfg.Interact.SensitiveTools[1] != "job_start" {
+		t.Errorf("interact.sensitive_tools = %v, want [run_command job_start]", cfg.Interact.SensitiveTools)
+	}
+
+	// Explicit enabled:false and an empty sensitive_tools stay verbatim.
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("interact:\n  enabled: false\n  sensitive_tools: []\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Interact.Enabled {
+		t.Error("interact.enabled = true, want false (explicitly disabled)")
+	}
+	if len(cfg2.Interact.SensitiveTools) != 0 {
+		t.Errorf("interact.sensitive_tools = %v, want empty", cfg2.Interact.SensitiveTools)
+	}
+	for _, name := range interactToolNames {
+		if contains(cfg2.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when interact explicitly disabled", cfg2.Tools.Enabled, name)
+		}
+	}
+}
+
+// M6d-2: interact.enabled: true is the single switch that turns the whole
+// capability on — the two interact_* tools must also become whitelisted
+// (dispatch-m6d-2 §2, mirrors kb/jobs/subagent/skill/schedule/plan/spill).
+func TestLoadInteractEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("interact:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range interactToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after interact.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
