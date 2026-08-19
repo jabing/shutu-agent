@@ -1,0 +1,176 @@
+// interacts.go — the M6d-2 composition-root orchestration (dispatch-m6d-2
+// §4/§5). This is where the human-approval capability seam is wired into the
+// REPL: registerInteracts creates the in-memory Provider + Engine, registers
+// the two interact_* tools and installs the sensitive-tool gate on the tool
+// registry when interact.enabled (D10), and wires the D3 event sink so
+// interact/* events are appended to the active session log.
+//
+// The sensitive-tool gate is the ADR 决策 M6d 落地 (design.md §10 D5): when
+// interact.sensitive_tools is non-empty and the model requests a gated tool,
+// the gate first Engine.Requests a human approval, then blocks on the CLI
+// serial path reading the user's y/n answer from the terminal, then records the
+// decision (Engine.Resolve) and re-reads it through Engine.Await (the
+// caller-driven poll — the resolution made here is visible on the next probe).
+// Approved lets the tool run; rejected returns a denial the model sees as a
+// tool/error. The loop's turn/step structure is untouched (D4): the gate hangs
+// off the tools registry's pre-execution hook (tools.SetGate), not the loop.
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"personal-agent/internal/interact"
+	"personal-agent/internal/session"
+	"personal-agent/internal/tools"
+)
+
+// approveArgsBound mirrors the approval engine's stored-args bound (interact
+// maxArgsLen, 200 runes): the gate trims an over-long tool args payload to it
+// so the approval Request can never fail on the gate path.
+const approveArgsBound = 200
+
+// registerInteracts creates the in-memory Provider + Engine, registers the two
+// interact_* tools and installs the sensitive-tool gate when interact.enabled,
+// and wires the D3 event sink. When interact is disabled it creates nothing and
+// registers nothing (D10, mirrors registerJobs/registerSkills). It must run
+// after every other register* so the sensitive-tool gate can see the full
+// registered tool set (it is called last in main.go).
+func (a *app) registerInteracts() error {
+	if !a.cfg.Interact.Enabled {
+		return nil
+	}
+	prov := interact.NewMemProvider()
+	eng := interact.NewEngine(prov)
+	a.interacts = eng
+	// D3 event sink: interact/* events are appended to the active session log.
+	// The callback only ever runs inside an interact_* tool Execute or the
+	// sensitive-tool gate — the serial main-loop path (D5). a.log is read at
+	// call time, so a session switch (/new, /resume) is honored the same way
+	// as the kb/jobs/subagent/skill wiring.
+	onEvent := func(typ string, data any) {
+		if _, err := a.log.Append(typ, data); err != nil {
+			fmt.Fprintln(os.Stderr, "pa: "+typ+" event:", err)
+		}
+	}
+	st := interact.NewInteractTools(eng, onEvent)
+	for _, t := range []tools.Tool{
+		st.Ask(),
+		st.Status(),
+	} {
+		if err := a.reg.Register(t); err != nil {
+			return fmt.Errorf("pa: register %s: %w", t.Name(), err)
+		}
+	}
+	// Sensitive-tool gate: install the registry pre-execution gate when
+	// sensitive_tools is non-empty (an enabled interact with an empty list
+	// registers only the interact_* tools — no gating).
+	if len(a.cfg.Interact.SensitiveTools) > 0 {
+		a.reg.SetGate(a.sensitiveGate(eng, onEvent))
+	}
+	return nil
+}
+
+// sensitiveGate returns the registry pre-execution gate for the configured
+// sensitive tools (ADR 决策 M6d / dispatch-m6d-2 §4). The registry calls it for
+// every whitelisted execution; tools outside sensitive_tools pass through
+// untouched. A gated tool first creates a pending approval request, then blocks
+// on the CLI serial path reading the user's y/n answer from the terminal (D5),
+// then records the decision (Engine.Resolve) and re-reads it through
+// Engine.Await (the caller-driven poll — the resolution made here becomes
+// visible on the next probe). Approved returns nil and the tool runs; rejected
+// appends the interact/deny fact and returns a denial the model sees as a
+// tool/error.
+func (a *app) sensitiveGate(eng interact.Engine, onEvent func(string, any)) func(context.Context, string, json.RawMessage) error {
+	sensitive := a.cfg.Interact.SensitiveTools
+	return func(ctx context.Context, name string, args json.RawMessage) error {
+		if !containsSensitive(sensitive, name) {
+			return nil // not a sensitive tool; no approval needed
+		}
+		argsText := boundRunes(string(args))
+		prompt := fmt.Sprintf("Allow the sensitive tool %s to run? args: %s", name, argsText)
+		req, err := eng.Request(ctx, prompt, name, argsText)
+		if err != nil {
+			return fmt.Errorf("interact: %s approval request failed: %w", name, err)
+		}
+		onEvent(session.EventInteractRequest, session.NewInteractRequest(req.ID, name))
+		approved, err := a.approvePrompt(req.ID, prompt)
+		if err != nil {
+			return fmt.Errorf("interact: %s approval read failed: %w", name, err)
+		}
+		status := interact.StatusRejected
+		if approved {
+			status = interact.StatusApproved
+		}
+		if _, err := eng.Resolve(ctx, req.ID, status); err != nil {
+			return fmt.Errorf("interact: %s resolve failed: %w", name, err)
+		}
+		if _, err := eng.Await(ctx, req.ID); err != nil {
+			return fmt.Errorf("interact: %s await failed: %w", name, err)
+		}
+		onEvent(session.EventInteractResolve, session.NewInteractResolve(req.ID, approved))
+		if !approved {
+			onEvent(session.EventInteractDeny, session.NewInteractDeny(req.ID))
+			return fmt.Errorf("interact: %s denied by user (request %s)", name, req.ID)
+		}
+		return nil
+	}
+}
+
+// approvePrompt prints the approval request to the terminal and blocks reading
+// the user's y/n answer on the serial path (D5). It reads from a.approveInput
+// (os.Stdin by default) so the wiring tests can inject canned answers. Bare
+// Enter and EOF count as no (fail-closed for a security gate); y/yes allow,
+// n/no deny, anything else re-prompts.
+func (a *app) approvePrompt(id, prompt string) (bool, error) {
+	fmt.Printf("\n⚠ approval request %s\n%s\n", id, prompt)
+	in := a.approveInput
+	if in == nil {
+		in = os.Stdin
+	}
+	r := bufio.NewReader(in)
+	for {
+		fmt.Print("  allow execution? [y/N] > ")
+		line, err := r.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return false, err
+		}
+		switch strings.ToLower(strings.TrimSpace(line)) {
+		case "y", "yes":
+			return true, nil
+		case "n", "no", "":
+			return false, nil
+		}
+		if errors.Is(err, io.EOF) {
+			return false, nil
+		}
+	}
+}
+
+// containsSensitive reports whether name is listed in the configured sensitive
+// tools (exact match, mirroring the whitelist's own exact-name semantics in
+// tools.Policy.Allows).
+func containsSensitive(list []string, name string) bool {
+	for _, s := range list {
+		if s == name {
+			return true
+		}
+	}
+	return false
+}
+
+// boundRunes trims s to approveArgsBound runes so an over-long tool args
+// payload can never make the approval Request fail on the gate path.
+func boundRunes(s string) string {
+	runes := []rune(s)
+	if len(runes) > approveArgsBound {
+		return string(runes[:approveArgsBound])
+	}
+	return s
+}

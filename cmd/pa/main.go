@@ -15,6 +15,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 
 	"personal-agent/internal/compaction"
 	"personal-agent/internal/config"
+	"personal-agent/internal/interact"
 	"personal-agent/internal/jobs"
 	"personal-agent/internal/kb"
 	"personal-agent/internal/llm"
@@ -212,6 +214,22 @@ func main() {
 	if app.spills != nil {
 		defer app.spills.Close()
 	}
+	// M6d-2: wire the interact seam — in-memory Provider + Engine + the two
+	// interact_* tools + the D3 event sink + the sensitive-tool gate — when
+	// interact.enabled (默认关闭, D10). config.applyDefaults already whitelisted
+	// the interact_* names when interact.enabled was true. registerInteracts
+	// must run after every other register* so the sensitive-tool gate can wrap
+	// the full registered tool set. The deferred Close releases the provider
+	// and rejects further operations at shutdown (lifecycle reversible, ADR
+	// 决策 M6d). The gate reads the user's y/n answer on the CLI serial path
+	// (D5) — no background goroutine.
+	if err := app.registerInteracts(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
+	if app.interacts != nil {
+		defer app.interacts.Close()
+	}
 	if err := app.startup(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
@@ -238,6 +256,13 @@ type app struct {
 	schedules  schedule.Engine   // nil when schedule disabled (D10)
 	plans      plan.Engine       // nil when plan disabled (D10)
 	spills     spill.Engine      // nil when spill disabled (D10)
+	interacts  interact.Engine   // nil when interact disabled (D10)
+
+	// approveInput feeds the sensitive-tool gate's y/n read (nil => os.Stdin).
+	// It exists so the wiring tests can inject canned approval answers; in the
+	// REPL the gate reads the user's answer directly from the terminal on the
+	// serial path (D5).
+	approveInput io.Reader
 
 	// skillProjectRoot / skillUserHome override the filesystem skill provider's
 	// project/user roots when non-empty; empty uses the provider defaults (the
@@ -479,6 +504,15 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 		fmt.Printf("spills: enabled (auto_spill=%v)\n", a.cfg.Spill.AutoSpillValue())
 	} else {
 		fmt.Println("spills: disabled (spill.enabled=false)")
+	}
+	if a.cfg.Interact.Enabled {
+		if len(a.cfg.Interact.SensitiveTools) > 0 {
+			fmt.Printf("interact: enabled (sensitive_tools=%s)\n", strings.Join(a.cfg.Interact.SensitiveTools, ", "))
+		} else {
+			fmt.Println("interact: enabled (no sensitive_tools — interact_* tools only, no gating)")
+		}
+	} else {
+		fmt.Println("interact: disabled (interact.enabled=false)")
 	}
 }
 

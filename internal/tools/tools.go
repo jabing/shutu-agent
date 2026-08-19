@@ -56,6 +56,12 @@ type Registry struct {
 	schemas map[string]*jsonschema.Schema
 	policy  Policy
 	owner   Owner
+	// gate, when installed (M6d-2), is the optional pre-execution hook the
+	// sensitive-tool approval runs through. The registry owns the hook so the
+	// gate stays inside the Execute pipeline (policy lives here, never in the
+	// loop, D4); the gate function itself is provided by the composition root
+	// (cmd/pa). nil means no gating.
+	gate func(ctx context.Context, name string, args json.RawMessage) error
 	// fallbackSeq is used only when Owner.NextSeq is nil (a spill with no
 	// bound session); it keeps spill filenames unique.
 	fallbackSeq uint64
@@ -77,6 +83,19 @@ func (r *Registry) SetPolicy(p Policy) { r.policy = p }
 
 // SetOwner binds the registry to the active session for spill naming (M3).
 func (r *Registry) SetOwner(o Owner) { r.owner = o }
+
+// SetGate installs the optional pre-execution gate (M6d-2, ADR
+// 2026-08-19-m6-agent-full.md 决策 M6d / dispatch-m6d-2 §4). When non-nil,
+// Execute invokes gate before dispatching a whitelisted tool: a nil return lets
+// the tool run, a non-nil return is the gate's verdict (denial or failure) and
+// is returned verbatim (never dispatched). The gate runs with the caller's ctx
+// — outside the per-tool deadline, because a human approval answer is an
+// interactive read, not a tool computation. The gate function lives in cmd/pa
+// (the composition root); the registry merely owns the hook so the loop's
+// turn/step structure stays untouched (D4).
+func (r *Registry) SetGate(gate func(ctx context.Context, name string, args json.RawMessage) error) {
+	r.gate = gate
+}
 
 // Register adds a tool. A duplicate name is rejected. The argument schema is
 // compiled once at registration so Execute has no per-call compile cost.
@@ -140,6 +159,17 @@ func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessag
 	}
 	if err := r.schemas[name].Validate(v); err != nil {
 		return Result{}, fmt.Errorf("tools: %s: invalid arguments: %w", name, err)
+	}
+
+	// M6d-2 sensitive-tool gate: runs after whitelist + D7 validation but
+	// before the per-tool deadline is applied — the user's approval answer is
+	// an interactive terminal read on the CLI serial path (D5), not a tool
+	// computation, so it must not be bounded by tools.timeout. A non-nil return
+	// is the gate's verdict and is returned verbatim (the tool never runs).
+	if r.gate != nil {
+		if err := r.gate(ctx, name, args); err != nil {
+			return Result{}, err
+		}
 	}
 
 	timeout := r.policy.Timeout

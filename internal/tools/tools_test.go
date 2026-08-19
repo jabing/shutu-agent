@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -138,5 +139,89 @@ func TestReadFileMissing(t *testing.T) {
 	r.Register(ReadFile{})
 	if _, err := r.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"/definitely/not/here"}`)); err == nil {
 		t.Fatal("missing file should fail")
+	}
+}
+
+// TestExecuteGate verifies the M6d-2 pre-execution gate hook
+// (dispatch-m6d-2 §4): when installed, Execute runs the gate after D7
+// validation and before the tool — a non-nil gate return is the verdict
+// (denial/failure) and the tool never runs, a nil return lets the tool run.
+// With no gate installed the behavior is unchanged.
+func TestExecuteGate(t *testing.T) {
+	ft := &fakeTool{name: "gated"}
+	r := New()
+	r.Register(ft)
+	r.SetPolicy(Policy{Enabled: []string{"gated"}})
+
+	var gateCalls []string
+	r.SetGate(func(ctx context.Context, name string, args json.RawMessage) error {
+		gateCalls = append(gateCalls, name)
+		if name == "gated" {
+			return fmt.Errorf("denied: user said no")
+		}
+		return nil
+	})
+
+	if _, err := r.Execute(context.Background(), "gated", json.RawMessage(`{}`)); err == nil {
+		t.Fatal("gated tool must be denied when the gate returns an error")
+	} else if err.Error() != "denied: user said no" {
+		t.Fatalf("gate verdict = %v, want the gate error verbatim", err)
+	}
+	if ft.executed {
+		t.Fatal("gated tool executed despite the gate denying it")
+	}
+	if len(gateCalls) != 1 || gateCalls[0] != "gated" {
+		t.Fatalf("gate calls = %v, want [gated]", gateCalls)
+	}
+
+	// A nil gate return lets the tool run.
+	r.SetGate(func(ctx context.Context, name string, args json.RawMessage) error { return nil })
+	res, err := r.Execute(context.Background(), "gated", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("gated tool after nil gate return: %v", err)
+	}
+	if res.Output != "ok" || !ft.executed {
+		t.Fatalf("out=%q executed=%v, want ok/true", res.Output, ft.executed)
+	}
+
+	// No gate installed: execution is unchanged.
+	r2 := New()
+	ft2 := &fakeTool{name: "x"}
+	r2.Register(ft2)
+	r2.SetPolicy(Policy{Enabled: []string{"x"}})
+	if _, err := r2.Execute(context.Background(), "x", json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("ungated registry: %v", err)
+	}
+	if !ft2.executed {
+		t.Fatal("tool must run when no gate is installed")
+	}
+}
+
+// TestExecuteGateRunsAfterValidation verifies the gate sits after D7: an
+// invalid-arguments call is rejected by the schema before the gate ever sees it
+// (so a malformed request never triggers a human approval prompt).
+func TestExecuteGateRunsAfterValidation(t *testing.T) {
+	ft := &fakeTool{
+		name: "needs_path",
+		schema: map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{"path": map[string]any{"type": "string"}},
+			"required":             []string{"path"},
+			"additionalProperties": false,
+		},
+	}
+	r := New()
+	r.Register(ft)
+	r.SetPolicy(Policy{Enabled: []string{"needs_path"}})
+	called := false
+	r.SetGate(func(ctx context.Context, name string, args json.RawMessage) error {
+		called = true
+		return nil
+	})
+	if _, err := r.Execute(context.Background(), "needs_path", json.RawMessage(`{}`)); err == nil {
+		t.Fatal("missing required arg must be rejected (D7)")
+	}
+	if called {
+		t.Fatal("gate ran before D7 validation; a malformed call must not prompt for approval")
 	}
 }
