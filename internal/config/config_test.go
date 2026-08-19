@@ -636,3 +636,95 @@ func TestLoadCompactionEnabledDoesNotAppendToolsToWhitelist(t *testing.T) {
 		t.Errorf("whitelist = %v, want %v (compaction.enabled adds nothing)", cfg.Tools.Enabled, want)
 	}
 }
+
+// M5d: skill is off by default (D10), dirs are empty, the catalog is bounded
+// to 500 chars and the returned skill body to 8000 chars, and skill_load is
+// not whitelisted while disabled (dispatch-m5d-2 §2).
+func TestLoadSkillDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Skill.Enabled {
+		t.Error("skill must be disabled by default (D10)")
+	}
+	if len(cfg.Skill.Dirs) != 0 {
+		t.Errorf("skill.dirs = %v, want empty", cfg.Skill.Dirs)
+	}
+	if cfg.Skill.CatalogMaxChars != DefaultSkillCatalogMaxChars {
+		t.Errorf("skill.catalog_max_chars = %d, want default %d",
+			cfg.Skill.CatalogMaxChars, DefaultSkillCatalogMaxChars)
+	}
+	if cfg.Skill.BodyMaxChars != DefaultSkillBodyMaxChars {
+		t.Errorf("skill.body_max_chars = %d, want default %d",
+			cfg.Skill.BodyMaxChars, DefaultSkillBodyMaxChars)
+	}
+	for _, name := range skillToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when skill disabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// M5d: an explicit skill section is honored (enabled, dirs, catalog_max_chars,
+// body_max_chars), while non-positive bounds fall back to their defaults
+// (校验非负: a negative value never survives) (dispatch-m5d-2 §2).
+func TestLoadSkillParsesSectionAndFallsBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("skill:\n  enabled: true\n  dirs: [C:\\skills, D:\\more]\n  catalog_max_chars: 300\n  body_max_chars: 4096\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Skill.Enabled {
+		t.Error("skill.enabled should be true")
+	}
+	if len(cfg.Skill.Dirs) != 2 || cfg.Skill.Dirs[0] != `C:\skills` || cfg.Skill.Dirs[1] != `D:\more` {
+		t.Errorf("skill.dirs = %v, want [C:\\skills D:\\more]", cfg.Skill.Dirs)
+	}
+	if cfg.Skill.CatalogMaxChars != 300 {
+		t.Errorf("skill.catalog_max_chars = %d, want 300", cfg.Skill.CatalogMaxChars)
+	}
+	if cfg.Skill.BodyMaxChars != 4096 {
+		t.Errorf("skill.body_max_chars = %d, want 4096", cfg.Skill.BodyMaxChars)
+	}
+
+	// Non-positive (including negative) bounds fall back to the defaults.
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("skill:\n  enabled: true\n  catalog_max_chars: 0\n  body_max_chars: -1\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Skill.CatalogMaxChars != DefaultSkillCatalogMaxChars {
+		t.Errorf("skill.catalog_max_chars 0 = %d, want default %d",
+			cfg2.Skill.CatalogMaxChars, DefaultSkillCatalogMaxChars)
+	}
+	if cfg2.Skill.BodyMaxChars != DefaultSkillBodyMaxChars {
+		t.Errorf("skill.body_max_chars -1 = %d, want default %d",
+			cfg2.Skill.BodyMaxChars, DefaultSkillBodyMaxChars)
+	}
+}
+
+// M5d: skill.enabled: true is the single switch that turns the whole capability
+// on — the skill_load tool must also become whitelisted (dispatch-m5d-2 §2,
+// mirrors kb/jobs/subagent).
+func TestLoadSkillEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("skill:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range skillToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after skill.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+}

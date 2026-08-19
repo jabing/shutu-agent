@@ -125,3 +125,25 @@ compaction:
   retain_turns: 8
   # Upper bound on the generated summary; 0/absent ⇒ the engine default.
   max_chars: 0
+
+# Skill capability (M5d; design.md §3 / ADR 2026-08-18-m5-agent-core.md
+# 决策 ④). Off by default (D10): when disabled no skill provider/registry is
+# initialized, skill_load is neither registered nor whitelisted, and no skill
+# catalog pre-step injector is wired. Skills are trusted local files loaded as
+# model instruction text — never executed. When enabled, each turn's first
+# request carries the skill catalog (sorted name + description, bounded) and
+# skill_load loads a skill's full body (bounded) on demand; skill/catalog and
+# skill/load are logged as facts (D3).
+skill:
+  # Master switch. false ⇒ no skill provider/registry is created and skill_load
+  # is neither registered nor whitelisted (默认关闭，不初始化).
+  enabled: false
+  # Additional custom skill directories (source "custom", rank 300), scanned in
+  # order. Empty by default.
+  dirs: []
+  # Bound on the injected skill catalog (name + description), in chars;
+  # 0/absent ⇒ 500.
+  catalog_max_chars: 500
+  # Bound on the skill body skill_load returns to the model, in chars
+  # (Unicode-safe truncation, 防超长注入); 0/absent ⇒ 8000.
+  body_max_chars: 8000

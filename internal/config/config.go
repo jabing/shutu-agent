@@ -60,6 +60,14 @@ const (
 	// or 0 for the engine to fall back on).
 	DefaultCompactionTokenThreshold = 32000
 	DefaultCompactionRetainTurns    = 8
+
+	// M5d-2 skill defaults (dispatch-m5d-2 §2): the injected catalog is
+	// bounded to 500 chars when skill.catalog_max_chars is absent or
+	// non-positive, and skill_load returns at most 8000 chars of a skill body
+	// when skill.body_max_chars is absent or non-positive (dispatch-m5d 约束:
+	// 正文有长度上限防超长注入).
+	DefaultSkillCatalogMaxChars = 500
+	DefaultSkillBodyMaxChars    = 8000
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
@@ -79,6 +87,7 @@ type Config struct {
 	Jobs       JobsConfig       `yaml:"jobs"`        // background-job policy (M5a)
 	Subagent   SubagentConfig   `yaml:"subagent"`    // subagent policy (M5b)
 	Compaction CompactionConfig `yaml:"compaction"`  // context-compaction policy (M5c)
+	Skill      SkillConfig      `yaml:"skill"`       // skill policy (M5d)
 }
 
 // JobsConfig is the background-job policy (dispatch-m5a-2 §3 / ADR
@@ -135,6 +144,27 @@ type CompactionConfig struct {
 	// (the wiring passes BasicEngine's default, or 0 for the engine to fall
 	// back on).
 	MaxChars int `yaml:"max_chars"`
+}
+
+// SkillConfig is the skill policy (dispatch-m5d-2 §2 / ADR
+// 2026-08-18-m5-agent-core.md 决策 ④). Skills are off by default (D10): when
+// disabled the composition root neither creates a provider/registry nor
+// registers or whitelists the skill_load tool, and no catalog injector is
+// registered.
+type SkillConfig struct {
+	// Enabled gates the whole capability: when false, no skill provider/
+	// registry is created and skill_load is neither registered nor whitelisted,
+	// and no skill catalog pre-step injector is wired (D10).
+	Enabled bool `yaml:"enabled"`
+	// Dirs are additional custom skill directories (source "custom", rank 300)
+	// scanned by the filesystem provider, in order. Empty by default.
+	Dirs []string `yaml:"dirs"`
+	// CatalogMaxChars bounds the injected skill catalog (sorted name +
+	// description) in chars; <= 0 means the default 500.
+	CatalogMaxChars int `yaml:"catalog_max_chars"`
+	// BodyMaxChars bounds the skill body skill_load returns to the model in
+	// chars (Unicode-safe truncation, 防超长注入); <= 0 means the default 8000.
+	BodyMaxChars int `yaml:"body_max_chars"`
 }
 
 // KBConfig is the knowledge-base policy (dispatch-m4a §3 / dispatch-m4b §5).
@@ -364,6 +394,26 @@ func applyDefaults(cfg *Config) {
 	if cfg.Compaction.RetainTurns <= 0 {
 		cfg.Compaction.RetainTurns = DefaultCompactionRetainTurns
 	}
+	// M5d-2 skill defaults: off by default (D10); the catalog is bounded to
+	// 500 chars and the returned skill body to 8000 chars. Enabling skill
+	// whitelists its single consumer tool skill_load, so the one
+	// skill.enabled switch turns the whole capability (provider + registry +
+	// tool + catalog injector) on (mirrors kb/jobs/subagent). Non-positive
+	// bounds are clamped to the defaults (校验非负: a negative configured value
+	// can never survive to the wiring).
+	if cfg.Skill.Enabled {
+		for _, name := range skillToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
+	if cfg.Skill.CatalogMaxChars <= 0 {
+		cfg.Skill.CatalogMaxChars = DefaultSkillCatalogMaxChars
+	}
+	if cfg.Skill.BodyMaxChars <= 0 {
+		cfg.Skill.BodyMaxChars = DefaultSkillBodyMaxChars
+	}
 }
 
 // kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /
@@ -383,6 +433,12 @@ var jobsToolNames = []string{"job_start", "job_status", "job_cancel", "job_wait"
 // names here makes the "subagent.enabled ⇒ 工具自动白名单" rule a single, tested
 // fact shared by applyDefaults and the composition root.
 var subagentToolNames = []string{"subagent_spawn", "subagent_status", "subagent_cancel", "subagent_list"}
+
+// skillToolNames are the skill consumer tools (dispatch-m5d-2 §2). skill_load
+// is registered and whitelisted only when skill is enabled; keeping the name
+// here makes the "skill.enabled ⇒ 工具自动白名单" rule a single, tested fact
+// shared by applyDefaults and the composition root.
+var skillToolNames = []string{"skill_load"}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {
