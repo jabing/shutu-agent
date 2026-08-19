@@ -66,3 +66,19 @@ kb:
   # (absent ⇒ true; false = skip extraction entirely). Extraction is
   # fail-open and never blocks the next answer.
   extraction: true
+
+# Background-job capability (M5a; design.md §10 D5 / ADR 2026-08-18-m5-agent-core.md
+# 决策 ①). Off by default (D10): when disabled no registry is initialized and no
+# job_* tool is registered or whitelisted. job_start runs a command line as a
+# background job (os/exec + context cancellation); job_status / job_read observe
+# it, job_cancel cancels it, job_wait awaits it (bounded, default 30s). Job
+# state/output reach the model through the tools' tool/result; job/start,
+# job/status and job/done are logged as facts (D3). Jobs are in-memory only —
+# a process restart clears them (no persistence in M5a).
+jobs:
+  # Master switch. false ⇒ no jobs.Local is created and the job_* tools are
+  # neither registered nor whitelisted (默认关闭，不初始化).
+  enabled: false
+  # Cap on running+stopping jobs in one owner bucket (and the shared unowned
+  # bucket); 0/absent ⇒ 10.
+  max_concurrent_jobs_per_owner: 10

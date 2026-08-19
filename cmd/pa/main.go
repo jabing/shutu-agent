@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"personal-agent/internal/config"
+	"personal-agent/internal/jobs"
 	"personal-agent/internal/kb"
 	"personal-agent/internal/llm"
 	"personal-agent/internal/llm/deepseek"
@@ -112,6 +113,18 @@ func main() {
 	if app.kb != nil {
 		defer app.kb.Close()
 	}
+	// M5a-2: wire the jobs seam — Local registry + the five job_* tools + the
+	// D3 event sink — when jobs.enabled (默认关闭, D10). config.applyDefaults
+	// already whitelisted the job_* names when jobs.enabled was true. The
+	// deferred Close cancels and awaits every live background job at shutdown
+	// so no goroutine leaks (lifecycle reversible, ADR 决策 ①).
+	if err := app.registerJobs(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
+	if app.jobs != nil {
+		defer app.jobs.Close()
+	}
 	if err := app.startup(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
@@ -130,6 +143,7 @@ type app struct {
 
 	currentID string
 	log       *session.Log
+	jobs      *jobs.Local // nil when jobs disabled (D10)
 }
 
 // startup resumes the most recently updated session, or starts a fresh one.
@@ -317,6 +331,11 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 			a.cfg.KB.DBPath, a.cfg.KB.RecallLimitValue(), a.cfg.KB.CatalogValue())
 	} else {
 		fmt.Println("knowledge base: disabled (kb.enabled=false)")
+	}
+	if a.cfg.Jobs.Enabled {
+		fmt.Printf("jobs: enabled (max_concurrent_jobs_per_owner=%d)\n", a.cfg.Jobs.MaxConcurrentJobsPerOwner)
+	} else {
+		fmt.Println("jobs: disabled (jobs.enabled=false)")
 	}
 }
 
