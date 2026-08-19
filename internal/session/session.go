@@ -6,6 +6,7 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"personal-agent/internal/llm"
@@ -29,6 +30,18 @@ const (
 	EventKBRecall  = "kb/recall"
 	EventKBAdd     = "kb/add"
 	EventKBExtract = "kb/extract"
+
+	// M5a background-job events (design.md §3 / ADR 2026-08-18-m5-agent-core.md
+	// 决策 ① / dispatch-m5a-2): job/start lands when a job registers
+	// successfully, job/status on a non-terminal transition (e.g.
+	// running→stopping), job/done on a terminal settle. They are log-only
+	// (D3): the model sees job state/output through the job_* tools' tool/result
+	// events, and DeriveHistory treats these types as opaque data, so adding
+	// them never changes the turn/step structure (D4). The payloads are pure
+	// data projections — the session package never imports the jobs package.
+	EventJobStart  = "job/start"
+	EventJobStatus = "job/status"
+	EventJobDone   = "job/done"
 )
 
 // EventVersion is the current event vocabulary version. It is stored per event
@@ -301,4 +314,69 @@ type kbExtractData struct {
 // status is created | skipped | failed.
 func NewKBExtract(status, sessionID string, turn int, reason string, ids []string) any {
 	return kbExtractData{Status: status, Session: sessionID, Turn: turn, Reason: reason, IDs: ids}
+}
+
+// jobStartData is the job/start payload: the registry-issued id plus the
+// registration facts (kind/label/owner). DeriveHistory treats it as opaque
+// data.
+type jobStartData struct {
+	ID           string `json:"id"`
+	Kind         string `json:"kind"`
+	Label        string `json:"label"`
+	OwnerSession string `json:"ownerSession,omitempty"`
+}
+
+// jobStatusData is the job/status payload: one observed non-terminal
+// transition (e.g. running→stopping) with its kind-specific detail.
+// DeriveHistory treats it as opaque data.
+type jobStatusData struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// jobDoneData is the job/done payload: a terminal settle (completed/killed/
+// failed) plus a bounded output summary. The log only ever carries the
+// summary, never the full output (which the model sees through job_read's
+// tool/result). DeriveHistory treats it as opaque data.
+type jobDoneData struct {
+	ID            string `json:"id"`
+	Status        string `json:"status"`
+	Detail        string `json:"detail,omitempty"`
+	OutputSummary string `json:"outputSummary,omitempty"`
+}
+
+// jobOutputSummaryMax bounds the job/done output summary (dispatch-m5a-2: 输出
+// 只记摘要，有界), keeping the log lean regardless of what the caller passes.
+const jobOutputSummaryMax = 200
+
+// NewJobStart builds the job/start payload recorded when a job registers
+// successfully (dispatch-m5a-2 §1 / D3).
+func NewJobStart(id, kind, label, ownerSession string) any {
+	return jobStartData{ID: id, Kind: kind, Label: label, OwnerSession: ownerSession}
+}
+
+// NewJobStatus builds the job/status payload recorded when a job's status
+// transitions (e.g. running→stopping) (dispatch-m5a-2 §1 / D3).
+func NewJobStatus(id, status, detail string) any {
+	return jobStatusData{ID: id, Status: status, Detail: detail}
+}
+
+// NewJobDone builds the job/done payload recorded when a job settles
+// terminally. output is bounded to a summary head by the constructor so the
+// payload is always lean (dispatch-m5a-2 §1 / D3).
+func NewJobDone(id, status, detail, output string) any {
+	return jobDoneData{ID: id, Status: status, Detail: detail, OutputSummary: summaryHead(output)}
+}
+
+// summaryHead returns a bounded, whitespace-compacted head of s for a log
+// summary (mirrors kb.Snippet's bound; kept here so the session package owns
+// the on-disk bound it serializes).
+func summaryHead(s string) string {
+	compact := strings.Join(strings.Fields(s), " ")
+	runes := []rune(compact)
+	if len(runes) > jobOutputSummaryMax {
+		return string(runes[:jobOutputSummaryMax]) + "…"
+	}
+	return compact
 }

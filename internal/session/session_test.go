@@ -384,3 +384,84 @@ func TestToolResultSpillRecordsLocator(t *testing.T) {
 		t.Fatalf("derived tool content = %q", msgs[2].Content)
 	}
 }
+
+// TestJobEventsAppendAndReplay verifies the M5a job/* event types
+// (job/start, job/status, job/done — dispatch-m5a-2 §1 / D3): each appends
+// with the right vocabulary, survives the JSON round-trip and restart replay,
+// and stays opaque to history derivation (job state is surfaced to the model
+// through the job_* tools' tool/result, not through these log-only events).
+func TestJobEventsAppendAndReplay(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	if _, err := l.Append(EventJobStart, NewJobStart("bash-1", "bash", "echo hello", "s-abc")); err != nil {
+		t.Fatalf("append job/start: %v", err)
+	}
+	if _, err := l.Append(EventJobStatus, NewJobStatus("bash-1", "stopping", "cancelled")); err != nil {
+		t.Fatalf("append job/status: %v", err)
+	}
+	if _, err := l.Append(EventJobDone, NewJobDone("bash-1", "killed", "cancelled", strings.Repeat("very long output ", 50))); err != nil {
+		t.Fatalf("append job/done: %v", err)
+	}
+	events := l.Events()
+	if len(events) != 3 {
+		t.Fatalf("events = %d, want 3", len(events))
+	}
+	if events[0].Type != EventJobStart || events[1].Type != EventJobStatus || events[2].Type != EventJobDone {
+		t.Fatalf("types = %q/%q/%q", events[0].Type, events[1].Type, events[2].Type)
+	}
+	for i, ev := range events {
+		if ev.Version != EventVersion {
+			t.Fatalf("event %d version = %d, want %d", i, ev.Version, EventVersion)
+		}
+	}
+	// JSON round-trip of each payload.
+	var st jobStartData
+	if err := json.Unmarshal(events[0].Data, &st); err != nil {
+		t.Fatalf("unmarshal job/start: %v", err)
+	}
+	if st.ID != "bash-1" || st.Kind != "bash" || st.Label != "echo hello" || st.OwnerSession != "s-abc" {
+		t.Fatalf("job/start payload = %+v", st)
+	}
+	var ss jobStatusData
+	if err := json.Unmarshal(events[1].Data, &ss); err != nil {
+		t.Fatalf("unmarshal job/status: %v", err)
+	}
+	if ss.ID != "bash-1" || ss.Status != "stopping" || ss.Detail != "cancelled" {
+		t.Fatalf("job/status payload = %+v", ss)
+	}
+	var sd jobDoneData
+	if err := json.Unmarshal(events[2].Data, &sd); err != nil {
+		t.Fatalf("unmarshal job/done: %v", err)
+	}
+	if sd.ID != "bash-1" || sd.Status != "killed" || sd.Detail != "cancelled" {
+		t.Fatalf("job/done payload = %+v", sd)
+	}
+	// The output summary must be bounded (dispatch-m5a-2: 输出只记摘要，有界).
+	if got := len([]rune(sd.OutputSummary)); got > jobOutputSummaryMax+1 {
+		t.Fatalf("job/done summary = %d runes, want <= %d+ellipsis", got, jobOutputSummaryMax)
+	}
+	if !strings.Contains(sd.OutputSummary, "very long output") {
+		t.Fatalf("job/done summary = %q, want it to carry the output head", sd.OutputSummary)
+	}
+	if len(persisted) != 3 || persisted[0].Type != EventJobStart {
+		t.Fatalf("sink (append path) = %+v", persisted)
+	}
+	// Restart replay: a fresh log rebuilt from what was persisted still sees
+	// every job event, and deriving history treats them all as opaque data.
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	for i, want := range []string{EventJobStart, EventJobStatus, EventJobDone} {
+		if got := fresh.Events()[i].Type; got != want {
+			t.Fatalf("replayed type %d = %q, want %q", i, got, want)
+		}
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
+		t.Fatalf("job/* events must not derive into messages: %+v", msgs)
+	}
+}
