@@ -87,6 +87,22 @@ const (
 	// session package never imports the skill package.
 	EventSkillCatalog = "skill/catalog"
 	EventSkillLoad    = "skill/load"
+
+	// M6a-2 schedule events (design.md §3 / ADR 2026-08-19-m6-agent-full.md
+	// 决策 M6a / dispatch-m6a-2 §1): schedule/create lands when schedule_create
+	// stores a trigger, schedule/list when schedule_list returns the table,
+	// schedule/delete when schedule_delete removes one, schedule/fire when the
+	// serial pre-step path advances the schedule clock and a trigger is due.
+	// They are log-only (D3): the model sees the schedule table through the
+	// schedule_* tools' tool/result events and any fired payload through the
+	// enqueued job, and DeriveHistory treats these types as opaque data, so
+	// adding them never changes the turn/step structure (D4). The payloads are
+	// pure data projections — the session package never imports the schedule
+	// package.
+	EventScheduleCreate = "schedule/create"
+	EventScheduleList   = "schedule/list"
+	EventScheduleDelete = "schedule/delete"
+	EventScheduleFire   = "schedule/fire"
 )
 
 // EventVersion is the current event vocabulary version. It is stored per event
@@ -655,4 +671,62 @@ func NewSkillCatalog(entryCount int, version string) any {
 // so the payload is always lean.
 func NewSkillLoad(name, source, summary string) any {
 	return skillLoadData{Name: name, Source: source, Summary: summaryHead(summary)}
+}
+
+// scheduleCreateData is the schedule/create payload: the provider-issued id,
+// the trigger kind and the spec of the newly created schedule. DeriveHistory
+// treats it as opaque data.
+type scheduleCreateData struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	Spec string `json:"spec"`
+}
+
+// scheduleListData is the schedule/list payload: the number of schedules in
+// the returned table. DeriveHistory treats it as opaque data.
+type scheduleListData struct {
+	Count int `json:"count"`
+}
+
+// scheduleDeleteData is the schedule/delete payload: the id of the removed
+// schedule. DeriveHistory treats it as opaque data.
+type scheduleDeleteData struct {
+	ID string `json:"id"`
+}
+
+// scheduleFireData is the schedule/fire payload: the id of the fired schedule
+// plus a bounded summary of the payload the executor receives. The log only
+// ever carries the summary (200 runes, the same on-disk bound as job/done), not
+// the full payload text — the enqueued job's output carries the full text and
+// reaches the model through job_read's tool/result. DeriveHistory treats it as
+// opaque data.
+type scheduleFireData struct {
+	ID      string `json:"id"`
+	Payload string `json:"payload"`
+}
+
+// NewScheduleCreate builds the schedule/create payload recorded when
+// schedule_create stores a trigger (dispatch-m6a-2 §1 / D3).
+func NewScheduleCreate(id, kind, spec string) any {
+	return scheduleCreateData{ID: id, Kind: kind, Spec: spec}
+}
+
+// NewScheduleList builds the schedule/list payload recorded when schedule_list
+// returns the schedule table (dispatch-m6a-2 §1 / D3).
+func NewScheduleList(count int) any {
+	return scheduleListData{Count: count}
+}
+
+// NewScheduleDelete builds the schedule/delete payload recorded when
+// schedule_delete removes a trigger (dispatch-m6a-2 §1 / D3).
+func NewScheduleDelete(id string) any {
+	return scheduleDeleteData{ID: id}
+}
+
+// NewScheduleFire builds the schedule/fire payload recorded when the serial
+// pre-step path advances the schedule clock and a trigger is due
+// (dispatch-m6a-2 §1 / D3). payload is bounded to a summary head (200 runes,
+// the same on-disk bound as job/done) so the payload is always lean.
+func NewScheduleFire(id, payload string) any {
+	return scheduleFireData{ID: id, Payload: summaryHead(payload)}
 }

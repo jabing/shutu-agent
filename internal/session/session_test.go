@@ -729,6 +729,124 @@ func TestSkillEventsAppendAndReplay(t *testing.T) {
 	}
 }
 
+// M6a-2: schedule/* events follow the same append/replay/no-derive contract as
+// job/subagent/compaction/skill (dispatch-m6a-2 §1 / D3), with schedule/fire's
+// payload bounded to a 200-rune summary head.
+func TestScheduleEventsAppendAndReplay(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	if _, err := l.Append(EventScheduleCreate, NewScheduleCreate("sched-1", "interval", "30m")); err != nil {
+		t.Fatalf("append schedule/create: %v", err)
+	}
+	if _, err := l.Append(EventScheduleList, NewScheduleList(2)); err != nil {
+		t.Fatalf("append schedule/list: %v", err)
+	}
+	if _, err := l.Append(EventScheduleDelete, NewScheduleDelete("sched-1")); err != nil {
+		t.Fatalf("append schedule/delete: %v", err)
+	}
+	if _, err := l.Append(EventScheduleFire, NewScheduleFire("sched-2", strings.Repeat("action ", 100))); err != nil {
+		t.Fatalf("append schedule/fire: %v", err)
+	}
+	events := l.Events()
+	if len(events) != 4 {
+		t.Fatalf("events = %d, want 4", len(events))
+	}
+	wantTypes := []string{EventScheduleCreate, EventScheduleList, EventScheduleDelete, EventScheduleFire}
+	for i, ev := range events {
+		if ev.Type != wantTypes[i] {
+			t.Fatalf("type %d = %q, want %q", i, ev.Type, wantTypes[i])
+		}
+		if ev.Version != EventVersion {
+			t.Fatalf("event %d version = %d, want %d", i, ev.Version, EventVersion)
+		}
+	}
+	// JSON round-trip of each payload.
+	var sc scheduleCreateData
+	if err := json.Unmarshal(events[0].Data, &sc); err != nil {
+		t.Fatalf("unmarshal schedule/create: %v", err)
+	}
+	if sc.ID != "sched-1" || sc.Kind != "interval" || sc.Spec != "30m" {
+		t.Fatalf("schedule/create payload = %+v", sc)
+	}
+	var sl scheduleListData
+	if err := json.Unmarshal(events[1].Data, &sl); err != nil {
+		t.Fatalf("unmarshal schedule/list: %v", err)
+	}
+	if sl.Count != 2 {
+		t.Fatalf("schedule/list payload = %+v", sl)
+	}
+	var sd scheduleDeleteData
+	if err := json.Unmarshal(events[2].Data, &sd); err != nil {
+		t.Fatalf("unmarshal schedule/delete: %v", err)
+	}
+	if sd.ID != "sched-1" {
+		t.Fatalf("schedule/delete payload = %+v", sd)
+	}
+	var sf scheduleFireData
+	if err := json.Unmarshal(events[3].Data, &sf); err != nil {
+		t.Fatalf("unmarshal schedule/fire: %v", err)
+	}
+	if sf.ID != "sched-2" {
+		t.Fatalf("schedule/fire id = %q, want sched-2", sf.ID)
+	}
+	// The fire payload must be bounded (dispatch-m6a-2 §1: payload 摘要
+	// 200-rune 有界) yet still carry the payload head.
+	if got := len([]rune(sf.Payload)); got > jobOutputSummaryMax+1 {
+		t.Fatalf("schedule/fire payload = %d runes, want <= %d+ellipsis", got, jobOutputSummaryMax)
+	}
+	if !strings.Contains(sf.Payload, "action") {
+		t.Fatalf("schedule/fire payload = %q, want it to carry the payload head", sf.Payload)
+	}
+	if len(persisted) != 4 || persisted[0].Type != EventScheduleCreate {
+		t.Fatalf("sink (append path) = %+v", persisted)
+	}
+	// Restart replay: a fresh log rebuilt from what was persisted still sees
+	// every schedule event, and deriving history treats them all as opaque
+	// data (log-only, like the M5 events).
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	for i, want := range wantTypes {
+		if got := fresh.Events()[i].Type; got != want {
+			t.Fatalf("replayed type %d = %q, want %q", i, got, want)
+		}
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
+		t.Fatalf("schedule/* events must not derive into messages: %+v", msgs)
+	}
+}
+
+// TestScheduleEventsMixedWithConversationDeriveOnlyConversation verifies the
+// log-only contract: schedule/* rows interleaved with a real conversation do
+// not appear in the derived history, and the conversation round-trips
+// unchanged (D4 — adding the events never changes the turn/step structure).
+func TestScheduleEventsMixedWithConversationDeriveOnlyConversation(t *testing.T) {
+	l := New()
+	l.Append(EventUserMessage, NewUserMessage("set up a reminder"))
+	l.Append(EventScheduleCreate, NewScheduleCreate("sched-1", "interval", "30m"))
+	l.Append(EventAssistantMessage, NewAssistantMessage("Done.", nil, "stop"))
+	l.Append(EventScheduleFire, NewScheduleFire("sched-1", "do the thing"))
+	msgs := l.DeriveHistory()
+	if len(msgs) != 2 {
+		t.Fatalf("derived %d messages, want 2 (conversation only): %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "set up a reminder" {
+		t.Fatalf("msg0 = %+v", msgs[0])
+	}
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Done." {
+		t.Fatalf("msg1 = %+v", msgs[1])
+	}
+	// D1: the schedule rows stay physically in the log.
+	if got := len(l.Events()); got != 4 {
+		t.Fatalf("log events = %d, want 4 (append-only)", got)
+	}
+}
+
 // M5c-1a compaction fold rule: a user/message carrying surfaceOp.replace
 // substitutes a summary for the shadowed surface range [Start, End] in the
 // derived history, while the shadowed events stay in the append-only log (D1).
