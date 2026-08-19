@@ -114,6 +114,8 @@ M5 立项前必须回答三个基线问题：
 
 **理由**：子代理是"把大任务拆给独立上下文的子 agent"的标准能力（dsh 也是独立能力族而非 loop 一部分）。独立会话 + 独立 loop 实例 + 后台 job，三个基础都在 M5a 及核心已备，接缝成本低；多 Provider 注册表为未来外部子进程 Provider 预留（D2）。
 
+**实施说明（M5b-1，2026-08-19）**：本段前半（运行时接口 + spawn Provider + loop pre-step 升级）已交付。一处实现细节相对上文措辞的偏离：**委托深度与 `parent_session` 血缘不在"会话 header"（`internal/session` 无 header 概念且本段不动该包，D4），而是记录在 `SpawnProvider` 的内存子代理注册表（`childRun.depth/parent`）**；M5b-2 的 `subagent/*` 事件与持久化接线会把这些血缘表面化到日志。`fork`/远程/`outputSchema`/continuable 冷恢复、工具/事件/config/cmd 接线仍按上文"本段明确不做"后置到 M5b-2 及后续。
+
 ## 决策 ③ M5c 上下文压缩（compaction）—— 摘要遮蔽旧范围，纯事件落地，loop 零改动
 
 **新增 `internal/compaction` 包：压缩接缝（Service Definition）+ 基础 Provider（token 压力 + LLM 摘要）+ 可选 tool-result 剪枝 + 人工 `/compact` 命令（Consumer）。长会话超预算时，把一段 surface 范围摘要成一条带 `surfaceOp: replace` 的 `user/message` 并遮蔽原事件，日志仍追加式（D1），DeriveHistory 折叠规则据此排除被遮蔽事件（D4）。**
