@@ -187,3 +187,81 @@ func TestLoadAcceptsEmptyRunCommandTimeoutMeansGlobal(t *testing.T) {
 		t.Errorf("whitelist = %v, want run_command present", cfg.Tools.Enabled)
 	}
 }
+
+// M4a: kb is off by default (D10), the database path defaults to
+// <data_dir>/kb/knowledge.sqlite, and a bounded search returns 5 hits by
+// default (dispatch-m4a §3).
+func TestLoadKBDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.KB.Enabled {
+		t.Error("kb must be disabled by default (D10)")
+	}
+	wantPath := filepath.Join(cfg.DataDir, "kb", "knowledge.sqlite")
+	if cfg.KB.DBPath != wantPath {
+		t.Errorf("kb.db_path = %q, want %q", cfg.KB.DBPath, wantPath)
+	}
+	if cfg.KB.TopK != DefaultKBTopK {
+		t.Errorf("kb.top_k = %d, want %d", cfg.KB.TopK, DefaultKBTopK)
+	}
+}
+
+func TestLoadParsesKBSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := "kb:\n  enabled: true\n  db_path: /tmp/kb.sqlite\n  top_k: 3\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.KB.Enabled {
+		t.Error("kb.enabled should be true")
+	}
+	if cfg.KB.DBPath != "/tmp/kb.sqlite" {
+		t.Errorf("kb.db_path = %q, want /tmp/kb.sqlite", cfg.KB.DBPath)
+	}
+	if cfg.KB.TopK != 3 {
+		t.Errorf("kb.top_k = %d, want 3", cfg.KB.TopK)
+	}
+}
+
+// An explicit db_path is used verbatim; only the empty default follows
+// data_dir.
+func TestLoadExplicitKBDBPathIsVerbatim(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := "data_dir: custom\nkb:\n  enabled: true\n  db_path: data/kb/knowledge.sqlite\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.KB.DBPath != "data/kb/knowledge.sqlite" {
+		t.Errorf("kb.db_path = %q, want verbatim data/kb/knowledge.sqlite", cfg.KB.DBPath)
+	}
+}
+
+// The empty db_path default follows a custom data_dir.
+func TestLoadKBDBPathFollowsDataDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := "data_dir: /srv/pa-data\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := filepath.Join("/srv/pa-data", "kb", "knowledge.sqlite")
+	if cfg.KB.DBPath != want {
+		t.Errorf("kb.db_path = %q, want %q", cfg.KB.DBPath, want)
+	}
+	if cfg.KB.Enabled {
+		t.Error("kb must stay disabled by default (D10)")
+	}
+}

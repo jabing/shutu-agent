@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,6 +26,12 @@ const (
 	// is 30s; tool output over 64KB is truncated and spilled.
 	DefaultToolTimeout = 30 * time.Second
 	DefaultOutputLimit = 64 * 1024
+
+	// M4a kb defaults (dispatch-m4a §3): the knowledge base is off by default
+	// (D10); a bounded Search/Recall returns 5 hits by default. The database
+	// path defaults to <data_dir>/kb/knowledge.sqlite (resolved in
+	// applyDefaults so it follows a custom data_dir).
+	DefaultKBTopK = 5
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
@@ -40,6 +47,22 @@ type Config struct {
 	DataDir    string      `yaml:"data_dir"`    // directory for pa.db (and runtime data); default "data"
 	PromptsDir string      `yaml:"prompts_dir"` // directory of prompt section files; default "config/prompts"
 	Tools      ToolsConfig `yaml:"tools"`       // tool-execution policy (M3)
+	KB         KBConfig    `yaml:"kb"`          // knowledge-base policy (M4a kernel)
+}
+
+// KBConfig is the M4a knowledge-base policy (dispatch-m4a §3). Only the kernel
+// fields land in M4a; recall_limit / extraction / catalog arrive with
+// M4b/M4c. The knowledge base is off by default (D10).
+type KBConfig struct {
+	// Enabled gates the whole capability: when false, no KB provider is
+	// initialized (kb.OpenSQLite is never called).
+	Enabled bool `yaml:"enabled"`
+	// DBPath is the SQLite database file; "" defaults to
+	// <data_dir>/kb/knowledge.sqlite.
+	DBPath string `yaml:"db_path"`
+	// TopK is the default result count for a bounded Search/Recall (<=0 uses
+	// the default 5).
+	TopK int `yaml:"top_k"`
 }
 
 // ToolsConfig is the M3 tool-execution policy: the whitelist, the per-tool
@@ -145,6 +168,15 @@ func applyDefaults(cfg *Config) {
 	// (design.md §5 / D10).
 	if cfg.Tools.RunCommand.Enabled && !contains(cfg.Tools.Enabled, "run_command") {
 		cfg.Tools.Enabled = append(cfg.Tools.Enabled, "run_command")
+	}
+	// M4a kb defaults: off by default; the database path follows data_dir; a
+	// bounded search returns 5 hits. An explicitly-set db_path is used
+	// verbatim (it may point anywhere, e.g. an absolute path).
+	if cfg.KB.DBPath == "" {
+		cfg.KB.DBPath = filepath.Join(cfg.DataDir, "kb", "knowledge.sqlite")
+	}
+	if cfg.KB.TopK <= 0 {
+		cfg.KB.TopK = DefaultKBTopK
 	}
 }
 

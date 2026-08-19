@@ -18,6 +18,13 @@ const (
 	EventAssistantMessage = "assistant/message"
 	EventToolResult       = "tool/result"
 	EventToolError        = "tool/error"
+
+	// M4 knowledge-base events (design.md §3): kb/recall lands with the M4a
+	// kernel so the D3 logging mechanism exists before any orchestration;
+	// kb/extract and kb/add arrive with M4b/M4c. DeriveHistory ignores these
+	// types (the recall is injected into context by the caller, design.md §8),
+	// so adding them never changes the turn/step structure (D4).
+	EventKBRecall = "kb/recall"
 )
 
 // EventVersion is the current event vocabulary version. It is stored per event
@@ -225,4 +232,31 @@ func NewToolResult(callID, name, output string, spill *SpillRef) any {
 // NewToolError builds one failed tool/error payload.
 func NewToolError(callID, name, err string) any {
 	return toolErrorData{CallID: callID, Name: name, Error: err}
+}
+
+// RecallHit is one knowledge-entry projection carried by a kb/recall event:
+// the bounded summary the model is about to see. It is a plain data shape so
+// the session package never depends on the kb package.
+type RecallHit struct {
+	ID      string   `json:"id"`
+	Title   string   `json:"title"`
+	Snippet string   `json:"snippet,omitempty"` // bounded body fragment
+	Type    string   `json:"type,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
+	Scope   string   `json:"scope,omitempty"`
+	Source  string   `json:"source,omitempty"`
+	Score   float64  `json:"score"`
+}
+
+type kbRecallData struct {
+	Query string      `json:"query"`
+	Hits  []RecallHit `json:"hits,omitempty"`
+}
+
+// NewKBRecall builds the kb/recall payload (design.md §8 / D3). M4b's recall
+// orchestration calls this immediately before injecting the recall into the
+// model context, so the model-visible input is durably logged. DeriveHistory
+// treats it as opaque data.
+func NewKBRecall(query string, hits []RecallHit) any {
+	return kbRecallData{Query: query, Hits: hits}
 }

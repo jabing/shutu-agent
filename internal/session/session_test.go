@@ -219,6 +219,51 @@ func TestNextSeq(t *testing.T) {
 	}
 }
 
+// TestKBRecallEventAppendsAndReplays verifies the M4a kb/recall event type
+// (design.md §3 / D3): it appends with the right vocabulary, survives the
+// JSON round-trip and restart replay, and stays opaque to history derivation
+// (the recall is injected into context by the caller, so it never mutates the
+// derived history).
+func TestKBRecallEventAppendsAndReplays(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	if _, err := l.Append(EventKBRecall, NewKBRecall("架构决策", []RecallHit{
+		{ID: "kb-1", Title: "架构决策记录", Snippet: "我们决定采用 SQLite FTS5…", Type: "decision", Tags: []string{"架构", "决策"}, Source: "session:s1:turn:1", Score: 0.9},
+	})); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	ev := l.Events()[0]
+	if ev.Type != EventKBRecall || ev.Version != EventVersion {
+		t.Fatalf("event = %+v, want type %q version %d", ev, EventKBRecall, EventVersion)
+	}
+	var d kbRecallData
+	if err := json.Unmarshal(ev.Data, &d); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if d.Query != "架构决策" || len(d.Hits) != 1 || d.Hits[0].ID != "kb-1" || d.Hits[0].Title != "架构决策记录" {
+		t.Fatalf("payload = %+v", d)
+	}
+	if len(persisted) != 1 || persisted[0].Type != EventKBRecall {
+		t.Fatalf("sink (append path) = %+v", persisted)
+	}
+	// restart replay: a fresh log rebuilt from what was persisted still sees
+	// the event, and deriving history treats it as opaque data.
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if got := fresh.Events()[0]; got.Type != EventKBRecall {
+		t.Fatalf("replayed type = %q", got.Type)
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
+		t.Fatalf("kb/recall must not derive into messages: %+v", msgs)
+	}
+}
+
 // TestToolResultSpillRecordsLocator verifies a spilled tool/result event keeps
 // the structured spill record (locator + byte count) alongside the truncated
 // output, and that deriving history still yields the model-visible text (which
