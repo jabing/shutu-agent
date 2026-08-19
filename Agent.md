@@ -48,7 +48,7 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 | **M5c 上下文压缩** | `compaction` 接缝 + 摘要 provider + tool-result 剪枝 + `/compact` + `compaction/*` 事件 + config + PreStep 自动压缩 | 超预算触发压缩；摘要经 surfaceOp.replace user/message 遮蔽旧范围且日志仍追加式；tool-call/result 配对不被切断；默认关闭 | ✅ 2026-08-19 验收通过（M5c-1a `76c41db`；M5c-1b `2188b4d`+`0ffa4e4`+`4669c2e`；M5c-2a `a5219ac`；M5c-2b `c4b5e88`+`e9b2b9c`） |
 | **M5d 技能** | `skill` 接口（多 Provider 注册表）+ 文件系统发现 + 目录注入 + `skill` 加载工具 + `skill/*` 事件 + config | 目录注入有界；按需加载完整正文；默认关闭 | ✅ 2026-08-19 验收通过（M5d-1 `b2d93fc`+`453b288`+`0c38de5`+`400e06c`+`75d892c`；M5d-2 `cb09853`+`17cfe10`+`935ffdc`+`6859000`+`07a82ce`） |
 | **M6 能力补全**（六段，ADR `2026-08-19-m6-agent-full.md`） | 拆为 M6a/b/c/d/e/f 依次验收 | 全部达标才算 M6 完成 | ⬜ 已定稿 ADR，待派发 |
-| **M6a 定时调度** | `schedule` 接口（多 Provider 注册表）+ 间隔/cron 实现 + `schedule_*` 工具 + `schedule/*` 事件 + config | 定时任务到期触发（事件 + 入队 job，D5）；可观察/取消；默认关闭 | ⬜ |
+| **M6a 定时调度** | `schedule` 接口（多 Provider 注册表）+ 间隔/cron 实现 + `schedule_*` 工具 + `schedule/*` 事件 + config | 定时任务到期触发（事件 + 入队 job，D5）；可观察/取消；默认关闭 | ✅ 2026-08-19 验收通过（M6a-1 `85cd9a3`+`5aeb9e5`+`ef9011a`；M6a-2 `2d5aed4`+`d599e4f`+`84b0346`+`3fb43fd`） |
 | **M6b 任务规划** | `plan` 接口（goal→plan→todo 三层）+ 规划/推进工具 + `plan/*` 事件 + config | 多步任务拆解/跟踪/推进（执行可委托子代理）；默认关闭 | ⬜ |
 | **M6c 长期记忆** | `spill` 接口（跨会话记忆 Provider）+ 自动沉淀/召回 + `spill/*` 事件 + config | 对话衍生记忆自动沉淀并可召回；与 kb（显式知识）接缝独立；默认关闭 | ⬜ |
 | **M6d 人工审批** | `interact` 接口（审批请求/响应）+ 敏感工具门 + `interact/*` 事件 + config | 敏感操作执行前经人工确认（CLI 侧）；默认关闭 | ⬜ |
