@@ -49,8 +49,17 @@ const (
 	// when subagent.max_depth is absent or non-positive, and the default
 	// provider is "spawn" (the only provider shipped in M5b) when
 	// subagent.default_provider is empty.
-	DefaultSubagentMaxDepth    = 8
-	DefaultSubagentProvider    = "spawn"
+	DefaultSubagentMaxDepth = 8
+	DefaultSubagentProvider = "spawn"
+
+	// M5c compaction defaults (dispatch-m5c-2a §2 / dispatch-m5c-2 §2): the
+	// token-pressure threshold is 32000 when compaction.token_threshold is
+	// absent or non-positive, and the retained tail is 8 turns when
+	// compaction.retain_turns is absent or non-positive. max_chars defaults to
+	// 0, meaning the engine default (the wiring passes BasicEngine's default,
+	// or 0 for the engine to fall back on).
+	DefaultCompactionTokenThreshold = 32000
+	DefaultCompactionRetainTurns    = 8
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
@@ -61,14 +70,15 @@ var defaultEnabledTools = []string{"get_time", "read_file"}
 // config.yaml; Load fills defaults for empty values, so callers never branch
 // on field presence.
 type Config struct {
-	Model      string      `yaml:"model"`       // chat model; default deepseek-chat
-	BaseURL    string      `yaml:"base_url"`    // optional OpenAI-compatible base URL; empty means the provider default
-	DataDir    string      `yaml:"data_dir"`    // directory for pa.db (and runtime data); default "data"
-	PromptsDir string      `yaml:"prompts_dir"` // directory of prompt section files; default "config/prompts"
-	Tools      ToolsConfig    `yaml:"tools"`       // tool-execution policy (M3)
-	KB         KBConfig       `yaml:"kb"`          // knowledge-base policy (M4a kernel)
-	Jobs       JobsConfig     `yaml:"jobs"`        // background-job policy (M5a)
-	Subagent   SubagentConfig `yaml:"subagent"`    // subagent policy (M5b)
+	Model      string           `yaml:"model"`       // chat model; default deepseek-chat
+	BaseURL    string           `yaml:"base_url"`    // optional OpenAI-compatible base URL; empty means the provider default
+	DataDir    string           `yaml:"data_dir"`    // directory for pa.db (and runtime data); default "data"
+	PromptsDir string           `yaml:"prompts_dir"` // directory of prompt section files; default "config/prompts"
+	Tools      ToolsConfig      `yaml:"tools"`       // tool-execution policy (M3)
+	KB         KBConfig         `yaml:"kb"`          // knowledge-base policy (M4a kernel)
+	Jobs       JobsConfig       `yaml:"jobs"`        // background-job policy (M5a)
+	Subagent   SubagentConfig   `yaml:"subagent"`    // subagent policy (M5b)
+	Compaction CompactionConfig `yaml:"compaction"`  // context-compaction policy (M5c)
 }
 
 // JobsConfig is the background-job policy (dispatch-m5a-2 §3 / ADR
@@ -101,6 +111,30 @@ type SubagentConfig struct {
 	// the default "spawn" (the only provider shipped in M5b, so the tool
 	// resolves to it regardless).
 	DefaultProvider string `yaml:"default_provider"`
+}
+
+// CompactionConfig is the context-compaction policy (dispatch-m5c-2a §2 /
+// dispatch-m5c-2 §2 / ADR 2026-08-18-m5-agent-core.md 决策 ③). Compaction is
+// off by default (D10): when disabled the composition root neither registers
+// the automatic pre-step trigger nor the /compact command. Unlike kb/jobs/
+// subagent, enabling compaction whitelists no tools — compaction has no
+// consumer tools (automatic triggering runs through the loop pre-step
+// injector, manual through the /compact command, dispatch-m5c-2 §2).
+type CompactionConfig struct {
+	// Enabled gates the whole capability: when false, no compaction engine is
+	// wired into the loop's PreStep and the /compact command reports the
+	// capability as unavailable (D10).
+	Enabled bool `yaml:"enabled"`
+	// TokenThreshold is the surface-token pressure threshold above which a
+	// step auto-compacts; <= 0 means the default 32000.
+	TokenThreshold int `yaml:"token_threshold"`
+	// RetainTurns is the tail of recent turns the basic provider keeps
+	// unshadowed; <= 0 means the default 8.
+	RetainTurns int `yaml:"retain_turns"`
+	// MaxChars bounds the generated summary; <= 0 means the engine default
+	// (the wiring passes BasicEngine's default, or 0 for the engine to fall
+	// back on).
+	MaxChars int `yaml:"max_chars"`
 }
 
 // KBConfig is the knowledge-base policy (dispatch-m4a §3 / dispatch-m4b §5).
@@ -316,6 +350,19 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Subagent.DefaultProvider == "" {
 		cfg.Subagent.DefaultProvider = DefaultSubagentProvider
+	}
+	// M5c compaction defaults: off by default (D10); the token-pressure
+	// threshold is 32000; the retained tail is 8 turns; max_chars 0 means the
+	// engine default. Compaction deliberately whitelists no tools — it has none
+	// (automatic triggering runs through the loop pre-step injector, manual
+	// through the /compact command, dispatch-m5c-2a §2). Non-positive
+	// thresholds/retain are clamped to the defaults (校验非负: a negative
+	// configured value can never survive to the wiring).
+	if cfg.Compaction.TokenThreshold <= 0 {
+		cfg.Compaction.TokenThreshold = DefaultCompactionTokenThreshold
+	}
+	if cfg.Compaction.RetainTurns <= 0 {
+		cfg.Compaction.RetainTurns = DefaultCompactionRetainTurns
 	}
 }
 

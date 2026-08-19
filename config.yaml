@@ -103,3 +103,25 @@ subagent:
   # Provider subagent_spawn delegates to. "spawn" (the in-process provider) is
   # the only one shipped in M5b; empty/absent ⇒ "spawn".
   default_provider: spawn
+
+# Context-compaction capability (M5c; ADR 2026-08-18-m5-agent-core.md
+# 决策 ③). Off by default (D10): when disabled the automatic pre-step trigger
+# is not registered and the /compact command reports the capability as
+# unavailable. Compaction has no consumer tools — enabling it whitelists
+# nothing: automatic triggering runs through the loop pre-step injector
+# (pressure over token_threshold), manual compaction through the /compact
+# command. A compaction summarizes a surface range into a user/message that
+# shadows the old range in the derived history (the append-only log is
+# unchanged, D1); compaction/start, compaction/summary, compaction/end and
+# compaction/prune are logged as facts (D3).
+compaction:
+  # Master switch. false ⇒ no compaction engine is wired into the pre-step
+  # injector and the /compact command is unavailable (默认关闭，不初始化).
+  enabled: false
+  # Surface-token pressure threshold above which a step auto-compacts;
+  # 0/absent ⇒ 32000.
+  token_threshold: 32000
+  # Tail of recent turns kept unshadowed by the basic provider; 0/absent ⇒ 8.
+  retain_turns: 8
+  # Upper bound on the generated summary; 0/absent ⇒ the engine default.
+  max_chars: 0

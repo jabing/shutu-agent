@@ -536,3 +536,103 @@ func TestLoadSubagentEnabledAppendsToolsToWhitelist(t *testing.T) {
 		}
 	}
 }
+
+// M5c: compaction is off by default (D10), the token-pressure threshold
+// defaults to 32000, the retained tail to 8 turns, and max_chars to 0 (the
+// engine default). Unlike kb/jobs/subagent, compaction has no consumer tools —
+// nothing may be whitelisted for it even when enabled (dispatch-m5c-2a §2).
+func TestLoadCompactionDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Compaction.Enabled {
+		t.Error("compaction must be disabled by default (D10)")
+	}
+	if cfg.Compaction.TokenThreshold != DefaultCompactionTokenThreshold {
+		t.Errorf("compaction.token_threshold = %d, want default %d",
+			cfg.Compaction.TokenThreshold, DefaultCompactionTokenThreshold)
+	}
+	if cfg.Compaction.RetainTurns != DefaultCompactionRetainTurns {
+		t.Errorf("compaction.retain_turns = %d, want default %d",
+			cfg.Compaction.RetainTurns, DefaultCompactionRetainTurns)
+	}
+	if cfg.Compaction.MaxChars != 0 {
+		t.Errorf("compaction.max_chars = %d, want 0 (engine default)", cfg.Compaction.MaxChars)
+	}
+	// The default whitelist must stay exactly the read-only pair: compaction
+	// adds no tools.
+	want := []string{"get_time", "read_file"}
+	if !reflect.DeepEqual(cfg.Tools.Enabled, want) {
+		t.Errorf("whitelist = %v, want %v (compaction adds nothing)", cfg.Tools.Enabled, want)
+	}
+}
+
+// M5c: an explicit compaction section is honored (enabled, token_threshold,
+// retain_turns, max_chars), while a non-positive token_threshold/retain_turns
+// fall back to their defaults (校验非负: a negative value never survives) and
+// max_chars stays 0 (engine default) (dispatch-m5c-2a §2).
+func TestLoadCompactionParsesSectionAndFallsBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("compaction:\n  enabled: true\n  token_threshold: 50000\n  retain_turns: 12\n  max_chars: 2000\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Compaction.Enabled {
+		t.Error("compaction.enabled should be true")
+	}
+	if cfg.Compaction.TokenThreshold != 50000 {
+		t.Errorf("compaction.token_threshold = %d, want 50000", cfg.Compaction.TokenThreshold)
+	}
+	if cfg.Compaction.RetainTurns != 12 {
+		t.Errorf("compaction.retain_turns = %d, want 12", cfg.Compaction.RetainTurns)
+	}
+	if cfg.Compaction.MaxChars != 2000 {
+		t.Errorf("compaction.max_chars = %d, want 2000", cfg.Compaction.MaxChars)
+	}
+
+	// Non-positive (including negative) thresholds fall back to defaults;
+	// max_chars stays 0.
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("compaction:\n  enabled: true\n  token_threshold: 0\n  retain_turns: -3\n  max_chars: 0\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Compaction.TokenThreshold != DefaultCompactionTokenThreshold {
+		t.Errorf("compaction.token_threshold 0 = %d, want default %d",
+			cfg2.Compaction.TokenThreshold, DefaultCompactionTokenThreshold)
+	}
+	if cfg2.Compaction.RetainTurns != DefaultCompactionRetainTurns {
+		t.Errorf("compaction.retain_turns -3 = %d, want default %d",
+			cfg2.Compaction.RetainTurns, DefaultCompactionRetainTurns)
+	}
+	if cfg2.Compaction.MaxChars != 0 {
+		t.Errorf("compaction.max_chars = %d, want 0 (engine default)", cfg2.Compaction.MaxChars)
+	}
+}
+
+// M5c: compaction.enabled: true must NOT append any tool to the whitelist —
+// compaction has no consumer tools (automatic triggering runs through the loop
+// pre-step injector, manual through the /compact command, dispatch-m5c-2a §2).
+func TestLoadCompactionEnabledDoesNotAppendToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("compaction:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Enabling compaction leaves the whitelist exactly at the read-only pair:
+	// no compaction tool exists to add, and none is invented.
+	want := []string{"get_time", "read_file"}
+	if !reflect.DeepEqual(cfg.Tools.Enabled, want) {
+		t.Errorf("whitelist = %v, want %v (compaction.enabled adds nothing)", cfg.Tools.Enabled, want)
+	}
+}

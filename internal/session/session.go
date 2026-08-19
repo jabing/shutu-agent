@@ -55,6 +55,23 @@ const (
 	EventSubagentStart  = "subagent/start"
 	EventSubagentEnd    = "subagent/end"
 	EventSubagentReport = "subagent/report"
+
+	// M5c compaction events (design.md §3 / ADR 2026-08-18-m5-agent-core.md
+	// 决策 ③ / dispatch-m5c-2 §1): compaction/start lands when a compaction
+	// attempt begins (with its reason/trigger), compaction/summary records the
+	// generated summary (bounded 200 runes) when it lands, compaction/end when
+	// the attempt completes (with the shadowed surface range and tokens saved),
+	// compaction/prune when a tool-result prune settles. They are log-only
+	// observation events (D3): the summary itself is a user/message carrying
+	// surfaceOp.replace (M5c-1a) that shadows the old surface range, and these
+	// events record that fact; DeriveHistory treats them as opaque data, so
+	// adding them never changes the turn/step structure (D4). The payloads are
+	// pure data projections — the session package never imports the compaction
+	// package.
+	EventCompactionStart   = "compaction/start"
+	EventCompactionSummary = "compaction/summary"
+	EventCompactionEnd     = "compaction/end"
+	EventCompactionPrune   = "compaction/prune"
 )
 
 // EventVersion is the current event vocabulary version. It is stored per event
@@ -465,8 +482,9 @@ func NewJobDone(id, status, detail, output string) any {
 
 // summaryHead returns a bounded, whitespace-compacted head of s for a log
 // summary (mirrors kb.Snippet's bound; kept here so the session package owns
-// the on-disk bound it serializes). It is shared by job/done and subagent/end
-// (both bounded to 200 runes, dispatch-m5a-2 §1 / dispatch-m5b-2 §1).
+// the on-disk bound it serializes). It is shared by job/done, subagent/end
+// and compaction/summary (all bounded to 200 runes, dispatch-m5a-2 §1 /
+// dispatch-m5b-2 §1 / dispatch-m5c-2 §1).
 func summaryHead(s string) string {
 	compact := strings.Join(strings.Fields(s), " ")
 	runes := []rune(compact)
@@ -524,4 +542,68 @@ func NewSubagentEnd(childID, provider, stopReason, outputSummary string) any {
 // explicitly reports to its parent session (dispatch-m5b-2 §1 / D3).
 func NewSubagentReport(childID, parentSessionID, content string) any {
 	return subagentReportData{ID: childID, ParentSession: parentSessionID, Content: content}
+}
+
+// compactionStartData is the compaction/start payload: why a compaction
+// attempt began (reason) and what triggered it (trigger, from the compaction
+// vocabulary: pressure | context-overflow, or the /compact command). The
+// compaction attempt locks the session surface until compaction/end. (Orphan
+// start rows — a start with no matching end — reveal an interrupted attempt.)
+// DeriveHistory treats it as opaque data.
+type compactionStartData struct {
+	Reason  string `json:"reason"`
+	Trigger string `json:"trigger,omitempty"`
+}
+
+// compactionSummaryData is the compaction/summary payload: the compaction id
+// and a bounded projection of the generated summary (200 runes — the summary
+// body itself is a user/message with surfaceOp.replace, M5c-1a; this record is
+// its log fact). DeriveHistory treats it as opaque data.
+type compactionSummaryData struct {
+	CompactionID string `json:"compactionId"`
+	Summary      string `json:"summary"`
+}
+
+// compactionEndData is the compaction/end payload: the compaction id, the
+// shadowed surface range (first/last seq of the shadowed nodes) and the tokens
+// saved. DeriveHistory treats it as opaque data.
+type compactionEndData struct {
+	CompactionID   string   `json:"compactionId"`
+	ShadowedRange  [2]int64 `json:"shadowedRange"`
+	ShadowedTokens int      `json:"shadowedTokens"`
+}
+
+// compactionPruneData is the compaction/prune payload: the compaction id that
+// triggered the prune, the number of tool results replaced and the bytes
+// saved. DeriveHistory treats it as opaque data.
+type compactionPruneData struct {
+	CompactionID string `json:"compactionId"`
+	Replaced     int    `json:"replaced"`
+	SavedBytes   int    `json:"savedBytes"`
+}
+
+// NewCompactionStart builds the compaction/start payload recorded when a
+// compaction attempt begins (dispatch-m5c-2 §1 / D3).
+func NewCompactionStart(reason, trigger string) any {
+	return compactionStartData{Reason: reason, Trigger: trigger}
+}
+
+// NewCompactionSummary builds the compaction/summary payload recorded when a
+// compaction attempt lands its summary. summary is bounded to a summary head
+// (200 runes, the same on-disk bound as job/done and subagent/end) so the
+// payload is always lean.
+func NewCompactionSummary(compactionID, summary string) any {
+	return compactionSummaryData{CompactionID: compactionID, Summary: summaryHead(summary)}
+}
+
+// NewCompactionEnd builds the compaction/end payload recorded when a
+// compaction attempt completes (dispatch-m5c-2 §1 / D3).
+func NewCompactionEnd(compactionID string, shadowedRange [2]int64, shadowedTokens int) any {
+	return compactionEndData{CompactionID: compactionID, ShadowedRange: shadowedRange, ShadowedTokens: shadowedTokens}
+}
+
+// NewCompactionPrune builds the compaction/prune payload recorded when a
+// tool-result prune settles (dispatch-m5c-2 §1 / D3).
+func NewCompactionPrune(compactionID string, replaced, savedBytes int) any {
+	return compactionPruneData{CompactionID: compactionID, Replaced: replaced, SavedBytes: savedBytes}
 }

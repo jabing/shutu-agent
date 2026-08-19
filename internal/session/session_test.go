@@ -551,6 +551,111 @@ func TestSubagentEventsAppendAndReplay(t *testing.T) {
 	}
 }
 
+// TestCompactionEventsAppendAndReplay verifies the M5c compaction/* event
+// types (compaction/start, compaction/summary, compaction/end,
+// compaction/prune — dispatch-m5c-2 §1 / D3): each appends with the right
+// vocabulary, survives the JSON round-trip and restart replay, and stays
+// opaque to history derivation (the summary body itself is a user/message
+// carrying surfaceOp.replace, M5c-1a; these events are its log-only
+// observation records). The compaction/summary projection is bounded to 200
+// runes like job/done and subagent/end.
+func TestCompactionEventsAppendAndReplay(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	if _, err := l.Append(EventCompactionStart, NewCompactionStart("surface exceeded threshold", "pressure")); err != nil {
+		t.Fatalf("append compaction/start: %v", err)
+	}
+	if _, err := l.Append(EventCompactionSummary, NewCompactionSummary("cmp-1", strings.Repeat("very long summary ", 50))); err != nil {
+		t.Fatalf("append compaction/summary: %v", err)
+	}
+	if _, err := l.Append(EventCompactionEnd, NewCompactionEnd("cmp-1", [2]int64{5, 42}, 12000)); err != nil {
+		t.Fatalf("append compaction/end: %v", err)
+	}
+	if _, err := l.Append(EventCompactionPrune, NewCompactionPrune("cmp-1", 3, 4096)); err != nil {
+		t.Fatalf("append compaction/prune: %v", err)
+	}
+	events := l.Events()
+	if len(events) != 4 {
+		t.Fatalf("events = %d, want 4", len(events))
+	}
+	if events[0].Type != EventCompactionStart || events[1].Type != EventCompactionSummary ||
+		events[2].Type != EventCompactionEnd || events[3].Type != EventCompactionPrune {
+		t.Fatalf("types = %q/%q/%q/%q", events[0].Type, events[1].Type, events[2].Type, events[3].Type)
+	}
+	for i, ev := range events {
+		if ev.Version != EventVersion {
+			t.Fatalf("event %d version = %d, want %d", i, ev.Version, EventVersion)
+		}
+	}
+	// JSON round-trip of each payload.
+	var cs compactionStartData
+	if err := json.Unmarshal(events[0].Data, &cs); err != nil {
+		t.Fatalf("unmarshal compaction/start: %v", err)
+	}
+	if cs.Reason != "surface exceeded threshold" || cs.Trigger != "pressure" {
+		t.Fatalf("compaction/start payload = %+v", cs)
+	}
+	var cm compactionSummaryData
+	if err := json.Unmarshal(events[1].Data, &cm); err != nil {
+		t.Fatalf("unmarshal compaction/summary: %v", err)
+	}
+	if cm.CompactionID != "cmp-1" {
+		t.Fatalf("compaction/summary compactionId = %q, want cmp-1", cm.CompactionID)
+	}
+	// The summary projection must be bounded (dispatch-m5c-2 §1: 输出只记摘要，
+	// 有界 200 rune).
+	if got := len([]rune(cm.Summary)); got > jobOutputSummaryMax+1 {
+		t.Fatalf("compaction/summary summary = %d runes, want <= %d+ellipsis", got, jobOutputSummaryMax)
+	}
+	if !strings.Contains(cm.Summary, "very long summary") {
+		t.Fatalf("compaction/summary summary = %q, want it to carry the summary head", cm.Summary)
+	}
+	var ce compactionEndData
+	if err := json.Unmarshal(events[2].Data, &ce); err != nil {
+		t.Fatalf("unmarshal compaction/end: %v", err)
+	}
+	if ce.CompactionID != "cmp-1" || ce.ShadowedRange != [2]int64{5, 42} || ce.ShadowedTokens != 12000 {
+		t.Fatalf("compaction/end payload = %+v", ce)
+	}
+	var cp compactionPruneData
+	if err := json.Unmarshal(events[3].Data, &cp); err != nil {
+		t.Fatalf("unmarshal compaction/prune: %v", err)
+	}
+	if cp.CompactionID != "cmp-1" || cp.Replaced != 3 || cp.SavedBytes != 4096 {
+		t.Fatalf("compaction/prune payload = %+v", cp)
+	}
+	if len(persisted) != 4 || persisted[0].Type != EventCompactionStart {
+		t.Fatalf("sink (append path) = %+v", persisted)
+	}
+	// Restart replay: a fresh log rebuilt from what was persisted still sees
+	// every compaction event, and deriving history treats them all as opaque
+	// data.
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	for i, want := range []string{EventCompactionStart, EventCompactionSummary, EventCompactionEnd, EventCompactionPrune} {
+		if got := fresh.Events()[i].Type; got != want {
+			t.Fatalf("replayed type %d = %q, want %q", i, got, want)
+		}
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
+		t.Fatalf("compaction/* events must not derive into messages: %+v", msgs)
+	}
+	// Even interleaved with a real conversation, compaction/* events never
+	// contribute a derived message: only the user/message does.
+	if _, err := fresh.Append(EventUserMessage, NewUserMessage("hello")); err != nil {
+		t.Fatalf("append user/message: %v", err)
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 1 || msgs[0].Content != "hello" {
+		t.Fatalf("DeriveHistory with interleaved compaction/* events = %+v, want just the user message", msgs)
+	}
+}
+
 // M5c-1a compaction fold rule: a user/message carrying surfaceOp.replace
 // substitutes a summary for the shadowed surface range [Start, End] in the
 // derived history, while the shadowed events stay in the append-only log (D1).
@@ -640,10 +745,10 @@ func TestDeriveHistoryReplaceShadowingMixedEvents(t *testing.T) {
 
 func TestDeriveHistoryReplaceEmptySummaryPreserved(t *testing.T) {
 	l := New()
-	l.Append(EventUserMessage, NewUserMessage("old"))                            // 1
+	l.Append(EventUserMessage, NewUserMessage("old"))                              // 1
 	l.Append(EventAssistantMessage, NewAssistantMessage("old reply", nil, "stop")) // 2
-	l.Append(EventUserMessage, NewUserMessageReplace("", 1, 2))                  // 3: empty summary text
-	l.Append(EventUserMessage, NewUserMessage("new"))                            // 4
+	l.Append(EventUserMessage, NewUserMessageReplace("", 1, 2))                    // 3: empty summary text
+	l.Append(EventUserMessage, NewUserMessage("new"))                              // 4
 
 	msgs := l.DeriveHistory()
 	if len(msgs) != 2 {
@@ -704,9 +809,9 @@ func TestNewUserMessageReplaceJSONRoundTrip(t *testing.T) {
 	// Full round trip through Append + Restore: the persisted surfaceOp payload
 	// folds the shadowed range out after a restart replay.
 	l := New()
-	l.Append(EventUserMessage, NewUserMessage("x"))                            // 1
-	l.Append(EventAssistantMessage, NewAssistantMessage("y", nil, "stop"))     // 2
-	l.Append(EventUserMessage, NewUserMessageReplace("s", 1, 2))               // 3
+	l.Append(EventUserMessage, NewUserMessage("x"))                        // 1
+	l.Append(EventAssistantMessage, NewAssistantMessage("y", nil, "stop")) // 2
+	l.Append(EventUserMessage, NewUserMessageReplace("s", 1, 2))           // 3
 	fresh := New()
 	if err := fresh.Restore(l.Events()); err != nil {
 		t.Fatalf("restore: %v", err)
