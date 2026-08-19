@@ -19,12 +19,12 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 - **D6** LLM 适配器第一天就支持 SSE 流式。
 - **D7** 工具参数在 Execute 入口统一 JSON Schema 校验。
 - **D8** 持久化走 store 接口（SQLite 后端，CGO-free），事件带版本号。
-- **D9** 知识库是能力接缝（kb service + 可换 Provider + kb_* 工具），嵌入与对话模型解耦。
+- **D9** 知识库是能力接缝（kb service + 可换 Provider + kb_* 工具）；检索与对话模型解耦（M4 用 FTS5 全文检索 + 提取回写，向量/embedding 仅作 M5 可选 Provider 预留）。
 - **D10** 安全白名单先行；执行类工具（bash 等）M3 才上。
 
 ## 3. 当前状态
 
-**2026-08-18**：M3 完成并通过验收（提交 `1dda2ed`，ADR `2026-08-18-m3-sandbox-scope`）。**下一步：M4 知识库**（按第 8 节交接协议派发）。
+**2026-08-18**：M3 完成并通过验收（提交 `1dda2ed`，ADR `2026-08-18-m3-sandbox-scope`）。M4 方向定稿：**参照 dsh-knowledge（已下载 `../dsh-knowledge`，FTS5 全文检索 + 提取回写，非向量 RAG，方案已实测）**，调研见 `docs/research-m4-kb.md`，派发见 `docs/dispatch-m4.md`（已重写）。**下一步：M4 知识库**（按第 8 节交接协议派发）。
 
 ## 4. 路线图
 
@@ -33,7 +33,7 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 | **M1 最小循环** | `cmd/pa` REPL；`llm`（DeepSeek 流式）；`session` 内存日志；`tools` 注册表 + `get_time`/`read_file`；`loop` 串行 turn/step | 命令行提问可流式回答；工具可被调用并回写日志；`go vet` + `go test` 干净 | ✅ 2026-08-18 验收通过（`6380163`） |
 | **M2 持久化与会话** | `store`（SQLite）+ 多会话（/new /list /resume）；`prompt` 分节组装；`config.yaml`；重试策略 | 重启恢复会话且历史完整回放；新事件类型不改历史结构 | ✅ 2026-08-18 验收通过（`e865aca`） |
 | **M3 安全与完善** | 工具白名单/权限；超时与输出截断；取消（Ctrl+C）；CLI 完善（Web 可选） | 未白名单工具拒绝执行；取消即时生效；长输出不爆上下文 | ✅ 2026-08-18 验收通过（`1dda2ed`，ADR `2026-08-18-m3-sandbox-scope`） |
-| **M4 知识库** | `kb` 三件套：service（分块/嵌入/检索）+ Provider（本地向量优先）+ `kb_search`/`kb_add` 工具；`kb/retrieval` 事件落日志；索引个人笔记目录 | 提问能引用正确片段 + 来源；换嵌入 Provider 不改消费方代码 | ⬜ |
+| **M4 知识库** | `kb` 三件套：service（Search/Add/Recall/Extract）+ FTS5 Provider（**参照 dsh-knowledge，非向量**）+ `kb_search`/`kb_read`/`kb_add` 工具；回答后提取回写；`kb/recall`/`kb/extract`/`kb/add` 事件落日志 | 对话产生可复用知识能被提取并检索引用（含中文）；显式 `kb_add` 可写；换 Provider 不改消费方代码 | ⬜ |
 | **M5 远期（按需）** | 子代理、后台任务、上下文压缩、技能分节、插件化评估 | 每个功能先有决策记录 | ⬜ |
 
 ## 5. 开发纪律（每轮工作前过一遍）
@@ -88,6 +88,7 @@ go run ./cmd/pa       # 启动 REPL（M1 后可用，需 DEEPSEEK_API_KEY）
 - dsh 循环细节：[`../deepseek-harness/docs/subsystems/core.md`](../deepseek-harness/docs/subsystems/core.md)
 - dsh 会话日志：[`../deepseek-harness/docs/subsystems/session.md`](../deepseek-harness/docs/subsystems/session.md)
 - dsh 能力接缝：[`../deepseek-harness/docs/capability-seams.md`](../deepseek-harness/docs/capability-seams.md)
+- M4 参照插件（知识库，FTS5 + 提取回写）：[`../dsh-knowledge/`](../dsh-knowledge/)（[GitHub](https://github.com/lemoncat7/dsh-knowledge)）+ 调研 [`docs/research-m4-kb.md`](docs/research-m4-kb.md)
 
 ### 源码参考（`../deepseek-harness/packages/`）
 
@@ -101,4 +102,4 @@ go run ./cmd/pa       # 启动 REPL（M1 后可用，需 DEEPSEEK_API_KEY）
 | `prompt` | `core/system-prompt/` | 提示词分节组装 |
 | `llm` | `llm/llm/` + `llm/llm-deepseek/` | 适配器接口、流式、DeepSeek 实现 |
 | `store`（M2） | `session/session-persistence*` | 持久化与重放 |
-| `kb`（M4） | `web/`（seam 三件套模板） | 能力接缝的包划分 |
+| `kb`（M4） | `../dsh-knowledge/src/`（domain/local-provider/retrieval/extraction/tools/recall）+ `web/`（seam 三件套模板） | 知识条目模型、FTS5 检索 + 中文二元组兜底、提取回写、能力接缝的包划分 |

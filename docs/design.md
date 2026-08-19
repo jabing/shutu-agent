@@ -7,7 +7,7 @@
 
 ## 0. 目标与边界
 
-**目标**：用 Go 实现一个个人 Agent，借鉴 dsh 架构三原则——薄核心、日志即事实、能力即接缝（seam）。后期无痛加入个人知识库（RAG）。
+**目标**：用 Go 实现一个个人 Agent，借鉴 dsh 架构三原则——薄核心、日志即事实、能力即接缝（seam）。后期以"能力接缝"方式接入个人知识库（M4，参照 dsh-knowledge：FTS5 全文检索 + 提取回写，不用向量 RAG）。
 
 **明确不做（v1）**：
 
@@ -44,7 +44,7 @@ personal-agent/
 │   ├── prompt/               # 系统提示词分节组装（persona / skills / 能力声明）
 │   ├── loop/                 # agent 循环（turn = 0..N step）
 │   ├── store/                # 持久化抽象 + sqlite 实现（M2）；事件追加、版本号字段
-│   └── kb/                   # 知识库能力（M4）：service + provider + kb_* 工具
+│   └── kb/                   # 知识库能力（M4）：service + sqlite provider + kb_* 工具 + 提取回写
 ├── docs/
 │   ├── design.md             # 本文件（设计基线）
 │   └── decisions/            # 决策记录 ADR：YYYY-MM-DD-<slug>.md
@@ -68,7 +68,7 @@ type Event struct {
 ```
 
 - **v1 事件类型**：`user/message`、`assistant/chunk`（流式保真）、`assistant/message`、`tool/result`、`tool/error`。
-- **M4 增加**：`kb/retrieval`（检索行为对模型可见 ⇒ 必须落日志）、`kb/ingest`。
+- **M4 增加**：`kb/recall`（主动召回注入）、`kb/extract`（提取回写结果）、`kb/add`（显式写入）。
 - **新输入 ⇒ 新事件类型**，绝不在内存里拼 prompt 而不记录。
 - `DeriveHistory() []llm.Message` 是纯函数：从日志折叠出模型历史；未来加过滤（如截断/压缩）只改折叠规则。
 - 持久化 = 追加写入（SQLite 单表或 JSONL），启动时重放重建内存日志。事件类型带 `Version` 字段预留迁移。
@@ -136,29 +136,38 @@ type Registry struct{ ... }  // Register / Specs / Execute（入口统一校验�
 
 ## 7. 系统提示词组装（M2 落地，M1 用单段）
 
-`prompt.Builder` 按配置分节拼装 system prompt：`persona`（人设）→ `skills`（技能说明）→ `knowledge`（M4 注入检索上下文）→ 工具 schema（自动）。分节来自 `config/prompts/*.md`，可独立增删而不改循环。
+`prompt.Builder` 按配置分节拼装 system prompt：`persona`（人设）→ `skills`（技能说明）→ `knowledge`（M4：知识库轻量目录注入，只含库名/描述不塞正文）→ 工具 schema（自动）。分节来自 `config/prompts/*.md`，可独立增删而不改循环。
 
 ---
 
-## 8. 知识库能力设计（M4 前瞻设计，接缝三件套）
+## 8. 知识库能力设计（M4 落地设计，参照 dsh-knowledge，接缝三件套）
+
+> 方向定稿 2026-08-18：**全盘参照 [dsh-knowledge](https://github.com/lemoncat7/dsh-knowledge)（参考源码 `../dsh-knowledge/`）**。放弃 embedding/向量检索（dsh-knowledge 本身就不用向量，明确推迟），采用 **SQLite FTS5 全文检索 + 中文二元组 LIKE 兜底 + 回答后模型提取回写**。该方案已由控制会话在 Go/modernc 栈实测验证（`docs/research-m4-kb.md` §Go 实测），**零新依赖、完全离线、CGO-free、中文友好**。
 
 ```
 kb 能力 = 三部分（严格对应 seam 结构）：
 ├── Service（接口，internal/kb/service）:
-│     Ingest(source, chunks) / Retrieve(query, topK) → []Chunk{Text, Source, Score}
+│     Search(ctx, query, opts)   → []Hit{Entry, Score}   // FTS5 + 二元组 LIKE 兜底
+│     Add(ctx, draft Entry)      → error                 // 显式写入一条知识条目
+│     Recall(ctx, query, limit)  → []Hit                 // 主动召回（有界摘要）
+│     Extract(ctx, session, turn) → error                // 回答后提取回写
 ├── Provider（后端，可换）:
-│     local: 进程内暴力余弦索引 / modernc sqlite vec 扩展（CGO-free，
-│             选型依据见 docs/research-m4-kb.md；M4 落地时 ADR 定夺）
-│     remote: pgvector / Qdrant + API 嵌入（备选，接口预留）
-└── Consumer（工具，注册进 tools）:
-      kb_search(query, topK)   → 片段 + 来源
-      kb_add(source, text)     → 分块入库
+│     sqlite: knowledge_entries + knowledge_fts(FTS5) + extraction_jobs
+│             （modernc.org/sqlite v1.38.0 已内置 FTS5，实测可用，零新依赖）
+│     remote: 预留接口（M5 如需分布式/共享再评估）
+└── Consumer（工具 + 注入，注册进 tools / prompt）:
+      kb_search(query, limit) → 条目片段 + 来源     （只读）
+      kb_read(id)            → 完整条目             （只读）
+      kb_add(title, body, type, tags, scope) → 显式写入（写）
+      主动召回：会话开始时轻量目录注入 + 每轮有界摘要注入（kb/recall 事件）
 ```
 
-- **嵌入模型与对话模型解耦**：嵌入走独立 provider 配置（本地 Ollama 优先，API 备选）。
-- 检索工作流：用户提问 → 循环（不变）→ 模型调 `kb_search` → 片段+来源经 `tool/result` 落日志 → 模型引用作答。
-- **检索结果必须落日志**（`kb/retrieval` 事件）——这是"模型可见即日志"在知识库上的落地。
-- 索引目标：个人笔记目录（Markdown），增量索引，来源标注文件路径。
+- **知识条目模型**（dsh-knowledge 同款）：`{title, body, type, tags, scope, confidence, version, source}`。`type ∈ {preference, fact, decision, procedure, lesson}`；`source` 记录条目来源（会话/轮次/显式添加）；`version` 支持更新历史。
+- **知识来源两条路**：① **回答后提取回写**——每轮回答结束后，用当前模型判断是否产生可复用知识（严格模式：只收明确陈述或已验证的长期知识），写入条目（幂等，`session:turn` 为 job key）；② **显式 `kb_add` 工具**——用户/模型主动写入（也用于收录笔记正文）。
+- **检索**：FTS5（`unicode61 remove_diacritics 2`）BM25 排序 + **中文二元组 LIKE 兜底**（`fallbackTerms`：中文切相邻二元组做 `LIKE '%xx%'`，英文词直接匹配）——解决 FTS5 默认分词把连续中文当整 token 的缺陷。中文/英文/混合查询均实测可用。
+- **召回与注入**：轻量目录（知识库名+描述，不塞正文）注入系统提示词；每轮开始时按用户输入主动召回有界条数（默认 3）作为 `kb/recall` 上下文消息注入（模型可见 ⇒ 落日志 D3）。检索失败 fail-open，不阻断回答。
+- **不修改循环**（D4）：kb 是能力接缝，loop 的 turn/step 结构零改动。提取/召回由 `cmd/pa`（组合根）在循环外编排，工具走 `tools` 注册表。
+- **落日志（D3）**：`kb/recall`（主动召回注入）、`kb/extract`（提取回写结果）、`kb/add`（显式写入）；`kb_search`/`kb_read` 结果走 `tool/result`（模型实际看到 ⇒ 已满足 D3）。历史仍是日志派生值（D1）。
 
 ---
 
@@ -171,7 +180,7 @@ kb 能力 = 三部分（严格对应 seam 结构）：
 | 参数校验 | `santhosh-tekuri/jsonschema/v5` | 纯 Go |
 | 配置 | `gopkg.in/yaml.v3` + 环境变量 | API Key 只走环境变量，绝不入库 |
 | 持久化 | `modernc.org/sqlite`（纯 Go，无 CGO） | Windows 友好；JSONL 仅作开发模式 |
-| 向量存储 | M4 评估 sqlite-vec / 纯 Go 方案 | 由 Provider 抽象兜底，切换成本≈0 |
+| 向量存储 | **不用向量库**：modernc sqlite v1.38.0 内置 FTS5（实测可用），中文检索用二元组 LIKE 兜底；embedding/向量仅作 M5 预留 Provider 接口 | 由 Provider 抽象兜底，切换成本≈0 |
 | 日志 | `slog`（标准库） | 够用 |
 | 测试 | 标准库 `testing` + `httptest` | 适配器用录制回放测试 |
 
@@ -191,7 +200,7 @@ kb 能力 = 三部分（严格对应 seam 结构）：
 | D6 | LLM 适配器第一天支持 SSE 流式 | 先整块响应后补流式 | 永不允许（返工成本极高） |
 | D7 | 工具参数 Execute 前统一 JSON Schema 校验 | 各工具自行解析裸 JSON | 永不允许 |
 | D8 | store 接口抽象，SQLite 后端；事件带版本号 | 代码里直接写死文件格式 | 无，接口已预留 |
-| D9 | 知识库是能力（seam），嵌入与对话模型解耦 | 检索逻辑写进 loop / 嵌入写死 | 永不允许 |
+| D9 | 知识库是能力（seam）；检索与对话模型解耦（M4 用 FTS5，embedding/向量仅作可选 Provider 预留） | 检索逻辑写进 loop / 检索后端写死 | 永不允许 |
 | D10 | 安全白名单先行；执行类工具 M3 才上 | 第一版就开放 bash | M3 随沙箱一起评估 |
 
 ---
@@ -203,7 +212,7 @@ kb 能力 = 三部分（严格对应 seam 结构）：
 | M1 | 最小循环骨架（REPL + 流式 + 日志 + 工具） | 1–2 天 | 命令行提问可流式回答；`get_time`/`read_file` 可调用；`go vet`/`go test` 干净 |
 | M2 | 持久化 + 多会话 + 提示词组装 + 配置 | 3–5 天 | 重启可恢复会话；新增事件类型不改历史结构 |
 | M3 | 安全白名单 + 超时/输出截断 + CLI 完善（Web 可选） | ~1 周 | 工具仅白名单内可执行；取消即时生效 |
-| M4 | 知识库能力（kb service + provider + kb_* 工具） | 1–2 周 | 索引笔记后提问能引用正确片段+来源；换 Provider 不改消费方 |
+| M4 | 知识库能力（kb service + FTS5 provider + kb_* 工具 + 提取回写） | 1–2 周 | 对话产生可复用知识能被提取并检索引用（含中文）；显式 `kb_add` 可写；`kb_search`/`kb_read`/`kb/recall`/`kb/extract` 落日志；换 Provider 不改消费方 |
 | M5 | 远期可选：子代理、后台任务、压缩、技能、插件评估 | 按需 | 每个都有独立决策记录 |
 
 ---
