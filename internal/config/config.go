@@ -99,6 +99,7 @@ type Config struct {
 	Skill      SkillConfig      `yaml:"skill"`       // skill policy (M5d)
 	Schedule   ScheduleConfig   `yaml:"schedule"`    // schedule policy (M6a)
 	Plan       PlanConfig       `yaml:"plan"`        // task-planning policy (M6b)
+	Spill      SpillConfig      `yaml:"spill"`       // long-term-memory policy (M6c)
 }
 
 // JobsConfig is the background-job policy (dispatch-m5a-2 §3 / ADR
@@ -204,6 +205,36 @@ type PlanConfig struct {
 	// created and the plan_* tools are neither registered nor whitelisted
 	// (D10).
 	Enabled bool `yaml:"enabled"`
+}
+
+// SpillConfig is the long-term-memory policy (dispatch-m6c-2 §2 / ADR
+// 2026-08-19-m6-agent-full.md 决策 M6c). Spill is off by default (D10): when
+// disabled the composition root neither creates a Provider/Engine nor
+// registers or whitelists the spill_* tools, and no auto-sedimentation path is
+// wired. AutoSpill is a pointer so an absent YAML field (→ the default true) is
+// distinguishable from an explicit false, which carries real meaning here:
+// auto_spill: false keeps the spill_* tools usable while turning the automatic
+// end-of-turn sedimentation off. Read it through AutoSpillValue, never
+// directly.
+type SpillConfig struct {
+	// Enabled gates the whole capability: when false, no Provider/Engine is
+	// created, the spill_* tools are neither registered nor whitelisted, and
+	// no auto-sedimentation path is wired (D10).
+	Enabled bool `yaml:"enabled"`
+	// AutoSpill toggles the end-of-turn auto-sedimentation writeback
+	// (Engine.AutoSpill over the session event log): nil (absent) means true —
+	// within an enabled spill the auto-sedimentation defaults on, matching the
+	// config.yaml documentation. It only takes effect when Enabled is true.
+	AutoSpill *bool `yaml:"auto_spill"`
+}
+
+// AutoSpillValue returns whether the end-of-turn auto-sedimentation runs
+// (true by default within an enabled spill; false explicitly disables it).
+func (s SpillConfig) AutoSpillValue() bool {
+	if s.AutoSpill == nil {
+		return true
+	}
+	return *s.AutoSpill
 }
 
 // KBConfig is the knowledge-base policy (dispatch-m4a §3 / dispatch-m4b §5).
@@ -480,6 +511,19 @@ func applyDefaults(cfg *Config) {
 			}
 		}
 	}
+	// M6c-2 spill defaults: off by default (D10); auto_spill defaults on
+	// within an enabled spill (AutoSpillValue, mirroring kb extraction). 
+	// Enabling spill whitelists its four consumer tools, so the one
+	// spill.enabled switch turns the whole capability (Provider + Engine +
+	// tools + event logging + auto-sedimentation) on (mirrors
+	// kb/jobs/subagent/skill/schedule/plan).
+	if cfg.Spill.Enabled {
+		for _, name := range spillToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
 }
 
 // kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /
@@ -517,6 +561,12 @@ var scheduleToolNames = []string{"schedule_create", "schedule_list", "schedule_d
 // makes the "plan.enabled ⇒ 工具自动白名单" rule a single, tested fact shared by
 // applyDefaults and the composition root.
 var planToolNames = []string{"plan_goal", "plan_plan", "plan_todo", "plan_status", "plan_list", "plan_remove"}
+
+// spillToolNames are the spill consumer tools (dispatch-m6c-2 §3). They are
+// registered and whitelisted only when spill is enabled; keeping the names here
+// makes the "spill.enabled ⇒ 工具自动白名单" rule a single, tested fact shared by
+// applyDefaults and the composition root.
+var spillToolNames = []string{"spill_write", "spill_recall", "spill_list", "spill_delete"}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {

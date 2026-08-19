@@ -872,3 +872,84 @@ func TestLoadPlanEnabledAppendsToolsToWhitelist(t *testing.T) {
 		}
 	}
 }
+
+// M6c-2: an absent spill section means the capability is off by default (D10)
+// with auto_spill defaulting on within an enabled spill (AutoSpillValue), and
+// no spill_* tool is whitelisted.
+func TestLoadSpillDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Spill.Enabled {
+		t.Error("spill must be disabled by default (D10)")
+	}
+	if !cfg.Spill.AutoSpillValue() {
+		t.Error("auto_spill must default to true (absent ⇒ true)")
+	}
+	for _, name := range spillToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when spill disabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// M6c-2: an explicit spill section is honored; an explicit enabled:false
+// leaves the default whitelist untouched, and auto_spill:false disables the
+// auto-sedimentation while an explicit true/absent keeps it on.
+func TestLoadSpillParsesSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("spill:\n  enabled: false\n  auto_spill: false\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Spill.Enabled {
+		t.Error("spill.enabled = true, want false (explicitly disabled)")
+	}
+	if cfg.Spill.AutoSpillValue() {
+		t.Error("auto_spill must be false when explicitly disabled")
+	}
+	for _, name := range spillToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when spill explicitly disabled", cfg.Tools.Enabled, name)
+		}
+	}
+
+	// auto_spill absent within an enabled spill defaults to true.
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("spill:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg2.Spill.Enabled {
+		t.Error("spill.enabled should be true")
+	}
+	if !cfg2.Spill.AutoSpillValue() {
+		t.Error("auto_spill must default to true when absent within an enabled spill")
+	}
+}
+
+// M6c-2: spill.enabled: true is the single switch that turns the whole
+// capability on — the four spill_* tools must also become whitelisted
+// (dispatch-m6c-2 §2, mirrors kb/jobs/subagent/skill/schedule/plan).
+func TestLoadSpillEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("spill:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range spillToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after spill.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+}

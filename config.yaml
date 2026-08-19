@@ -180,3 +180,24 @@ plan:
   # Master switch. false ⇒ no plan Provider/Engine is created and the plan_*
   # tools are neither registered nor whitelisted (默认关闭，不初始化).
   enabled: false
+
+# Long-term-memory capability (M6c; design.md §10 D2 / ADR 2026-08-19-m6-agent-full.md
+# 决策 M6c). Off by default (D10): when disabled no Provider/Engine is
+# initialized, no spill_* tool is registered or whitelisted, and no
+# auto-sedimentation path is wired. When enabled, spill_write explicitly
+# stores a conversation-derived memory, spill_recall recalls by query,
+# spill_list enumerates memories, spill_delete removes one (in-memory only,
+# cleared on restart), and — when auto_spill is on — every completed turn's
+# event log is folded into new memories on the serial path (D5). Memories are
+# logged as facts: spill/write, spill/recall, spill/list and spill/delete (D3).
+# The kb seam stays separate: kb is the explicit, user-queryable knowledge
+# base, spill is automatic conversation memory.
+spill:
+  # Master switch. false ⇒ no spill Provider/Engine is created, the spill_*
+  # tools are neither registered nor whitelisted, and no auto-sedimentation
+  # path is wired (默认关闭，不初始化).
+  enabled: false
+  # Whether the end-of-turn auto-sedimentation runs (Engine.AutoSpill over the
+  # session event log), folding memory-worthy fragments into new memos after
+  # each completed turn. Only takes effect when spill is enabled; absent ⇒ true.
+  auto_spill: true
