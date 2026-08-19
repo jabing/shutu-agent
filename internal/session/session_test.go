@@ -1252,3 +1252,114 @@ func TestSpillEventsMixedWithConversationDeriveOnlyConversation(t *testing.T) {
 		t.Fatalf("log events = %d, want 4 (append-only)", got)
 	}
 }
+
+// TestInteractEventsAppendAndReplay verifies the interact/* vocabulary
+// (dispatch-m6d-2 §1 / D3): each of the four event types appends with the next
+// Seq/version, round-trips its payload through the durable sink, survives a
+// restart replay, and never derives into model messages (log-only).
+func TestInteractEventsAppendAndReplay(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	if _, err := l.Append(EventInteractRequest, NewInteractRequest("req-1", "run_command")); err != nil {
+		t.Fatalf("append interact/request: %v", err)
+	}
+	if _, err := l.Append(EventInteractResolve, NewInteractResolve("req-1", true)); err != nil {
+		t.Fatalf("append interact/resolve: %v", err)
+	}
+	if _, err := l.Append(EventInteractDeny, NewInteractDeny("req-2")); err != nil {
+		t.Fatalf("append interact/deny: %v", err)
+	}
+	if _, err := l.Append(EventInteractStatus, NewInteractStatus("req-1", "approved")); err != nil {
+		t.Fatalf("append interact/status: %v", err)
+	}
+	events := l.Events()
+	if len(events) != 4 {
+		t.Fatalf("events = %d, want 4", len(events))
+	}
+	wantTypes := []string{EventInteractRequest, EventInteractResolve, EventInteractDeny, EventInteractStatus}
+	for i, ev := range events {
+		if ev.Type != wantTypes[i] {
+			t.Fatalf("type %d = %q, want %q", i, ev.Type, wantTypes[i])
+		}
+		if ev.Version != EventVersion {
+			t.Fatalf("event %d version = %d, want %d", i, ev.Version, EventVersion)
+		}
+	}
+	// JSON round-trip of each payload.
+	var ir interactRequestData
+	if err := json.Unmarshal(events[0].Data, &ir); err != nil {
+		t.Fatalf("unmarshal interact/request: %v", err)
+	}
+	if ir.ID != "req-1" || ir.ToolName != "run_command" {
+		t.Fatalf("interact/request payload = %+v", ir)
+	}
+	var iv interactResolveData
+	if err := json.Unmarshal(events[1].Data, &iv); err != nil {
+		t.Fatalf("unmarshal interact/resolve: %v", err)
+	}
+	if iv.ID != "req-1" || !iv.Approved {
+		t.Fatalf("interact/resolve payload = %+v", iv)
+	}
+	var id interactDenyData
+	if err := json.Unmarshal(events[2].Data, &id); err != nil {
+		t.Fatalf("unmarshal interact/deny: %v", err)
+	}
+	if id.ID != "req-2" {
+		t.Fatalf("interact/deny payload = %+v", id)
+	}
+	var ist interactStatusData
+	if err := json.Unmarshal(events[3].Data, &ist); err != nil {
+		t.Fatalf("unmarshal interact/status: %v", err)
+	}
+	if ist.ID != "req-1" || ist.Status != "approved" {
+		t.Fatalf("interact/status payload = %+v", ist)
+	}
+	if len(persisted) != 4 || persisted[0].Type != EventInteractRequest {
+		t.Fatalf("sink (append path) = %+v", persisted)
+	}
+	// Restart replay: a fresh log rebuilt from what was persisted still sees
+	// every interact event, and deriving history treats them all as opaque data
+	// (log-only, like the M5/M6 events).
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	for i, want := range wantTypes {
+		if got := fresh.Events()[i].Type; got != want {
+			t.Fatalf("replayed type %d = %q, want %q", i, got, want)
+		}
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
+		t.Fatalf("interact/* events must not derive into messages: %+v", msgs)
+	}
+}
+
+// TestInteractEventsMixedWithConversationDeriveOnlyConversation verifies the
+// log-only contract: interact/* rows interleaved with a real conversation do
+// not appear in the derived history, and the conversation round-trips
+// unchanged (D4 — adding the events never changes the turn/step structure).
+func TestInteractEventsMixedWithConversationDeriveOnlyConversation(t *testing.T) {
+	l := New()
+	l.Append(EventUserMessage, NewUserMessage("run the report"))
+	l.Append(EventInteractRequest, NewInteractRequest("req-1", "run_command"))
+	l.Append(EventAssistantMessage, NewAssistantMessage("Done.", nil, "stop"))
+	l.Append(EventInteractDeny, NewInteractDeny("req-1"))
+	msgs := l.DeriveHistory()
+	if len(msgs) != 2 {
+		t.Fatalf("derived %d messages, want 2 (conversation only): %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "run the report" {
+		t.Fatalf("msg0 = %+v", msgs[0])
+	}
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Done." {
+		t.Fatalf("msg1 = %+v", msgs[1])
+	}
+	// D1: the interact rows stay physically in the log.
+	if got := len(l.Events()); got != 4 {
+		t.Fatalf("log events = %d, want 4 (append-only)", got)
+	}
+}

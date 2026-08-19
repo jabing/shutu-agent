@@ -136,6 +136,22 @@ const (
 	EventSpillRecall = "spill/recall"
 	EventSpillList   = "spill/list"
 	EventSpillDelete = "spill/delete"
+
+	// M6d-2 interact events (design.md §3 / ADR 2026-08-19-m6-agent-full.md
+	// 决策 M6d / dispatch-m6d-2 §1): interact/request lands when a request is
+	// created (by interact_ask or by the sensitive-tool gate), interact/resolve
+	// when a user decision (approved/rejected) is recorded, interact/deny when
+	// the sensitive-tool gate blocks a tool's execution after a rejection, and
+	// interact/status when interact_status reports a request's current status.
+	// They are log-only (D3): the model sees request/status through the
+	// interact_* tools' tool/result events, and DeriveHistory treats these types
+	// as opaque data, so adding them never changes the turn/step structure (D4).
+	// The payloads are pure data projections — the session package never imports
+	// the interact package.
+	EventInteractRequest = "interact/request"
+	EventInteractResolve = "interact/resolve"
+	EventInteractDeny    = "interact/deny"
+	EventInteractStatus  = "interact/status"
 )
 
 // EventVersion is the current event vocabulary version. It is stored per event
@@ -887,4 +903,61 @@ func NewSpillList(count int) any {
 // removes a memo (dispatch-m6c-2 §1 / D3).
 func NewSpillDelete(id string) any {
 	return spillDeleteData{ID: id}
+}
+
+// interactRequestData is the interact/request payload: the provider-issued
+// request id and the tool whose execution triggered the approval. DeriveHistory
+// treats it as opaque data.
+type interactRequestData struct {
+	ID       string `json:"id"`
+	ToolName string `json:"toolName"`
+}
+
+// interactResolveData is the interact/resolve payload: the request id and the
+// user's decision (approved = true, rejected = false). DeriveHistory treats it
+// as opaque data.
+type interactResolveData struct {
+	ID       string `json:"id"`
+	Approved bool   `json:"approved"`
+}
+
+// interactDenyData is the interact/deny payload: the request id of a sensitive
+// tool execution that the gate blocked after a rejection. DeriveHistory treats
+// it as opaque data.
+type interactDenyData struct {
+	ID string `json:"id"`
+}
+
+// interactStatusData is the interact/status payload: the request id and its
+// current approval status (pending | approved | rejected | expired).
+// DeriveHistory treats it as opaque data.
+type interactStatusData struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
+// NewInteractRequest builds the interact/request payload recorded when a
+// request is created — by interact_ask or by the sensitive-tool gate
+// (dispatch-m6d-2 §1 / D3).
+func NewInteractRequest(id, toolName string) any {
+	return interactRequestData{ID: id, ToolName: toolName}
+}
+
+// NewInteractResolve builds the interact/resolve payload recorded when a user
+// decision is recorded for the request with id (dispatch-m6d-2 §1 / D3).
+func NewInteractResolve(id string, approved bool) any {
+	return interactResolveData{ID: id, Approved: approved}
+}
+
+// NewInteractDeny builds the interact/deny payload recorded when the
+// sensitive-tool gate blocks a tool's execution after a rejection
+// (dispatch-m6d-2 §1 / D3).
+func NewInteractDeny(id string) any {
+	return interactDenyData{ID: id}
+}
+
+// NewInteractStatus builds the interact/status payload recorded when
+// interact_status reports a request's current status (dispatch-m6d-2 §1 / D3).
+func NewInteractStatus(id, status string) any {
+	return interactStatusData{ID: id, Status: status}
 }
