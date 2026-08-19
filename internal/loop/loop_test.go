@@ -199,6 +199,91 @@ func TestRunUnknownToolLogsErrorAndContinues(t *testing.T) {
 	}
 }
 
+// TestRunRecallHookInjectedIntoFirstRequestOnly verifies the M4b recall
+// extension point (dispatch-m4b §2, D4): the Recall hook is called once per
+// turn, its context messages are injected into the first request only, and the
+// second (tool-result) request does not re-carry the recall — the loop's
+// turn/step structure is unchanged.
+func TestRunRecallHookInjectedIntoFirstRequestOnly(t *testing.T) {
+	model := &scriptedLLM{steps: [][]llm.StreamEvent{
+		{ // step 1: model asks for get_time
+			{Kind: llm.StreamFinish, FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{
+				{ID: "call_1", Name: "get_time", Arguments: "{}"},
+			}},
+		},
+		{ // step 2: model answers
+			{Kind: llm.StreamTextDelta, Text: "It is now."},
+			{Kind: llm.StreamFinish, FinishReason: "stop"},
+		},
+	}}
+	log := session.New()
+	var recallCalls int
+	loop := New(Config{
+		LLM:    model,
+		Log:    log,
+		Tools:  newTestRegistry(t),
+		Prompt: prompt.New("You are helpful."),
+		Model:  "deepseek-chat",
+		Recall: func(ctx context.Context, userText string) []llm.Message {
+			recallCalls++
+			if userText != "what time is it" {
+				t.Errorf("recall received userText %q, want %q", userText, "what time is it")
+			}
+			return []llm.Message{{Role: llm.RoleUser, Content: "KB snippet: <架构决策记录>"}}
+		},
+	})
+
+	if err := loop.Run(context.Background(), "what time is it"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if recallCalls != 1 {
+		t.Fatalf("recall hook called %d times, want 1 (once per turn)", recallCalls)
+	}
+	if len(model.calls) != 2 {
+		t.Fatalf("llm calls = %d, want 2", len(model.calls))
+	}
+	first := model.calls[0].Messages
+	if len(first) < 3 || first[0].Role != llm.RoleSystem || first[1].Role != llm.RoleUser || first[1].Content != "KB snippet: <架构决策记录>" || first[2].Role != llm.RoleUser {
+		t.Fatalf("first request messages = %+v, want system + recall + user history", first)
+	}
+	for _, m := range model.calls[1].Messages {
+		if strings.Contains(m.Content, "KB snippet") {
+			t.Fatalf("second request must not carry the recall: %+v", model.calls[1].Messages)
+		}
+	}
+}
+
+// newTestRegistry is a helper returning a registry with get_time registered
+// (used by recall-hook tests).
+func newTestRegistry(t *testing.T) *tools.Registry {
+	t.Helper()
+	reg := tools.New()
+	if err := reg.Register(tools.GetTime{}); err != nil {
+		t.Fatalf("register get_time: %v", err)
+	}
+	return reg
+}
+
+// TestRunRecallHookReturnsNilKeepsTurnFlow verifies a nil recall result (no
+// hits or fail-open) changes nothing: the turn runs with a plain request.
+func TestRunRecallHookReturnsNilKeepsTurnFlow(t *testing.T) {
+	model := &scriptedLLM{steps: [][]llm.StreamEvent{{
+		{Kind: llm.StreamTextDelta, Text: "ok"},
+		{Kind: llm.StreamFinish, FinishReason: "stop"},
+	}}}
+	loop, _, _ := newTestLoop(t, model)
+	loop.recall = func(ctx context.Context, userText string) []llm.Message { return nil }
+
+	if err := loop.Run(context.Background(), "hello"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	msgs := model.calls[0].Messages
+	if len(msgs) != 2 || msgs[0].Role != llm.RoleSystem || msgs[1].Role != llm.RoleUser {
+		t.Fatalf("request messages = %+v, want system + user only (no recall)", msgs)
+	}
+}
+
+// TestRunCancelContext verifies a cancelled context aborts before any step.
 func TestRunCancelContext(t *testing.T) {
 	model := &scriptedLLM{}
 	loop, _, _ := newTestLoop(t, model)

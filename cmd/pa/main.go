@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"personal-agent/internal/config"
+	"personal-agent/internal/kb"
 	"personal-agent/internal/llm"
 	"personal-agent/internal/llm/deepseek"
 	"personal-agent/internal/loop"
@@ -100,6 +101,17 @@ func main() {
 		prompt: promptBuilder,
 		llm:    client,
 	}
+	// M4b: wire the knowledge base seam — provider + kb_* tools + catalog —
+	// when kb.enabled (默认关闭, D10). kb.registerKB appends the kb_* tool names
+	// to nothing itself; config.applyDefaults already whitelisted them when
+	// kb.enabled was true.
+	if err := app.registerKB(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
+	if app.kb != nil {
+		defer app.kb.Close()
+	}
 	if err := app.startup(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
@@ -114,6 +126,7 @@ type app struct {
 	reg    *tools.Registry
 	prompt *prompt.Builder
 	llm    llm.LLM
+	kb     kb.KB // nil when kb disabled (D10)
 
 	currentID string
 	log       *session.Log
@@ -197,7 +210,10 @@ func (a *app) bindSpillOwner() {
 	})
 }
 
-// newLoop builds a Loop bound to the current session log.
+// newLoop builds a Loop bound to the current session log. The Recall hook is
+// the M4b proactive-recall extension point (dispatch-m4b §2): it runs the
+// per-turn recall orchestration in cmd/pa; the loop's turn/step structure is
+// unchanged (D4).
 func (a *app) newLoop() *loop.Loop {
 	return loop.New(loop.Config{
 		LLM:    a.llm,
@@ -205,6 +221,7 @@ func (a *app) newLoop() *loop.Loop {
 		Tools:  a.reg,
 		Prompt: a.prompt,
 		Model:  a.cfg.Model,
+		Recall: a.recall,
 		OnText: func(delta string) { fmt.Print(delta) },
 		OnError: func(err error) {
 			fmt.Fprintln(os.Stderr, "\n[stream error]", err)
@@ -265,24 +282,36 @@ func (a *app) command(ctx context.Context, line string) error {
 			return err
 		}
 		fmt.Printf("resumed session %s (%d events)\n", a.currentID, len(a.log.Events()))
+	case "/kb-status":
+		return a.kbStatus(ctx)
+	case "/kb-reindex":
+		return a.kbReindex(ctx)
 	default:
 		return fmt.Errorf("unknown command %q (try /help)", fields[0])
 	}
 	return nil
 }
 
-// printHelp prints the complete command table (M3 CLI 完善).
+// printHelp prints the complete command table (M3 CLI 完善; M4b adds kb).
 func (a *app) printHelp() {
 	fmt.Println(`commands:
   /new              start a new session
   /list             list all sessions (most recently updated first)
   /resume <id>      resume an existing session by id
+  /kb-status        knowledge-base status (entries / db size / recent writes)
+  /kb-reindex       rebuild the knowledge-base FTS index
   /help             show this command table
   /exit             quit (alias: /quit)
   anything else     send to the agent as a message
 
 startup:  pa [--config <path>]   config defaults to config.yaml`)
 	fmt.Printf("enabled tools: %s\n", strings.Join(a.cfg.Tools.Enabled, ", "))
+	if a.cfg.KB.Enabled {
+		fmt.Printf("knowledge base: enabled (db=%s, recall_limit=%d, catalog=%v)\n",
+			a.cfg.KB.DBPath, a.cfg.KB.RecallLimitValue(), a.cfg.KB.CatalogValue())
+	} else {
+		fmt.Println("knowledge base: disabled (kb.enabled=false)")
+	}
 }
 
 func (a *app) listSessions(ctx context.Context) error {

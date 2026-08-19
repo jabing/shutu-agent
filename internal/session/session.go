@@ -21,10 +21,12 @@ const (
 
 	// M4 knowledge-base events (design.md §3): kb/recall lands with the M4a
 	// kernel so the D3 logging mechanism exists before any orchestration;
-	// kb/extract and kb/add arrive with M4b/M4c. DeriveHistory ignores these
-	// types (the recall is injected into context by the caller, design.md §8),
-	// so adding them never changes the turn/step structure (D4).
+	// kb/add arrives with M4b (explicit writes) and kb/extract with M4c.
+	// DeriveHistory ignores these types (the recall is injected into context by
+	// the caller, design.md §8), so adding them never changes the turn/step
+	// structure (D4).
 	EventKBRecall = "kb/recall"
+	EventKBAdd    = "kb/add"
 )
 
 // EventVersion is the current event vocabulary version. It is stored per event
@@ -259,4 +261,22 @@ type kbRecallData struct {
 // treats it as opaque data.
 func NewKBRecall(query string, hits []RecallHit) any {
 	return kbRecallData{Query: query, Hits: hits}
+}
+
+// kbAddData is the kb/add payload: a bounded summary of an explicit knowledge
+// write (dispatch-m4b §3). Only the summary is logged, never the full body, so
+// the log stays lean. DeriveHistory treats it as opaque data.
+type kbAddData struct {
+	EntryID string   `json:"entryId"`
+	Title   string   `json:"title"`
+	Type    string   `json:"type"`
+	Tags    []string `json:"tags,omitempty"`
+	Source  string   `json:"source,omitempty"`
+	Version int      `json:"version"`
+}
+
+// NewKBAdd builds the kb/add payload recorded when an explicit write lands
+// (dispatch-m4b §3 / D3).
+func NewKBAdd(entryID, title, typ string, tags []string, source string, version int) any {
+	return kbAddData{EntryID: entryID, Title: title, Type: typ, Tags: tags, Source: source, Version: version}
 }

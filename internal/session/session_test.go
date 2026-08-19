@@ -264,6 +264,46 @@ func TestKBRecallEventAppendsAndReplays(t *testing.T) {
 	}
 }
 
+// TestKBAddEventAppendsAndReplays verifies the M4b kb/add event type
+// (dispatch-m4b §3 / D3): explicit knowledge writes append a bounded summary
+// event that survives the JSON round-trip and restart replay, and stays opaque
+// to history derivation (an explicit write is a log fact, not conversation).
+func TestKBAddEventAppendsAndReplays(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	if _, err := l.Append(EventKBAdd, NewKBAdd("kb-9", "架构决策记录", "decision", []string{"架构"}, "manual:abc", 1)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	ev := l.Events()[0]
+	if ev.Type != EventKBAdd || ev.Version != EventVersion {
+		t.Fatalf("event = %+v, want type %q version %d", ev, EventKBAdd, EventVersion)
+	}
+	var d kbAddData
+	if err := json.Unmarshal(ev.Data, &d); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if d.EntryID != "kb-9" || d.Title != "架构决策记录" || d.Type != "decision" || d.Version != 1 || len(d.Tags) != 1 {
+		t.Fatalf("payload = %+v", d)
+	}
+	if len(persisted) != 1 || persisted[0].Type != EventKBAdd {
+		t.Fatalf("sink (append path) = %+v", persisted)
+	}
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if got := fresh.Events()[0]; got.Type != EventKBAdd {
+		t.Fatalf("replayed type = %q", got.Type)
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
+		t.Fatalf("kb/add must not derive into messages: %+v", msgs)
+	}
+}
+
 // TestToolResultSpillRecordsLocator verifies a spilled tool/result event keeps
 // the structured spill record (locator + byte count) alongside the truncated
 // output, and that deriving history still yields the model-visible text (which

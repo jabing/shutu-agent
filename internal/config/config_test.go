@@ -190,7 +190,8 @@ func TestLoadAcceptsEmptyRunCommandTimeoutMeansGlobal(t *testing.T) {
 
 // M4a: kb is off by default (D10), the database path defaults to
 // <data_dir>/kb/knowledge.sqlite, and a bounded search returns 5 hits by
-// default (dispatch-m4a §3).
+// default (dispatch-m4a §3). M4b: proactive recall defaults to 3 hits/round
+// and the catalog defaults to injected (dispatch-m4b §5).
 func TestLoadKBDefaultsWhenAbsent(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
 	if err != nil {
@@ -205,6 +206,12 @@ func TestLoadKBDefaultsWhenAbsent(t *testing.T) {
 	}
 	if cfg.KB.TopK != DefaultKBTopK {
 		t.Errorf("kb.top_k = %d, want %d", cfg.KB.TopK, DefaultKBTopK)
+	}
+	if got := cfg.KB.RecallLimitValue(); got != DefaultKBRecallLimit {
+		t.Errorf("kb.recall_limit (absent) = %d, want %d", got, DefaultKBRecallLimit)
+	}
+	if !cfg.KB.CatalogValue() {
+		t.Error("kb.catalog (absent) must default to true")
 	}
 }
 
@@ -226,6 +233,75 @@ func TestLoadParsesKBSection(t *testing.T) {
 	}
 	if cfg.KB.TopK != 3 {
 		t.Errorf("kb.top_k = %d, want 3", cfg.KB.TopK)
+	}
+}
+
+// M4b: an explicit recall_limit / catalog is honored, and the defaults are
+// used for the fields left absent in the same file.
+func TestLoadParsesKBRecallAndCatalog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := "kb:\n  enabled: true\n  recall_limit: 5\n  catalog: false\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.KB.RecallLimitValue(); got != 5 {
+		t.Errorf("kb.recall_limit = %d, want 5", got)
+	}
+	if cfg.KB.CatalogValue() {
+		t.Error("kb.catalog = true, want false (explicitly disabled)")
+	}
+	if cfg.KB.TopK != DefaultKBTopK {
+		t.Errorf("absent kb.top_k = %d, want default %d", cfg.KB.TopK, DefaultKBTopK)
+	}
+}
+
+// M4b: recall_limit 0 means "proactive recall off" — it must survive the
+// absent-vs-zero distinction (0 is meaningful, not the default).
+func TestLoadRecallLimitZeroDisables(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("kb:\n  enabled: true\n  recall_limit: 0\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.KB.RecallLimitValue(); got != 0 {
+		t.Errorf("kb.recall_limit = %d, want 0 (proactive recall off)", got)
+	}
+}
+
+// M4b: kb.enabled: true is the single switch that turns the whole capability
+// on — the three kb_* tools must also become whitelisted (dispatch-m4b §1,
+// mirrors run_command). When kb is disabled they must NOT be whitelisted.
+func TestLoadKBEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("kb:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range kbToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after kb.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+
+	// Default (kb disabled): no kb tool in the whitelist.
+	cfg2, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range kbToolNames {
+		if contains(cfg2.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when kb disabled", cfg2.Tools.Enabled, name)
+		}
 	}
 }
 

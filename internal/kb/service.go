@@ -15,6 +15,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Knowledge entry types (design.md §8, dsh-knowledge 同款数据模型).
@@ -71,22 +72,47 @@ type SearchOpts struct {
 	Scope string // optional exact scope filter; "" = all scopes
 }
 
+// RecentWrite is one entry in Stats.Recent — the title/type/timestamp of a
+// recently written entry, without the (possibly large) body.
+type RecentWrite struct {
+	Title     string
+	Type      string
+	UpdatedAt time.Time
+}
+
+// Stats is a read-only snapshot of a knowledge base, used by the /kb-status
+// CLI command (dispatch-m4b §4). DBSize is the on-disk database size in bytes,
+// or 0 for backends without a file (in-memory).
+type Stats struct {
+	EntryCount int
+	DBPath     string
+	DBSize     int64
+	Recent     []RecentWrite // most recently written first
+}
+
 // KB is the knowledge-base Service.
 //
 //   - Search runs FTS5 BM25 and, when that under-fills topK, supplements with
 //     a Chinese bigram LIKE fallback (design.md §8).
-//   - Add writes one entry and syncs the FTS index; a draft whose Source
-//     matches an existing entry updates it with version+1 instead of
-//     inserting (dispatch-m4a §2).
+//   - Get returns one full entry by id (kb_read, M4b).
+//   - Add writes one entry, syncs the FTS index, and returns the entry with
+//     the provider-assigned ID and Version (kb_add reports them so the model
+//     can open the entry with kb_read). A draft whose Source matches an
+//     existing entry updates it with version+1 instead of inserting
+//     (dispatch-m4a §2).
 //   - Recall is a bounded search (its injection orchestration lands in M4b;
 //     this segment implements the retrieval logic only).
+//   - Stats reports entry count / database size / recent writes for
+//     /kb-status (M4b).
 //
 // Extract is reserved for M4c and intentionally absent. Close is part of the
 // interface so a swapped provider never leaks its backend (DB file, handles).
 type KB interface {
 	Search(ctx context.Context, query string, opts SearchOpts) ([]Hit, error)
-	Add(ctx context.Context, draft Entry) error
+	Get(ctx context.Context, id string) (Entry, error)
+	Add(ctx context.Context, draft Entry) (Entry, error)
 	Recall(ctx context.Context, query string, limit int) ([]Hit, error)
+	Stats(ctx context.Context) (Stats, error)
 	Close() error
 }
 

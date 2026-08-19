@@ -32,6 +32,13 @@ const (
 	// path defaults to <data_dir>/kb/knowledge.sqlite (resolved in
 	// applyDefaults so it follows a custom data_dir).
 	DefaultKBTopK = 5
+
+	// M4b kb defaults (dispatch-m4b §5): proactive recall injects 3 hits per
+	// round by default (0 disables proactive recall); the lightweight catalog
+	// is injected into the system prompt by default. These are accessed through
+	// KBConfig.RecallLimitValue / KBConfig.CatalogValue, which apply the
+	// defaults when the YAML field is absent.
+	DefaultKBRecallLimit = 3
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
@@ -50,12 +57,16 @@ type Config struct {
 	KB         KBConfig    `yaml:"kb"`          // knowledge-base policy (M4a kernel)
 }
 
-// KBConfig is the M4a knowledge-base policy (dispatch-m4a §3). Only the kernel
-// fields land in M4a; recall_limit / extraction / catalog arrive with
-// M4b/M4c. The knowledge base is off by default (D10).
+// KBConfig is the knowledge-base policy (dispatch-m4a §3 / dispatch-m4b §5).
+// The knowledge base is off by default (D10). RecallLimit and Catalog are
+// pointers so an absent YAML field (→ the default) is distinguishable from an
+// explicit 0/false, which carries real meaning here: recall_limit 0 disables
+// proactive recall and catalog false suppresses the system-prompt catalog.
+// Read them through RecallLimitValue / CatalogValue, never directly.
 type KBConfig struct {
 	// Enabled gates the whole capability: when false, no KB provider is
-	// initialized (kb.OpenSQLite is never called).
+	// initialized (kb.OpenSQLite is never called) and the kb_* tools are
+	// neither registered nor whitelisted (D10).
 	Enabled bool `yaml:"enabled"`
 	// DBPath is the SQLite database file; "" defaults to
 	// <data_dir>/kb/knowledge.sqlite.
@@ -63,6 +74,31 @@ type KBConfig struct {
 	// TopK is the default result count for a bounded Search/Recall (<=0 uses
 	// the default 5).
 	TopK int `yaml:"top_k"`
+	// RecallLimit is the per-round proactive recall count (dispatch-m4b §5):
+	// 0 disables proactive recall, nil (absent) means the default 3.
+	RecallLimit *int `yaml:"recall_limit"`
+	// Catalog toggles injecting the lightweight KB catalog (name/description,
+	// no bodies) into the system prompt; nil (absent) means true.
+	Catalog *bool `yaml:"catalog"`
+}
+
+// RecallLimitValue returns the effective per-round proactive recall count:
+// the configured value, 0 when explicitly disabled, or DefaultKBRecallLimit
+// when absent.
+func (k KBConfig) RecallLimitValue() int {
+	if k.RecallLimit == nil || *k.RecallLimit < 0 {
+		return DefaultKBRecallLimit
+	}
+	return *k.RecallLimit
+}
+
+// CatalogValue returns whether the lightweight KB catalog is injected into
+// the system prompt (true by default).
+func (k KBConfig) CatalogValue() bool {
+	if k.Catalog == nil {
+		return true
+	}
+	return *k.Catalog
 }
 
 // ToolsConfig is the M3 tool-execution policy: the whitelist, the per-tool
@@ -169,6 +205,16 @@ func applyDefaults(cfg *Config) {
 	if cfg.Tools.RunCommand.Enabled && !contains(cfg.Tools.Enabled, "run_command") {
 		cfg.Tools.Enabled = append(cfg.Tools.Enabled, "run_command")
 	}
+	// Enabling kb whitelists its three consumer tools as well, so the single
+	// kb.enabled switch turns the whole capability (provider + tools + recall)
+	// on; default off (D10, dispatch-m4b §1 — mirrors run_command).
+	if cfg.KB.Enabled {
+		for _, name := range kbToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
 	// M4a kb defaults: off by default; the database path follows data_dir; a
 	// bounded search returns 5 hits. An explicitly-set db_path is used
 	// verbatim (it may point anywhere, e.g. an absolute path).
@@ -179,6 +225,12 @@ func applyDefaults(cfg *Config) {
 		cfg.KB.TopK = DefaultKBTopK
 	}
 }
+
+// kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /
+// dispatch-m4b §1). They are registered and whitelisted only when kb is
+// enabled; keeping the names here makes the "kb.enabled ⇒ 工具自动白名单" rule a
+// single, tested fact shared by applyDefaults and the composition root.
+var kbToolNames = []string{"kb_search", "kb_read", "kb_add"}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {

@@ -63,16 +63,17 @@ func (p *MemProvider) Search(ctx context.Context, query string, opts SearchOpts)
 }
 
 // Add writes one entry; a draft whose Source matches an existing entry updates
-// it with version+1 (same semantics as the SQLite backend).
-func (p *MemProvider) Add(ctx context.Context, draft Entry) error {
+// it with version+1 (same semantics as the SQLite backend). The provider owns
+// identity: it returns the entry with the assigned ID and Version.
+func (p *MemProvider) Add(ctx context.Context, draft Entry) (Entry, error) {
 	e, err := normalizeDraft(draft)
 	if err != nil {
-		return err
+		return Entry{}, err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
-		return fmt.Errorf("kb: provider is closed")
+		return Entry{}, fmt.Errorf("kb: provider is closed")
 	}
 	if e.Source != "" {
 		for i := range p.entries {
@@ -85,7 +86,9 @@ func (p *MemProvider) Add(ctx context.Context, draft Entry) error {
 				p.entries[i].Entry.Scope = e.Scope
 				p.entries[i].Entry.Confidence = e.Confidence
 				p.entries[i].updatedAt = time.Now().UTC()
-				return nil
+				e.ID = p.entries[i].Entry.ID
+				e.Version = p.entries[i].Entry.Version
+				return e, nil
 			}
 		}
 	}
@@ -93,12 +96,41 @@ func (p *MemProvider) Add(ctx context.Context, draft Entry) error {
 	e.ID = fmt.Sprintf("mem-%d", p.seq)
 	e.Version = 1
 	p.entries = append(p.entries, memEntry{Entry: e, updatedAt: time.Now().UTC()})
-	return nil
+	return e, nil
 }
 
 // Recall is a bounded search (orchestration lands in M4b).
 func (p *MemProvider) Recall(ctx context.Context, query string, limit int) ([]Hit, error) {
 	return p.Search(ctx, query, SearchOpts{TopK: limit})
+}
+
+// Get returns one full entry by id (kb_read, dispatch-m4b §1). An unknown id
+// is an error so the model never mistakes a stale id for a live entry.
+func (p *MemProvider) Get(ctx context.Context, id string) (Entry, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return Entry{}, fmt.Errorf("kb: provider is closed")
+	}
+	for _, e := range p.entries {
+		if e.ID == id {
+			return e.Entry, nil
+		}
+	}
+	return Entry{}, fmt.Errorf("kb: entry %q not found", id)
+}
+
+// Stats reports entry count, database size (0 for in-memory), and the most
+// recent writes (dispatch-m4b §4 /kb-status).
+func (p *MemProvider) Stats(ctx context.Context) (Stats, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	st := Stats{EntryCount: len(p.entries), DBPath: "(memory)"}
+	for i := len(p.entries) - 1; i >= 0 && len(st.Recent) < 5; i-- {
+		e := p.entries[i]
+		st.Recent = append(st.Recent, RecentWrite{Title: e.Title, Type: e.Type, UpdatedAt: e.updatedAt})
+	}
+	return st, nil
 }
 
 // Close releases nothing but marks the provider unusable (mirrors SQLite's

@@ -28,17 +28,27 @@ type Loop struct {
 	tools   *tools.Registry
 	prompt  *prompt.Builder
 	model   string
+	recall  func(context.Context, string) []llm.Message
 	onText  func(string) // optional sink for streamed assistant text (REPL)
 	onError func(error)  // optional sink for stream errors (REPL)
 }
 
-// Config wires the loop's dependencies. All fields are required.
+// Config wires the loop's dependencies. All fields are required except the
+// optional hooks.
 type Config struct {
 	LLM    llm.LLM
 	Log    *session.Log
 	Tools  *tools.Registry
 	Prompt *prompt.Builder
 	Model  string
+	// Recall, if set, is the proactive knowledge recall extension point
+	// (design.md §8, D4: new features hang on extension points). It is called
+	// once at the start of each turn — after user/message is appended, before
+	// the first step's model request — and returns extra context messages
+	// injected into that first request only. The recall orchestration (query,
+	// KB.Recall, fail-open, kb/recall logging) lives entirely in cmd/pa; the
+	// loop just injects what it returns. The turn/step structure is unchanged.
+	Recall func(ctx context.Context, userText string) []llm.Message
 	// OnText, if set, is called with each streamed assistant text delta.
 	OnText func(string)
 	// OnError, if set, is called when a step's stream fails after start.
@@ -53,6 +63,7 @@ func New(cfg Config) *Loop {
 		tools:   cfg.Tools,
 		prompt:  cfg.Prompt,
 		model:   cfg.Model,
+		recall:  cfg.Recall,
 		onText:  cfg.OnText,
 		onError: cfg.OnError,
 	}
@@ -65,28 +76,38 @@ func (l *Loop) Run(ctx context.Context, userText string) error {
 	if _, err := l.log.Append(session.EventUserMessage, session.NewUserMessage(userText)); err != nil {
 		return err
 	}
+	// The recall context is computed once per turn and applied to the first
+	// request only (dsh-knowledge gates its pre-step recall on step === 1).
+	var contextMsgs []llm.Message
+	if l.recall != nil {
+		contextMsgs = l.recall(ctx, userText)
+	}
 	for step := 0; step < maxSteps; step++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("loop: cancelled: %w", err)
 		}
-		done, err := l.step(ctx)
+		done, err := l.step(ctx, contextMsgs)
 		if err != nil {
 			return err
 		}
 		if done {
 			return nil
 		}
+		contextMsgs = nil // only the turn's first request carries the recall
 	}
 	return fmt.Errorf("loop: exceeded %d steps per turn", maxSteps)
 }
 
 // step performs one model request and its tool executions. It returns
-// (true, nil) when the turn is complete (no tool calls requested).
-func (l *Loop) step(ctx context.Context) (bool, error) {
+// (true, nil) when the turn is complete (no tool calls requested). contextMsgs
+// are prepended to the request (after the system prompt, before the derived
+// history).
+func (l *Loop) step(ctx context.Context, contextMsgs []llm.Message) (bool, error) {
 	history := l.log.DeriveHistory()
 	specs := l.tools.Specs()
-	messages := make([]llm.Message, 0, len(history)+1)
+	messages := make([]llm.Message, 0, len(history)+1+len(contextMsgs))
 	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: l.prompt.Build()})
+	messages = append(messages, contextMsgs...)
 	messages = append(messages, history...)
 
 	reader, err := l.llm.Stream(ctx, llm.ChatRequest{Model: l.model, Messages: messages, Tools: specs})

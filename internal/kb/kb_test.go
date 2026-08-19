@@ -27,7 +27,7 @@ func seed(t *testing.T, k kb.KB) {
 		{Title: "项目内知识", Body: "scoped entry body 项目内部", Type: kb.TypeFact, Tags: []string{"scope"}, Scope: "project-x", Source: "manual:6", Confidence: 0.5},
 	}
 	for _, e := range entries {
-		if err := k.Add(context.Background(), e); err != nil {
+		if _, err := k.Add(context.Background(), e); err != nil {
 			t.Fatalf("Add %q: %v", e.Title, err)
 		}
 	}
@@ -88,7 +88,7 @@ func exerciseConsumer(t *testing.T, k kb.KB) {
 
 	// Add 后能检索到（seed 已隐式覆盖）；再验证一次显式 Add + 检索。查询词用
 	// 全局唯一的串，避免与其他条目的二元组撞车。
-	if err := k.Add(context.Background(), kb.Entry{
+	if _, err := k.Add(context.Background(), kb.Entry{
 		Title: "新显式写入", Body: "专属标记词 xyz，验证显式写入可检索", Type: kb.TypeFact,
 		Tags: []string{"显式"}, Source: "manual:new", Confidence: 0.6,
 	}); err != nil {
@@ -99,7 +99,7 @@ func exerciseConsumer(t *testing.T, k kb.KB) {
 	// 同 source 更新版本递增：两次 Add 同一 Source ⇒ 同 ID、版本 +1、旧内容不可再检索。
 	const src = "session:s1:turn:9"
 	first := kb.Entry{Title: "第一版方案", Body: "第一版内容", Type: kb.TypeDecision, Source: src, Confidence: 0.6}
-	if err := k.Add(context.Background(), first); err != nil {
+	if _, err := k.Add(context.Background(), first); err != nil {
 		t.Fatalf("Add v1: %v", err)
 	}
 	hits, err := k.Search(context.Background(), "第一版", kb.SearchOpts{TopK: 5})
@@ -114,7 +114,7 @@ func exerciseConsumer(t *testing.T, k kb.KB) {
 		t.Fatal("provider must assign a non-empty entry id")
 	}
 	second := kb.Entry{Title: "第二版方案", Body: "第二版内容", Type: kb.TypeDecision, Source: src, Confidence: 0.6}
-	if err := k.Add(context.Background(), second); err != nil {
+	if _, err := k.Add(context.Background(), second); err != nil {
 		t.Fatalf("Add v2: %v", err)
 	}
 	hits, err = k.Search(context.Background(), "第二版", kb.SearchOpts{TopK: 5})
@@ -133,7 +133,7 @@ func exerciseConsumer(t *testing.T, k kb.KB) {
 
 	// 不同 source ⇒ 独立新条目（version 1，不同 ID）。检索词用全局唯一串。
 	other := kb.Entry{Title: "另一来源方案", Body: "anode 特殊令牌 99 独立条目内容", Type: kb.TypeDecision, Source: "session:s9:turn:9", Confidence: 0.6}
-	if err := k.Add(context.Background(), other); err != nil {
+	if _, err := k.Add(context.Background(), other); err != nil {
 		t.Fatalf("Add other source: %v", err)
 	}
 	hits, err = k.Search(context.Background(), "特殊令牌", kb.SearchOpts{TopK: 5})
@@ -221,7 +221,7 @@ func TestNewFromConfigEnabled(t *testing.T) {
 		t.Fatal("NewFromConfig(enabled) returned nil provider")
 	}
 	defer k.Close()
-	if err := k.Add(context.Background(), kb.Entry{Title: "t", Body: "b", Type: kb.TypeFact, Confidence: 0.5}); err != nil {
+	if _, err := k.Add(context.Background(), kb.Entry{Title: "t", Body: "b", Type: kb.TypeFact, Confidence: 0.5}); err != nil {
 		t.Fatalf("Add after NewFromConfig: %v", err)
 	}
 }

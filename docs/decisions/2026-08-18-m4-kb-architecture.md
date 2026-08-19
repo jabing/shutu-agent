@@ -1,8 +1,8 @@
 # ADR: M4 知识库架构——FTS5 + 中文二元组 LIKE 兜底检索，Provider 抽象，kb/recall 事件落日志
 
-- 状态：**已定**（2026-08-18，M4a 内核落地）
+- 状态：**已定**（2026-08-18，M4a 内核落地；M4b 工具消费面与召回注入落地）
 - 关联：design.md §8、§10 D1–D10（重点 D2/D3/D9/D10）；Agent.md 路线图 M4；调研 `docs/research-m4-kb.md`；参考实现 `../dsh-knowledge/`
-- 分阶段：本 ADR 是 M4 主 ADR。本段（M4a）定稿三件事：① 检索方案 ② Provider 抽象与接口边界 ③ 事件落日志机制。M4c 的提取回写决策后续补写进同一 ADR。
+- 分阶段：本 ADR 是 M4 主 ADR。M4a 定稿三件事：① 检索方案 ② Provider 抽象与接口边界 ③ 事件落日志机制；M4b 补充：④ 工具消费面 ⑤ 召回注入机制 ⑥ CLI 与 config 扩展。M4c 的提取回写决策后续补写进同一 ADR。
 
 ## 背景
 
@@ -62,6 +62,7 @@ M4 要给个人 Agent 接入知识库能力（设计基线 design.md §8，参�
 - 共享语义集中在 seam 包：`normalizeDraft`（标题 1–200、正文 1–50000、type ∈ {preference,fact,decision,procedure,lesson}、confidence∈[0,1]、tags 规范化）、`toFtsQuery`/`fallbackTerms`/`rankToScore`/`escapeLike`/`normalizeTopK`。所有 Provider 复用同一套检索与校验，跨后端行为一致。
 - **边界验收**（`TestProviderSwapConsumerUnchanged`）：同一份消费方代码（增删查 + 版本 + scope + topK 断言）对 SQLite 与内存 Provider 全绿——证明消费方只依赖接口，换后端零改动。
 - 数据目录归 config：`kb.db_path` 空值默认 `<data_dir>/kb/knowledge.sqlite`（跟随 data_dir），显式值原样使用。
+- **M4b 接口扩展**（由工具消费面驱动，见决策 ④）：新增 `Get(ctx,id)`（kb_read 按 id 取整条）、`Stats(ctx)`（/kb-status）；`Add` 由 `error` 改为 `(Entry, error)` 返回被赋值的条目（kb_add 输出 id/version，kb/add 事件摘要需要）。两个 Provider 同步实现，原 M4a 消费方测试机械更新后保持绿色。
 
 ## 决策 ③ 事件落日志机制（kb/recall 满足 D3，不改 loop）
 
@@ -72,9 +73,34 @@ M4 要给个人 Agent 接入知识库能力（设计基线 design.md §8，参�
 - `DeriveHistory` 对 `kb/recall` 视为不透明数据（不回放成消息）：召回由编排方直接注入上下文，日志只负责"已注入"的事实记录（设计基线 §8：检索失败 fail-open，不阻断回答）。
 - 其余 kb 事件（`kb/extract`、`kb/add`）随 M4b/M4c 依序加入，同一机制，事件带 `Version` 字段（D8）兼容演进。
 
-## 决策 ④ kb 默认关闭（D10）
+## 决策 ④ 工具消费面（M4b）：kb_search / kb_read / kb_add + D10 白名单门 + D7 校验
 
-`kb.enabled: false` 为默认。`internal/kb.NewFromConfig` 是唯一构造入口：`enabled=false` 时返回 `(nil, nil)` 且**不打开任何数据库文件**（`TestNewFromConfigDisabled` + config 默认测试覆盖）。M4b 在组合根（cmd/pa）用它接线，接缝当前只交付接口 + Provider + config + 事件类型。
+**三个工具是 kb 接缝的 Consumer，落在 `internal/kb/tools.go`（design.md §8 Consumer / D2/D9），结构化实现 `tools.Tool` 接口（Go 结构类型，不 import tools 包，seam 保持解耦），由组合根注册进 `tools.Registry`。M4a 的"kb 默认关闭（D10）"在此扩展为完整的消费面门：`kb.enabled` 同时决定 provider 初始化、工具注册与白名单。**
+
+- **工具边界**：
+  - `kb_search(query, limit)`（只读）：`Search` + 条目片段 + 来源 + score + id；`limit` 缺省取 `kb.top_k`（默认 5，schema 上限 100）。结果让模型能凭 id 调 `kb_read`。
+  - `kb_read(id)`（只读）：`Get` 返回完整条目（含元数据与正文）；未知 id 报错（模型不会把过期 id 当活条目）。
+  - `kb_add(title, body, type, tags)`（写）：显式写入，`source="manual:<随机后缀>"`。随机后缀是关键：`Add` 的"同 source 更新 version+1"语义会把共享字面量 `"manual"` 的多次显式写入折叠成一条覆盖，随机后缀让每次 `kb_add` 都是独立条目（与 seed 数据 `manual:6`/`manual:new` 的既有约定一致），模型拿到 `id + version` 后可 `kb_read`。
+- **白名单开关**（沿用 M3 run_command 单一开关模式）：`config.applyDefaults` 在 `kb.enabled: true` 时自动把 `kb_search/kb_read/kb_add` 追加进 `tools.enabled`（`TestLoadKBEnabledAppendsToolsToWhitelist`）；组合根同时注册工具 + 打开 provider。默认关闭：`kb.enabled=false` ⇒ 工具不注册、不进白名单、`Execute` 拒绝为 unknown tool（`TestKBToolsNotRegisteredByDefault`、`TestKBToolsRejectedWhenNotWhitelisted`）。`internal/kb.NewFromConfig` 仍是唯一构造入口，`enabled=false` 返回 `(nil, nil)` 且**不打开任何数据库文件**（M4a 既有 `TestNewFromConfigDisabled`）。
+- **D7 校验**：三个工具 schema 在 `Execute` 入口由 `jsonschema/v5` 统一编译校验（`TestKBAddRejectsBadArgs` 等：缺 title/坏 type/未知字段/非对象全部拒绝，且不触达 provider）。
+- **接口扩展（消费面驱动，M4a 接口的 M4b 增量）**：见决策 ② 尾部——`Get`、`Stats`、`Add` 返回 `(Entry, error)`；SQLite 与内存 Provider 同步实现。
+- **kb/add 事件（D3）**：`kb_add` 工具带可选 `onAdded func(Entry)` 回调；组合根把它接到 `session.NewKBAdd`（条目摘要）追加 `kb/add` 事件。`kb_search`/`kb_read` 结果走 `tool/result`（模型实际看到 ⇒ 已满足 D3），无需额外事件。
+
+## 决策 ⑤ 召回注入机制（M4b）：catalog + 有界 recall，不改 loop 的 turn/step 结构
+
+**知识目录与主动召回由组合根（cmd/pa）编排；loop 只新增一个可选扩展点 `Config.Recall`，turn/step 结构零改动（D4"新功能挂扩展点"）。**
+
+- **catalog（会话开始时）**：`kb.enabled && kb.catalog`（默认 true）时，组合根把轻量目录（`kb.CatalogText()`：库名/描述 + 何时用 kb_search/kb_read/kb_add 的指引，**不塞正文**）注入系统提示词的 `knowledge` 分节（`prompt.Builder.Add`，Order 30 与 `30-knowledge.md` 同槽，design.md §7）。对应 dsh-knowledge `system-prompt/assemble` 的挂载目录注入；我们只有一个全局库，故目录是能力指引而非库列表。
+- **有界 recall（每轮开始时）**：组合根的 `recallContext` 按用户输入调 `kb.Recall(limit=recall_limit, 默认 3；0=关闭)`，命中转有界摘要（`kb.Snippet` 截断 + 元数据），**先追加 `kb/recall` 事件（D3：模型可见 ⇒ 已落日志），再把摘要作为 user 角色上下文消息**注入本轮首个 step 的请求。
+- **不改 loop 结构**：`loop.Config.Recall func(ctx, userText) []llm.Message` 在 `Run` 追加 `user/message` 之后、首个 step 请求之前调用一次，返回值仅注入首个请求（工具调用后续 step 不重复注入，与 dsh-knowledge 的 `step === 1` 门一致）。这是 Go 对 dsh `agent/pre-step` 钩子的最小扩展点模拟，完全符合 D4；编排（查询构造、KB.Recall、fail-open、事件落日志）全部在 cmd/pa。
+- **fail-open 依据**：Recall 检索失败、无命中、`kb/recall` 事件追加失败都**不阻断回答**——编排返回 nil 上下文，REPL 仅向 stderr 打一条告警（参考 dsh recall.ts 的 `try/catch → return modelDecision`）。召回是增强，不是依赖。
+- 载荷只记录"已注入"那一刻的有界摘要，避免日志膨胀（决策 ③ 已述）。
+
+## 决策 ⑥ CLI 与 config 扩展（M4b）
+
+- **`/kb-status`**：条目数 / 库文件大小 / 最近写入（走 `KB.Stats`）；kb 关闭时提示 `kb: disabled`。
+- **`/kb-reindex`**：重建 FTS 索引（SQLite Provider 的 `Reindex`：清空 `knowledge_fts` 并从 `knowledge_entries` 重灌，单事务、先读后写避开单连接竞争）；非 SQLite Provider 时报不支持。
+- **config 扩展**（`internal/config`）：`kb.recall_limit`（`*int`，缺省 ⇒ 3，显式 `0` ⇒ 关闭主动召回）、`kb.catalog`（`*bool`，缺省 ⇒ true，显式 `false` ⇒ 不注入目录）。用指针是因为 **0/false 是有意义的显式取值，必须与"缺省"区分**（缺省要落到默认值，显式 0/false 要保留语义）；经 `KBConfig.RecallLimitValue()/CatalogValue()` 读取。`enabled/db_path/top_k` 沿用 M4a。kb 数据仍落 `data/kb/`（不入库）。
 
 ## 后果
 
@@ -90,6 +116,8 @@ M4 要给个人 Agent 接入知识库能力（设计基线 design.md §8，参�
 - **同 source 更新只记当前版本**：版本历史表（dsh-knowledge `knowledge_versions`）留 M4c/M5 评估；M4a 满足"只记当前版本 + updated 时间"。
 - **内存 Provider 是简化实现**（词包含匹配），仅用于验证接口边界与作参考实现，非生产后端；生产默认 SQLite。
 - **`kb/recall` 载荷含 snippet**：正文摘要的有界性由 M4b 的注入格式化保证；事件只记录注入前的那一刻，避免日志膨胀。
+- **`kb_add` 每次写独立条目（M4b 取舍）**：随机 `manual:` source 使重复记录同一事实会生成重复条目，而不是更新旧条目；v1 接受（显式写入天然低频、重复可容忍），合并/去重策略留 M5。
+- **loop 的 `Recall` 是单一扩展点（M4b）**：只服务 kb 主动召回；若未来多个能力都要在 turn 前注入上下文（子代理、技能等），需把单钩子升级为统一 pre-step 扩展机制（M5 评估），届时 `Recall` 是其首个消费者。
 
 ### 何时可重评
 

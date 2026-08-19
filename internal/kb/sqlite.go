@@ -66,7 +66,8 @@ type entryRow struct {
 
 // SQLiteProvider implements KB on one SQLite database file.
 type SQLiteProvider struct {
-	db *sql.DB
+	db   *sql.DB
+	path string // the database path; kept for Stats (/kb-status)
 }
 
 // OpenSQLite opens (creating if needed) the SQLite database at path, applies
@@ -98,7 +99,7 @@ func OpenSQLite(path string) (*SQLiteProvider, error) {
 		db.Close()
 		return nil, fmt.Errorf("kb: init schema: %w", err)
 	}
-	return &SQLiteProvider{db: db}, nil
+	return &SQLiteProvider{db: db, path: path}, nil
 }
 
 // Search runs FTS5 BM25 first and supplements with the Chinese bigram LIKE
@@ -191,15 +192,17 @@ func (p *SQLiteProvider) searchByTerms(ctx context.Context, text, scopeCond stri
 // Add writes one entry and syncs the FTS index in a single transaction. A
 // draft whose Source matches an existing entry updates it with version+1
 // (dispatch-m4a §2); otherwise a new entry is inserted at version 1. The
-// provider owns identity: a caller-supplied ID/Version is ignored.
-func (p *SQLiteProvider) Add(ctx context.Context, draft Entry) error {
+// provider owns identity: a caller-supplied ID/Version is ignored, and the
+// returned Entry carries the assigned ID and Version (kb_add reports them so
+// the model can open the entry with kb_read).
+func (p *SQLiteProvider) Add(ctx context.Context, draft Entry) (Entry, error) {
 	e, err := normalizeDraft(draft)
 	if err != nil {
-		return err
+		return Entry{}, err
 	}
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("kb: begin add: %w", err)
+		return Entry{}, fmt.Errorf("kb: begin add: %w", err)
 	}
 	defer tx.Rollback() // no-op after Commit
 
@@ -217,21 +220,24 @@ func (p *SQLiteProvider) Add(ctx context.Context, draft Entry) error {
 				WHERE id=?`,
 				e.Title, e.Body, e.Type, tagsJSON(e.Tags), e.Scope, e.Confidence, e.Version,
 				unixNano(time.Now().UTC()), id); err != nil {
-				return fmt.Errorf("kb: update %s: %w", id, err)
+				return Entry{}, fmt.Errorf("kb: update %s: %w", id, err)
 			}
 			if err := upsertFTS(ctx, tx, e); err != nil {
-				return fmt.Errorf("kb: sync fts %s: %w", id, err)
+				return Entry{}, fmt.Errorf("kb: sync fts %s: %w", id, err)
 			}
-			return tx.Commit()
+			if err := tx.Commit(); err != nil {
+				return Entry{}, fmt.Errorf("kb: commit add: %w", err)
+			}
+			return e, nil
 		}
 		if err != sql.ErrNoRows {
-			return fmt.Errorf("kb: find by source %q: %w", e.Source, err)
+			return Entry{}, fmt.Errorf("kb: find by source %q: %w", e.Source, err)
 		}
 	}
 
 	id, err := newEntryID()
 	if err != nil {
-		return err
+		return Entry{}, err
 	}
 	now := unixNano(time.Now().UTC())
 	e.ID, e.Version = id, 1
@@ -240,12 +246,15 @@ func (p *SQLiteProvider) Add(ctx context.Context, draft Entry) error {
 		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		e.ID, e.Title, e.Body, e.Type, tagsJSON(e.Tags), e.Scope, e.Source, e.Confidence,
 		e.Version, now, now); err != nil {
-		return fmt.Errorf("kb: insert %s: %w", e.ID, err)
+		return Entry{}, fmt.Errorf("kb: insert %s: %w", e.ID, err)
 	}
 	if err := upsertFTS(ctx, tx, e); err != nil {
-		return fmt.Errorf("kb: sync fts %s: %w", e.ID, err)
+		return Entry{}, fmt.Errorf("kb: sync fts %s: %w", e.ID, err)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return Entry{}, fmt.Errorf("kb: commit add: %w", err)
+	}
+	return e, nil
 }
 
 // Recall is a bounded search: it implements the retrieval logic of proactive
@@ -253,6 +262,108 @@ func (p *SQLiteProvider) Add(ctx context.Context, draft Entry) error {
 // lands in M4b.
 func (p *SQLiteProvider) Recall(ctx context.Context, query string, limit int) ([]Hit, error) {
 	return p.Search(ctx, query, SearchOpts{TopK: limit})
+}
+
+// Get returns one full entry by id (kb_read, dispatch-m4b §1). An unknown id
+// is an error so the model never mistakes a stale id for a live entry.
+func (p *SQLiteProvider) Get(ctx context.Context, id string) (Entry, error) {
+	r, err := scanOne(p.db.QueryRowContext(ctx,
+		`SELECT `+entrySelect+` FROM knowledge_entries e WHERE e.id = ?`, id))
+	if err == sql.ErrNoRows {
+		return Entry{}, fmt.Errorf("kb: entry %q not found", id)
+	}
+	if err != nil {
+		return Entry{}, fmt.Errorf("kb: get %q: %w", id, err)
+	}
+	return entryFromRow(r), nil
+}
+
+// Stats reports entry count, database file size, and the most recent writes
+// (dispatch-m4b §4 /kb-status).
+func (p *SQLiteProvider) Stats(ctx context.Context) (Stats, error) {
+	var st Stats
+	if err := p.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM knowledge_entries`).Scan(&st.EntryCount); err != nil {
+		return Stats{}, fmt.Errorf("kb: count entries: %w", err)
+	}
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT title, type, updated_at FROM knowledge_entries ORDER BY updated_at DESC LIMIT 5`)
+	if err != nil {
+		return Stats{}, fmt.Errorf("kb: recent writes: %w", err)
+	}
+	for rows.Next() {
+		var rw RecentWrite
+		var updated int64
+		if err := rows.Scan(&rw.Title, &rw.Type, &updated); err != nil {
+			rows.Close()
+			return Stats{}, fmt.Errorf("kb: scan recent write: %w", err)
+		}
+		rw.UpdatedAt = time.Unix(0, updated).UTC()
+		st.Recent = append(st.Recent, rw)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return Stats{}, fmt.Errorf("kb: read recent writes: %w", err)
+	}
+	rows.Close()
+
+	st.DBPath = p.path
+	if p.path != "" && p.path != ":memory:" {
+		if info, err := os.Stat(p.path); err == nil {
+			st.DBSize = info.Size()
+		}
+	}
+	return st, nil
+}
+
+// Reindex rebuilds the FTS5 index from the entries table (dispatch-m4b §4
+// /kb-reindex): it clears knowledge_fts and re-inserts every entry in one
+// transaction, repairing a drifted or corrupted index. All entry rows are read
+// into memory first so the write pass never competes with an open SELECT on
+// the provider's single connection.
+func (p *SQLiteProvider) Reindex(ctx context.Context) error {
+	type ftsRow struct{ id, title, body, tags string }
+	rows, err := p.db.QueryContext(ctx, `SELECT id, title, body, tags FROM knowledge_entries`)
+	if err != nil {
+		return fmt.Errorf("kb: read entries for reindex: %w", err)
+	}
+	var all []ftsRow
+	for rows.Next() {
+		var r ftsRow
+		if err := rows.Scan(&r.id, &r.title, &r.body, &r.tags); err != nil {
+			rows.Close()
+			return fmt.Errorf("kb: scan reindex row: %w", err)
+		}
+		all = append(all, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("kb: read reindex rows: %w", err)
+	}
+	rows.Close()
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("kb: begin reindex: %w", err)
+	}
+	defer tx.Rollback() // no-op after Commit
+	if _, err := tx.ExecContext(ctx, `DELETE FROM knowledge_fts`); err != nil {
+		return fmt.Errorf("kb: clear fts: %w", err)
+	}
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO knowledge_fts(knowledge_id, title, body, tags) VALUES (?,?,?,?)`)
+	if err != nil {
+		return fmt.Errorf("kb: prepare reindex: %w", err)
+	}
+	defer stmt.Close()
+	for _, r := range all {
+		if _, err := stmt.ExecContext(ctx, r.id, r.title, r.body, r.tags); err != nil {
+			return fmt.Errorf("kb: insert fts %s: %w", r.id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("kb: commit reindex: %w", err)
+	}
+	return nil
 }
 
 // Close releases the underlying database handle.
@@ -299,6 +410,17 @@ func scanRows(rows *sql.Rows) ([]entryRow, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// scanOne scans a single-row result into an entryRow (Get). The caller owns
+// nothing: *sql.Row releases its connection on Scan.
+func scanOne(row *sql.Row) (entryRow, error) {
+	var r entryRow
+	if err := row.Scan(&r.id, &r.title, &r.body, &r.typ, &r.tagsJSON, &r.scope,
+		&r.source, &r.confidence, &r.version, &r.rank); err != nil {
+		return entryRow{}, err
+	}
+	return r, nil
 }
 
 func entryFromRow(r entryRow) Entry {
