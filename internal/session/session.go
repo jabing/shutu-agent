@@ -120,6 +120,22 @@ const (
 	EventPlanDelete = "plan/delete"
 	EventPlanStatus = "plan/status"
 	EventPlanList   = "plan/list"
+
+	// M6c-2 spill events (design.md §3 / ADR 2026-08-19-m6-agent-full.md
+	// 决策 M6c / dispatch-m6c-2 §1): spill/write lands when spill_write stores
+	// an explicit memo or the auto-sedimentation path spills a new one
+	// (carrying the memo id + a bounded content summary), spill/recall when
+	// spill_recall returns its hits (query + count), spill/list when spill_list
+	// returns the table (count), spill/delete when spill_delete removes one
+	// (id). They are log-only (D3): the model sees the memo bodies through the
+	// spill_* tools' tool/result events, and DeriveHistory treats these types
+	// as opaque data, so adding them never changes the turn/step structure
+	// (D4). The payloads are pure data projections — the session package never
+	// imports the spill package.
+	EventSpillWrite  = "spill/write"
+	EventSpillRecall = "spill/recall"
+	EventSpillList   = "spill/list"
+	EventSpillDelete = "spill/delete"
 )
 
 // EventVersion is the current event vocabulary version. It is stored per event
@@ -815,4 +831,60 @@ func NewPlanStatus(scope, id string, st string) any {
 // aggregation tree (dispatch-m6b-2 §1 / D3).
 func NewPlanList(count int) any {
 	return planListData{Count: count}
+}
+
+// spillWriteData is the spill/write payload: the memo id and a bounded summary
+// of the memo content. Only the summary is logged (200 runes, the same
+// on-disk bound as job/done), never the full body — the model sees the full
+// memo through spill_recall/spill_list's tool/result. DeriveHistory treats it
+// as opaque data.
+type spillWriteData struct {
+	ID      string `json:"id"`
+	Content string `json:"content"`
+}
+
+// spillRecallData is the spill/recall payload: the search query and the number
+// of hits returned. DeriveHistory treats it as opaque data.
+type spillRecallData struct {
+	Query string `json:"query"`
+	Count int    `json:"count"`
+}
+
+// spillListData is the spill/list payload: the number of memos in the returned
+// table. DeriveHistory treats it as opaque data.
+type spillListData struct {
+	Count int `json:"count"`
+}
+
+// spillDeleteData is the spill/delete payload: the id of the removed memo.
+// DeriveHistory treats it as opaque data.
+type spillDeleteData struct {
+	ID string `json:"id"`
+}
+
+// NewSpillWrite builds the spill/write payload recorded when a memo is stored
+// — either by the spill_write tool or by the auto-sedimentation path
+// (dispatch-m6c-2 §1 / D3). content is bounded to a summary head (200 runes,
+// the same on-disk bound as job/done and subagent/end) so the payload is
+// always lean.
+func NewSpillWrite(id, content string) any {
+	return spillWriteData{ID: id, Content: summaryHead(content)}
+}
+
+// NewSpillRecall builds the spill/recall payload recorded when spill_recall
+// returns its hits (dispatch-m6c-2 §1 / D3).
+func NewSpillRecall(query string, count int) any {
+	return spillRecallData{Query: query, Count: count}
+}
+
+// NewSpillList builds the spill/list payload recorded when spill_list returns
+// the memo table (dispatch-m6c-2 §1 / D3).
+func NewSpillList(count int) any {
+	return spillListData{Count: count}
+}
+
+// NewSpillDelete builds the spill/delete payload recorded when spill_delete
+// removes a memo (dispatch-m6c-2 §1 / D3).
+func NewSpillDelete(id string) any {
+	return spillDeleteData{ID: id}
 }

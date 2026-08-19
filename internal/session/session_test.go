@@ -1132,3 +1132,123 @@ func TestPlanEventsMixedWithConversationDeriveOnlyConversation(t *testing.T) {
 		t.Fatalf("log events = %d, want 4 (append-only)", got)
 	}
 }
+
+// TestSpillEventsAppendAndReplay verifies the spill/* vocabulary
+// (dispatch-m6c-2 §1 / D3): each of the four event types appends with the next
+// Seq/version, round-trips its payload through the durable sink, survives a
+// restart replay, and never derives into model messages (log-only).
+func TestSpillEventsAppendAndReplay(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	longContent := strings.Repeat("fact ", 100)
+	if _, err := l.Append(EventSpillWrite, NewSpillWrite("memo-1", longContent)); err != nil {
+		t.Fatalf("append spill/write: %v", err)
+	}
+	if _, err := l.Append(EventSpillRecall, NewSpillRecall("go", 2)); err != nil {
+		t.Fatalf("append spill/recall: %v", err)
+	}
+	if _, err := l.Append(EventSpillList, NewSpillList(3)); err != nil {
+		t.Fatalf("append spill/list: %v", err)
+	}
+	if _, err := l.Append(EventSpillDelete, NewSpillDelete("memo-1")); err != nil {
+		t.Fatalf("append spill/delete: %v", err)
+	}
+	events := l.Events()
+	if len(events) != 4 {
+		t.Fatalf("events = %d, want 4", len(events))
+	}
+	wantTypes := []string{EventSpillWrite, EventSpillRecall, EventSpillList, EventSpillDelete}
+	for i, ev := range events {
+		if ev.Type != wantTypes[i] {
+			t.Fatalf("type %d = %q, want %q", i, ev.Type, wantTypes[i])
+		}
+		if ev.Version != EventVersion {
+			t.Fatalf("event %d version = %d, want %d", i, ev.Version, EventVersion)
+		}
+	}
+	// JSON round-trip of each payload.
+	var sw spillWriteData
+	if err := json.Unmarshal(events[0].Data, &sw); err != nil {
+		t.Fatalf("unmarshal spill/write: %v", err)
+	}
+	if sw.ID != "memo-1" {
+		t.Fatalf("spill/write id = %q, want memo-1", sw.ID)
+	}
+	// The content must be a bounded summary (dispatch-m6c-2 §1: content 摘要
+	// 200-rune 有界) yet still carry the head.
+	if got := len([]rune(sw.Content)); got > jobOutputSummaryMax+1 {
+		t.Fatalf("spill/write content = %d runes, want <= %d+ellipsis", got, jobOutputSummaryMax)
+	}
+	if !strings.Contains(sw.Content, "fact") {
+		t.Fatalf("spill/write content = %q, want it to carry the content head", sw.Content)
+	}
+	var sr spillRecallData
+	if err := json.Unmarshal(events[1].Data, &sr); err != nil {
+		t.Fatalf("unmarshal spill/recall: %v", err)
+	}
+	if sr.Query != "go" || sr.Count != 2 {
+		t.Fatalf("spill/recall payload = %+v", sr)
+	}
+	var sl spillListData
+	if err := json.Unmarshal(events[2].Data, &sl); err != nil {
+		t.Fatalf("unmarshal spill/list: %v", err)
+	}
+	if sl.Count != 3 {
+		t.Fatalf("spill/list payload = %+v", sl)
+	}
+	var sd spillDeleteData
+	if err := json.Unmarshal(events[3].Data, &sd); err != nil {
+		t.Fatalf("unmarshal spill/delete: %v", err)
+	}
+	if sd.ID != "memo-1" {
+		t.Fatalf("spill/delete payload = %+v", sd)
+	}
+	if len(persisted) != 4 || persisted[0].Type != EventSpillWrite {
+		t.Fatalf("sink (append path) = %+v", persisted)
+	}
+	// Restart replay: a fresh log rebuilt from what was persisted still sees
+	// every spill event, and deriving history treats them all as opaque data
+	// (log-only, like the M5/M6 events).
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	for i, want := range wantTypes {
+		if got := fresh.Events()[i].Type; got != want {
+			t.Fatalf("replayed type %d = %q, want %q", i, got, want)
+		}
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
+		t.Fatalf("spill/* events must not derive into messages: %+v", msgs)
+	}
+}
+
+// TestSpillEventsMixedWithConversationDeriveOnlyConversation verifies the
+// log-only contract: spill/* rows interleaved with a real conversation do not
+// appear in the derived history, and the conversation round-trips unchanged
+// (D4 — adding the events never changes the turn/step structure).
+func TestSpillEventsMixedWithConversationDeriveOnlyConversation(t *testing.T) {
+	l := New()
+	l.Append(EventUserMessage, NewUserMessage("remember this for me"))
+	l.Append(EventSpillWrite, NewSpillWrite("memo-1", "the user prefers Go"))
+	l.Append(EventAssistantMessage, NewAssistantMessage("Remembered.", nil, "stop"))
+	l.Append(EventSpillRecall, NewSpillRecall("go", 1))
+	msgs := l.DeriveHistory()
+	if len(msgs) != 2 {
+		t.Fatalf("derived %d messages, want 2 (conversation only): %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "remember this for me" {
+		t.Fatalf("msg0 = %+v", msgs[0])
+	}
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Remembered." {
+		t.Fatalf("msg1 = %+v", msgs[1])
+	}
+	// D1: the spill rows stay physically in the log.
+	if got := len(l.Events()); got != 4 {
+		t.Fatalf("log events = %d, want 4 (append-only)", got)
+	}
+}
