@@ -62,13 +62,13 @@ type Candidate struct {
 // UserInvocable come from the skill's invocation frontmatter
 // (disable-model-invocation / user-invocable); both default to true.
 type Definition struct {
-	Name            string
-	Description     string
-	Content         string
-	Source          string
-	Path            string
-	ModelInvocable  bool
-	UserInvocable   bool
+	Name           string
+	Description    string
+	Content        string
+	Source         string
+	Path           string
+	ModelInvocable bool
+	UserInvocable  bool
 }
 
 // Provider is one skill backend (ADR 决策 ④, D2). Multiple providers coexist in
