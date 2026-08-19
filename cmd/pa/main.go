@@ -25,6 +25,7 @@ import (
 	"personal-agent/internal/code"
 	"personal-agent/internal/compaction"
 	"personal-agent/internal/config"
+	"personal-agent/internal/fs"
 	"personal-agent/internal/interact"
 	"personal-agent/internal/jobs"
 	"personal-agent/internal/kb"
@@ -256,6 +257,21 @@ func main() {
 			}
 		}()
 	}
+	// M6f-3: wire the safe-file-operation seam — local FileService (root =
+	// fs.root, defaulting to <project>) + the three fs_* tools + the D3 event
+	// sink — when fs.enabled (默认关闭, D10). config.applyDefaults already
+	// whitelisted the fs_* names when fs.enabled was true. registerFs runs
+	// before registerInteracts so the sensitive-tool gate can wrap the fs tools
+	// too. The deferred Close marks the service closed (idempotent, no OS
+	// resources) at shutdown (lifecycle reversible, ADR 决策 M6f). The fs_*
+	// tools execute on the serial tool path (D5) — no background goroutine.
+	if err := app.registerFs(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
+	if app.fs != nil {
+		defer app.fs.Close()
+	}
 	// M6d-2: wire the interact seam — in-memory Provider + Engine + the two
 	// interact_* tools + the D3 event sink + the sensitive-tool gate — when
 	// interact.enabled (默认关闭, D10). config.applyDefaults already whitelisted
@@ -301,6 +317,7 @@ type app struct {
 	interacts  interact.Engine   // nil when interact disabled (D10)
 	code       code.Engine       // nil when code disabled (D10)
 	mcp        []mcp.Client      // nil when mcp disabled (D10); one live bridged client per configured server
+	fs         fs.FileService    // nil when fs disabled (D10)
 
 	// approveInput feeds the sensitive-tool gate's y/n read (nil => os.Stdin).
 	// It exists so the wiring tests can inject canned approval answers; in the
@@ -577,6 +594,15 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 		}
 	} else {
 		fmt.Println("mcp: disabled (mcp.enabled=false)")
+	}
+	if a.cfg.Fs.Enabled {
+		if a.fs != nil {
+			fmt.Printf("fs: enabled (root=%s)\n", a.fs.Root())
+		} else {
+			fmt.Println("fs: enabled (root=<project>)")
+		}
+	} else {
+		fmt.Println("fs: disabled (fs.enabled=false)")
 	}
 }
 
