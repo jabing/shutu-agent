@@ -176,6 +176,20 @@ const (
 	// package never imports the mcp package.
 	EventMcpList = "mcp/list"
 	EventMcpCall = "mcp/call"
+
+	// M6f-3 fs events (design.md §3 / ADR 2026-08-19-m6-agent-full.md
+	// 决策 M6f / dispatch-m6f-3 §2): fs/read lands when fs_read returns a
+	// file (carrying the path and the returned byte size), fs/write when
+	// fs_write creates or overwrites a file (path), fs/list when fs_list
+	// lists a directory (dir + entry count). They are log-only (D3): the
+	// model sees the file content / write outcome / listing through the fs_*
+	// tools' tool/result events, and DeriveHistory treats these types as
+	// opaque data, so adding them never changes the turn/step structure (D4).
+	// The payloads are pure data projections — the session package never
+	// imports the fs package.
+	EventFsRead  = "fs/read"
+	EventFsWrite = "fs/write"
+	EventFsList  = "fs/list"
 )
 
 // EventVersion is the current event vocabulary version. It is stored per event
@@ -1028,4 +1042,45 @@ func NewMcpList(count int) any {
 // server tool (dispatch-m6f-2 §1 / D3).
 func NewMcpCall(name string, isError bool) any {
 	return mcpCallData{Name: name, IsError: isError}
+}
+
+// fsReadData is the fs/read payload: the requested path (as the caller spelled
+// it) and the byte size of the content returned to the model. The content
+// itself lives in the tool/result event — this record is a lean log fact.
+// DeriveHistory treats it as opaque data.
+type fsReadData struct {
+	Path string `json:"path"`
+	Size int    `json:"size"`
+}
+
+// fsWriteData is the fs/write payload: the path written (as the caller
+// spelled it). DeriveHistory treats it as opaque data.
+type fsWriteData struct {
+	Path string `json:"path"`
+}
+
+// fsListData is the fs/list payload: the listed directory (as the caller
+// spelled it) and the number of direct entries returned. DeriveHistory treats
+// it as opaque data.
+type fsListData struct {
+	Dir   string `json:"dir"`
+	Count int    `json:"count"`
+}
+
+// NewFsRead builds the fs/read payload recorded when fs_read returns a file
+// (dispatch-m6f-3 §2 / D3).
+func NewFsRead(path string, size int) any {
+	return fsReadData{Path: path, Size: size}
+}
+
+// NewFsWrite builds the fs/write payload recorded when fs_write creates or
+// overwrites a file (dispatch-m6f-3 §2 / D3).
+func NewFsWrite(path string) any {
+	return fsWriteData{Path: path}
+}
+
+// NewFsList builds the fs/list payload recorded when fs_list lists a directory
+// (dispatch-m6f-3 §2 / D3).
+func NewFsList(dir string, count int) any {
+	return fsListData{Dir: dir, Count: count}
 }

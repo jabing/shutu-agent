@@ -1557,3 +1557,106 @@ func TestMcpEventsMixedWithConversationDeriveOnlyConversation(t *testing.T) {
 		t.Fatalf("log events = %d, want 4 (append-only)", got)
 	}
 }
+
+// TestFsEventsAppendAndReplay verifies the M6f-3 fs/* vocabulary
+// (dispatch-m6f-3 §2 / D3): each of the three event types appends with the
+// next Seq/version, round-trips its payload through the durable sink, survives
+// a restart replay, and never derives into model messages (log-only — the
+// model sees the file content / write outcome / listing through the fs_* tools'
+// tool/result events).
+func TestFsEventsAppendAndReplay(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	if _, err := l.Append(EventFsRead, NewFsRead("notes.txt", 12)); err != nil {
+		t.Fatalf("append fs/read: %v", err)
+	}
+	if _, err := l.Append(EventFsWrite, NewFsWrite("notes.txt")); err != nil {
+		t.Fatalf("append fs/write: %v", err)
+	}
+	if _, err := l.Append(EventFsList, NewFsList(".", 3)); err != nil {
+		t.Fatalf("append fs/list: %v", err)
+	}
+	events := l.Events()
+	if len(events) != 3 {
+		t.Fatalf("events = %d, want 3", len(events))
+	}
+	wantTypes := []string{EventFsRead, EventFsWrite, EventFsList}
+	for i, ev := range events {
+		if ev.Type != wantTypes[i] {
+			t.Fatalf("type %d = %q, want %q", i, ev.Type, wantTypes[i])
+		}
+		if ev.Version != EventVersion {
+			t.Fatalf("event %d version = %d, want %d", i, ev.Version, EventVersion)
+		}
+	}
+	// JSON round-trip of each payload.
+	var fr fsReadData
+	if err := json.Unmarshal(events[0].Data, &fr); err != nil {
+		t.Fatalf("unmarshal fs/read: %v", err)
+	}
+	if fr.Path != "notes.txt" || fr.Size != 12 {
+		t.Fatalf("fs/read payload = %+v, want path notes.txt / size 12", fr)
+	}
+	var fw fsWriteData
+	if err := json.Unmarshal(events[1].Data, &fw); err != nil {
+		t.Fatalf("unmarshal fs/write: %v", err)
+	}
+	if fw.Path != "notes.txt" {
+		t.Fatalf("fs/write payload = %+v", fw)
+	}
+	var fl fsListData
+	if err := json.Unmarshal(events[2].Data, &fl); err != nil {
+		t.Fatalf("unmarshal fs/list: %v", err)
+	}
+	if fl.Dir != "." || fl.Count != 3 {
+		t.Fatalf("fs/list payload = %+v, want dir . / count 3", fl)
+	}
+	if len(persisted) != 3 || persisted[0].Type != EventFsRead {
+		t.Fatalf("sink (append path) = %+v", persisted)
+	}
+	// Restart replay: a fresh log rebuilt from what was persisted still sees
+	// every fs event, and deriving history treats them all as opaque data
+	// (log-only, like the M5/M6 events).
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	for i, want := range wantTypes {
+		if got := fresh.Events()[i].Type; got != want {
+			t.Fatalf("replayed type %d = %q, want %q", i, got, want)
+		}
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
+		t.Fatalf("fs/* events must not derive into messages: %+v", msgs)
+	}
+}
+
+// TestFsEventsMixedWithConversationDeriveOnlyConversation verifies the
+// log-only contract: fs/* rows interleaved with a real conversation do not
+// appear in the derived history, and the conversation round-trips unchanged
+// (D4 — adding the events never changes the turn/step structure).
+func TestFsEventsMixedWithConversationDeriveOnlyConversation(t *testing.T) {
+	l := New()
+	l.Append(EventUserMessage, NewUserMessage("read notes.txt"))
+	l.Append(EventFsRead, NewFsRead("notes.txt", 5))
+	l.Append(EventAssistantMessage, NewAssistantMessage("Read it.", nil, "stop"))
+	l.Append(EventFsList, NewFsList(".", 1))
+	msgs := l.DeriveHistory()
+	if len(msgs) != 2 {
+		t.Fatalf("derived %d messages, want 2 (conversation only): %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "read notes.txt" {
+		t.Fatalf("msg0 = %+v", msgs[0])
+	}
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Read it." {
+		t.Fatalf("msg1 = %+v", msgs[1])
+	}
+	// D1: the fs rows stay physically in the log.
+	if got := len(l.Events()); got != 4 {
+		t.Fatalf("log events = %d, want 4 (append-only)", got)
+	}
+}
