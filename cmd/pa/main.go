@@ -33,6 +33,7 @@ import (
 	"personal-agent/internal/schedule"
 	"personal-agent/internal/session"
 	"personal-agent/internal/skill"
+	"personal-agent/internal/spill"
 	"personal-agent/internal/store"
 	"personal-agent/internal/subagent"
 	"personal-agent/internal/tools"
@@ -196,6 +197,21 @@ func main() {
 	if app.plans != nil {
 		defer app.plans.Close()
 	}
+	// M6c-2: wire the spill seam — in-memory Provider + Engine + the four
+	// spill_* tools + the D3 event sink + the turn-completion auto-sedimentation
+	// hook — when spill.enabled (默认关闭, D10). config.applyDefaults already
+	// whitelisted the spill_* names when spill.enabled was true. The deferred
+	// Close releases the provider and rejects further operations at shutdown
+	// (lifecycle reversible, ADR 决策 M6c). AutoSpill runs on the serial
+	// turn-completion path (after each completed turn in the REPL, D5); there
+	// is no background goroutine.
+	if err := app.registerSpills(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
+	if app.spills != nil {
+		defer app.spills.Close()
+	}
 	if err := app.startup(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
@@ -221,6 +237,7 @@ type app struct {
 	skills     skill.Registry    // nil when skill disabled (D10)
 	schedules  schedule.Engine   // nil when schedule disabled (D10)
 	plans      plan.Engine       // nil when plan disabled (D10)
+	spills     spill.Engine      // nil when spill disabled (D10)
 
 	// skillProjectRoot / skillUserHome override the filesystem skill provider's
 	// project/user roots when non-empty; empty uses the provider defaults (the
@@ -362,6 +379,12 @@ func (a *app) repl(ctx context.Context) {
 			// extractTurn never returns an error and never affects the next
 			// answer.
 			a.extractTurn(ctx, line)
+			// M6c-2: post-turn auto-sedimentation, orchestrated by the
+			// composition root outside the loop (D4). It runs once per
+			// completed turn on the serial REPL path (D5) and never duplicates:
+			// the AutoSpill policy is idempotent by content hash and this is
+			// the only invocation point. Fail-open by contract.
+			a.spillAutoSpill(ctx)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -451,6 +474,11 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 		fmt.Println("plans: enabled (goal → plan → todo planning tree)")
 	} else {
 		fmt.Println("plans: disabled (plan.enabled=false)")
+	}
+	if a.cfg.Spill.Enabled {
+		fmt.Printf("spills: enabled (auto_spill=%v)\n", a.cfg.Spill.AutoSpillValue())
+	} else {
+		fmt.Println("spills: disabled (spill.enabled=false)")
 	}
 }
 
