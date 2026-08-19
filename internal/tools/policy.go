@@ -42,6 +42,8 @@ type Policy struct {
 	SpillDir string
 	// RunCommand is the policy for the sole execution-class tool.
 	RunCommand RunCommandPolicy
+	// CodeRun is the code_run sandbox tool policy (M6e-2, ADR 决策 M6e).
+	CodeRun CodeRunPolicy
 }
 
 // RunCommandPolicy is the run_command tool policy (design.md §5 / D10 落地).
@@ -54,6 +56,19 @@ type RunCommandPolicy struct {
 	// Workdir is the fixed working directory of every command. Empty means
 	// the agent process's own working directory.
 	Workdir string
+}
+
+// CodeRunPolicy is the code_run sandbox tool policy (ADR 决策 M6e /
+// dispatch-m6e-2 §3). Unlike RunCommandPolicy there is no Enabled flag here —
+// code.enabled gates registration at the composition root and code_run is
+// whitelisted by config.applyDefaults; this carries only the outer per-tool
+// deadline bound (code.timeout). The sandbox applies its own execution timeout
+// internally (RunRequest.Timeout); this is the outer bound the Execute
+// pipeline enforces, mirroring RunCommand.Timeout.
+type CodeRunPolicy struct {
+	// Timeout overrides Policy.Timeout for code_run when positive (the config
+	// code.timeout value, supplied by the composition root).
+	Timeout time.Duration
 }
 
 // DefaultPolicy returns the safe-by-default policy: only the read-only tools

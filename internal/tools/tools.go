@@ -140,6 +140,13 @@ func (r *Registry) Specs() []llm.ToolSchema {
 	return specs
 }
 
+// codeRunToolName is the M6e-2 code-sandbox tool (registered by the composition
+// root from internal/code when code.enabled). The name is mirrored here —
+// exactly like runCommandName in run_command.go — so the Execute pipeline can
+// apply its per-tool timeout override without the tools package importing the
+// seam.
+const codeRunToolName = "code_run"
+
 // Execute is the single execution gate. In order it rejects unknown names,
 // enforces the M3 whitelist (未启用 ⇒ 拒绝执行), validates the arguments against
 // the compiled JSON Schema (D7), runs the tool under a per-tool deadline, and
@@ -175,6 +182,9 @@ func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessag
 	timeout := r.policy.Timeout
 	if name == runCommandName && r.policy.RunCommand.Timeout > 0 {
 		timeout = r.policy.RunCommand.Timeout
+	}
+	if name == codeRunToolName && r.policy.CodeRun.Timeout > 0 {
+		timeout = r.policy.CodeRun.Timeout
 	}
 	execCtx := ctx
 	if timeout > 0 {
