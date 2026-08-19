@@ -1,0 +1,192 @@
+package interact
+
+import (
+	"context"
+	"encoding/json"
+	"reflect"
+	"strings"
+	"testing"
+
+	"personal-agent/internal/session"
+)
+
+// eventRecord captures one (type, payload) pair forwarded through the onEvent
+// sink of NewInteractTools.
+type eventRecord struct {
+	typ string
+	raw string
+}
+
+// collectEvents builds an onEvent sink that records every forwarded payload.
+func collectEvents(recs *[]eventRecord) func(string, any) {
+	return func(typ string, data any) {
+		raw, err := json.Marshal(data)
+		if err != nil {
+			panic(err)
+		}
+		*recs = append(*recs, eventRecord{typ: typ, raw: string(raw)})
+	}
+}
+
+// countEventType returns how many recorded events carry typ.
+func countEventType(recs []eventRecord, typ string) int {
+	n := 0
+	for _, r := range recs {
+		if r.typ == typ {
+			n++
+		}
+	}
+	return n
+}
+
+// --- D7 schema shape ----------------------------------------------------------
+
+// TestInteractToolsSchemaShape verifies the D7 argument schemas shipped with
+// the tools (dispatch-m6d-2 §3): interact_ask requires a non-empty prompt and
+// rejects unknown properties; interact_status requires a non-empty id. The
+// registry compiles and enforces these (cmd/pa), so the shape is asserted here.
+func TestInteractToolsSchemaShape(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	its := NewInteractTools(e, nil)
+
+	ask := its.Ask().Schema()
+	if ask["type"] != "object" || ask["additionalProperties"] != false {
+		t.Fatalf("interact_ask schema = %v, want object + additionalProperties:false", ask)
+	}
+	askProps, _ := ask["properties"].(map[string]any)
+	if askProps == nil {
+		t.Fatalf("interact_ask properties missing: %v", ask)
+	}
+	prompt, _ := askProps["prompt"].(map[string]any)
+	if prompt == nil || prompt["type"] != "string" || prompt["minLength"] != 1 {
+		t.Fatalf("interact_ask prompt property = %v, want string minLength 1", prompt)
+	}
+	askReq, _ := ask["required"].([]string)
+	if !reflect.DeepEqual(askReq, []string{"prompt"}) {
+		t.Fatalf("interact_ask required = %v, want [prompt]", askReq)
+	}
+
+	status := its.Status().Schema()
+	if status["type"] != "object" || status["additionalProperties"] != false {
+		t.Fatalf("interact_status schema = %v, want object + additionalProperties:false", status)
+	}
+	statusProps, _ := status["properties"].(map[string]any)
+	if statusProps == nil {
+		t.Fatalf("interact_status properties missing: %v", status)
+	}
+	id, _ := statusProps["id"].(map[string]any)
+	if id == nil || id["type"] != "string" || id["minLength"] != 1 {
+		t.Fatalf("interact_status id property = %v, want string minLength 1", id)
+	}
+	statusReq, _ := status["required"].([]string)
+	if !reflect.DeepEqual(statusReq, []string{"id"}) {
+		t.Fatalf("interact_status required = %v, want [id]", statusReq)
+	}
+}
+
+// --- interact_ask -------------------------------------------------------------
+
+// TestInteractAskCreatesRequestAndEmitsEvent verifies interact_ask (dispatch
+// M6d-2 §3): a valid prompt creates a pending request through the Engine,
+// returns its id + current status, and lands an interact/request event (D3)
+// carrying the request id and the triggering tool name.
+func TestInteractAskCreatesRequestAndEmitsEvent(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	var recs []eventRecord
+	its := NewInteractTools(e, collectEvents(&recs))
+
+	res, err := its.Ask().Execute(context.Background(), json.RawMessage(`{"prompt":"ok to run the report?"}`))
+	if err != nil {
+		t.Fatalf("interact_ask: %v", err)
+	}
+	if !strings.Contains(res, "req-1") || !strings.Contains(res, string(StatusPending)) {
+		t.Fatalf("interact_ask output = %q, want it to carry req-1 + pending status", res)
+	}
+	if got := countEventType(recs, session.EventInteractRequest); got != 1 {
+		t.Fatalf("interact/request events = %d, want 1 (events: %+v)", got, recs)
+	}
+	var ir struct {
+		ID       string `json:"id"`
+		ToolName string `json:"toolName"`
+	}
+	if err := json.Unmarshal([]byte(recs[0].raw), &ir); err != nil {
+		t.Fatalf("unmarshal interact/request payload: %v", err)
+	}
+	if ir.ID != "req-1" || ir.ToolName != ToolAskName {
+		t.Fatalf("interact/request payload = %+v, want req-1 / interact_ask", ir)
+	}
+	// The request is actually pending in the engine.
+	all, err := e.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(all) != 1 || all[0].Status != StatusPending || all[0].Prompt != "ok to run the report?" {
+		t.Fatalf("engine table = %+v, want one pending request with the prompt", all)
+	}
+}
+
+// TestInteractAskRejectsEmptyPrompt verifies the repeated D7 guard: a blank
+// prompt is rejected even when a direct call bypasses the registry gate.
+func TestInteractAskRejectsEmptyPrompt(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	var recs []eventRecord
+	its := NewInteractTools(e, collectEvents(&recs))
+	if _, err := its.Ask().Execute(context.Background(), json.RawMessage(`{"prompt":"   "}`)); err == nil {
+		t.Fatal("interact_ask with a blank prompt must error")
+	}
+	if got := countEventType(recs, session.EventInteractRequest); got != 0 {
+		t.Fatalf("interact/request events = %d, want 0 after a rejected prompt", got)
+	}
+}
+
+// --- interact_status ----------------------------------------------------------
+
+// TestInteractStatusReportsAndEmitsEvent verifies interact_status (dispatch
+// M6d-2 §3): for a known request it returns the current status and lands an
+// interact/status event (D3); for an unknown id it errors and emits nothing.
+func TestInteractStatusReportsAndEmitsEvent(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	var recs []eventRecord
+	its := NewInteractTools(e, collectEvents(&recs))
+
+	req, err := e.Request(context.Background(), "allow delete", "delete_file", `{}`)
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	if _, err := e.Resolve(context.Background(), req.ID, StatusApproved); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	res, err := its.Status().Execute(context.Background(), json.RawMessage(`{"id":"`+req.ID+`"}`))
+	if err != nil {
+		t.Fatalf("interact_status: %v", err)
+	}
+	if !strings.Contains(res, req.ID) || !strings.Contains(res, string(StatusApproved)) {
+		t.Fatalf("interact_status output = %q, want it to carry %s + approved", res, req.ID)
+	}
+	if got := countEventType(recs, session.EventInteractStatus); got != 1 {
+		t.Fatalf("interact/status events = %d, want 1", got)
+	}
+	var ist struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(recs[0].raw), &ist); err != nil {
+		t.Fatalf("unmarshal interact/status payload: %v", err)
+	}
+	if ist.ID != req.ID || ist.Status != string(StatusApproved) {
+		t.Fatalf("interact/status payload = %+v, want %s approved", ist, req.ID)
+	}
+
+	// Unknown id: error, no event.
+	if _, err := its.Status().Execute(context.Background(), json.RawMessage(`{"id":"req-missing"}`)); err == nil {
+		t.Fatal("interact_status with an unknown id must error")
+	}
+	if got := countEventType(recs, session.EventInteractStatus); got != 1 {
+		t.Fatalf("interact/status events = %d, want still 1 after an unknown lookup", got)
+	}
+}
