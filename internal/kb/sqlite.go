@@ -1,9 +1,10 @@
 // SQLite is the default KB backend, built on modernc.org/sqlite (pure Go,
 // CGO-free; design.md §9). It uses the same shape as dsh-knowledge's
 // local-provider: a knowledge_entries table plus a knowledge_fts FTS5 virtual
-// table (unicode61 remove_diacritics 2), WAL, foreign keys and transactions.
-// Search runs FTS5 BM25 first (title weighted high) and, when that under-fills
-// topK, supplements with a Chinese bigram LIKE fallback over title/body/tags.
+// table (unicode61 remove_diacritics 2), WAL, foreign keys and transactions,
+// and an extraction_jobs idempotency table (dispatch-m4c). Search runs FTS5
+// BM25 first (title weighted high) and, when that under-fills topK,
+// supplements with a Chinese bigram LIKE fallback over title/body/tags.
 package kb
 
 import (
@@ -43,6 +44,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
     body,
     tags,
     tokenize = 'unicode61 remove_diacritics 2'
+);
+CREATE TABLE IF NOT EXISTS extraction_jobs (
+    session_id   TEXT    NOT NULL,
+    turn         INTEGER NOT NULL,
+    status       TEXT    NOT NULL DEFAULT 'running',
+    reason       TEXT    NOT NULL DEFAULT '',
+    claimed_at   INTEGER NOT NULL,
+    completed_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (session_id, turn)
 );
 `
 
@@ -262,6 +272,41 @@ func (p *SQLiteProvider) Add(ctx context.Context, draft Entry) (Entry, error) {
 // lands in M4b.
 func (p *SQLiteProvider) Recall(ctx context.Context, query string, limit int) ([]Hit, error) {
 	return p.Search(ctx, query, SearchOpts{TopK: limit})
+}
+
+// Extract runs the shared post-answer extraction pipeline (M4c, extract.go)
+// against this SQLite backend. It implements the M4a-reserved KB.Extract slot;
+// the idempotent claim and the completion audit trail live in the
+// extraction_jobs table.
+func (p *SQLiteProvider) Extract(ctx context.Context, opts ExtractOpts) (ExtractResult, error) {
+	return runExtraction(ctx, p, opts)
+}
+
+// claimExtraction atomically claims the job key (session_id, turn): INSERT OR
+// IGNORE returns false when the row already exists, so replaying the same
+// session:turn never re-extracts (dispatch-m4c §1 idempotency).
+func (p *SQLiteProvider) claimExtraction(ctx context.Context, sessionID string, turn int) (bool, error) {
+	res, err := p.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO extraction_jobs (session_id, turn, status, reason, claimed_at)
+		 VALUES (?,?, 'running', '', ?)`,
+		sessionID, turn, unixNano(time.Now().UTC()))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// completeExtraction records the outcome of a claimed job (audit trail in
+// extraction_jobs). Called best-effort by the pipeline after the job settles.
+func (p *SQLiteProvider) completeExtraction(ctx context.Context, sessionID string, turn int, status, reason string) error {
+	_, err := p.db.ExecContext(ctx,
+		`UPDATE extraction_jobs SET status=?, reason=?, completed_at=? WHERE session_id=? AND turn=?`,
+		status, reason, unixNano(time.Now().UTC()), sessionID, turn)
+	return err
 }
 
 // Get returns one full entry by id (kb_read, dispatch-m4b §1). An unknown id

@@ -1,8 +1,8 @@
 # ADR: M4 知识库架构——FTS5 + 中文二元组 LIKE 兜底检索，Provider 抽象，kb/recall 事件落日志
 
-- 状态：**已定**（2026-08-18，M4a 内核落地；M4b 工具消费面与召回注入落地）
+- 状态：**已定**（2026-08-18，M4a 内核落地；M4b 工具消费面与召回注入落地；M4c 提取回写落地）
 - 关联：design.md §8、§10 D1–D10（重点 D2/D3/D9/D10）；Agent.md 路线图 M4；调研 `docs/research-m4-kb.md`；参考实现 `../dsh-knowledge/`
-- 分阶段：本 ADR 是 M4 主 ADR。M4a 定稿三件事：① 检索方案 ② Provider 抽象与接口边界 ③ 事件落日志机制；M4b 补充：④ 工具消费面 ⑤ 召回注入机制 ⑥ CLI 与 config 扩展。M4c 的提取回写决策后续补写进同一 ADR。
+- 分阶段：本 ADR 是 M4 主 ADR。M4a 定稿三件事：① 检索方案 ② Provider 抽象与接口边界 ③ 事件落日志机制；M4b 补充：④ 工具消费面 ⑤ 召回注入机制 ⑥ CLI 与 config 扩展；M4c 补充：⑦ 提取回写机制（本 ADR 的 M4 最后一段决策）。
 
 ## 背景
 
@@ -100,7 +100,34 @@ M4 要给个人 Agent 接入知识库能力（设计基线 design.md §8，参�
 
 - **`/kb-status`**：条目数 / 库文件大小 / 最近写入（走 `KB.Stats`）；kb 关闭时提示 `kb: disabled`。
 - **`/kb-reindex`**：重建 FTS 索引（SQLite Provider 的 `Reindex`：清空 `knowledge_fts` 并从 `knowledge_entries` 重灌，单事务、先读后写避开单连接竞争）；非 SQLite Provider 时报不支持。
-- **config 扩展**（`internal/config`）：`kb.recall_limit`（`*int`，缺省 ⇒ 3，显式 `0` ⇒ 关闭主动召回）、`kb.catalog`（`*bool`，缺省 ⇒ true，显式 `false` ⇒ 不注入目录）。用指针是因为 **0/false 是有意义的显式取值，必须与"缺省"区分**（缺省要落到默认值，显式 0/false 要保留语义）；经 `KBConfig.RecallLimitValue()/CatalogValue()` 读取。`enabled/db_path/top_k` 沿用 M4a。kb 数据仍落 `data/kb/`（不入库）。
+- **config 扩展**（`internal/config`）：`kb.recall_limit`（`*int`，缺省 ⇒ 3，显式 `0` ⇒ 关闭主动召回）、`kb.catalog`（`*bool`，缺省 ⇒ true，显式 `false` ⇒ 不注入目录）。用指针是因为 **0/false 是有意义的显式取值，必须与"缺省"区分**（缺省要落到默认值，显式 0/false 要保留语义）；经 `KBConfig.RecallLimitValue()/CatalogValue()` 读取。`enabled/db_path/top_k` 沿用 M4a。kb 数据仍落 `data/kb/`（不入库）。`kb.extraction` 开关在 M4c 加入（见决策 ⑦）。
+
+## 决策 ⑦ 提取回写机制（M4c）：幂等认领 + 严格 JSON fail-closed + fail-open + 提取模型跟随会话
+
+**每轮回答结束后，由组合根（cmd/pa）在循环外调用 `kb.Extract(ctx, ExtractOpts)`（KB 接口的 M4a 预留位）做回答后提取回写：先幂等认领 `session:turn`，检索既有条目作上下文，调当前模型输出严格 JSON 候选，运行时校验 fail-closed，仅直写。loop 的 turn/step 结构零改动（D4）。**
+
+具体（对应 `internal/kb/extract.go` + `cmd/pa` 编排）：
+
+- **接口（M4a 预留位落地）**：`KB.Extract(ctx, ExtractOpts{LLM, Model, SessionID, Turn, UserText, AssistantText}) (ExtractResult, error)`。`ExtractResult{Status ∈ created|skipped|duplicate|failed, Reason, Created[]}`；两个 Provider（SQLite + 内存）都实现，共享同一 `runExtraction` 管道（`extractStore` 小接口 = Search/Add + claim/complete），跨后端行为一致（延续决策 ② 的接口边界）。
+- **幂等认领**：`extraction_jobs` 表（`PRIMARY KEY(session_id, turn)`，M4a 建或不建均可，M4c 用 `CREATE TABLE IF NOT EXISTS` 补建）`INSERT OR IGNORE` 原子认领 `session:turn`；认领失败 = duplicate 结果，重放/重启同 key 不重复写、不重复调模型。认领后 `completeExtraction` 写 status/reason（审计轨迹，best-effort 不阻断）。
+- **流程（对照 dsh-knowledge extraction.ts + architecture.md §Extraction flow，裁剪到单全局库）**：① 认领 job → ② 取本轮用户输入 + 最终回答（由 cmd/pa 从日志派生：turn = 日志中 `user/message` 数，D1；最终回答 = 最后一条非空 `assistant/message`）→ ③ `Search`（user+assistant 拼接截断 4000 字符，top 10 条，正文片段截断 1200 字符）作上下文 → ④ 调当前模型输出**严格 JSON 候选** `{"candidates":[{action,title,body,type,tags,confidence,reason}]}`（或 `{"skip":true}`）→ ⑤ 运行时校验 → ⑥ 仅直写（每条候选独立 source `session:<id>:turn:<n>:<i>`，避免 Add 的"同 source 版本+1"把一轮多条事实折叠成一行）。
+- **严格 JSON fail-closed**：拒绝非 JSON（含围栏剥离后仍不可解析）、未知 `type`（∉ {preference,fact,decision,procedure,lesson}）、越权字段（candidate 字段白名单仅 `action/title/body/type/tags/confidence/reason`，出现 `scope/id/source/knowledgeBaseId` 等一律拒绝）、未知 `action`、超界/缺字段的 title/body/confidence——以上任何一条 ⇒ 该候选不写入；全部候选被拒 ⇒ `failed`（reason 记被拒数）；部分被拒 ⇒ 只写合法候选并在 reason 记录。系统提示词为**保守策略**（只收明确陈述或已验证的长期知识，拒绝秘密与临时输出，与 dsh-knowledge 的 CONSERVATIVE 对齐，见决策 ① 的"只收明确陈述"）。
+- **fail-open（不阻断回答）**：模型调用失败、输出非法、检索失败全部归类为 `failed/skipped` 结果（reason 记录），**不向组合根返回错误**；组合根的 `extractTurn` 把它们记成 `kb/extract` 事件后静默继续。只有 Provider 级致命故障（认领/写入的存储错误）才返回 error，组合根同样转成 failed 事件继续。**提取永远不影响下一轮回答。**
+- **`kb/extract` 事件（D3）**：`session` 词汇表新增 `EventKBExtract = "kb/extract"` + `NewKBExtract(status, session, turn, reason, ids)`；组合根每次提取结束都追加（created/skipped/failed + reason + 写入条目 id），载荷有界（不落模型原文/正文），`DeriveHistory` 视为不透明数据（不改 loop 结构，D4）。`kb/recall`/`kb/add`/`kb/extract` 三个 kb 事件至此齐备（design.md §3）。
+- **提取模型选择（不引入新配置）**：复用现有 `internal/llm` 适配器，提取请求携带 `ExtractOpts.Model`（= 会话模型 `cfg.model`）；deepseek 适配器本来就以自身配置的 Model 为准（`ChatRequest.Model` 是 advisory），故"提取模型默认跟随当前会话模型"零配置成立。**不新增 `kb.extraction_model` 之类配置**（取舍见下）。
+- **config**：新增 `kb.extraction`（`*bool`，缺省 ⇒ true，显式 `false` ⇒ 组合根跳过提取；`KBConfig.ExtractionValue()` 读取）。`kb.enabled=false`（D10 默认）时 kb 为 nil，提取与工具、召回一样完全不初始化。
+
+**理由 / 对照 dsh-knowledge 的裁剪取舍：**
+
+1. **为什么提取是 dsh-knowledge 的"灵魂"**：对话产生可复用知识是知识库的主要来源，没有提取回写就只有手动 `kb_add` 一条路，知识库不会自己生长（M4 验收"对话产生可复用知识能被提取并检索引用"）。
+2. **为什么不引入提取专用模型配置**：提取质量依赖与对话相同的模型即可（dsh 默认也是跟随会话模型，`extractionProvider/Model` 是可选的覆盖）；增加第二套模型配置违背"不引入新配置"派发约束，且 M5 如需可再评估（一次 config 字段 + 一次 `ExtractOpts` 字段，消费方不变）。
+3. **裁剪取舍（与 dsh-knowledge 的差异，M4 明确不做）**：
+   - **无挂载/多知识库**：dsh 按 mount 解析可写目标并做 `routingDescription` 路由；我们单全局库，候选不需要 `knowledgeBaseId` 字段，也去掉挂载层 → 越权字段白名单更小、更严。
+   - **无候选审核（audit）**：dsh 的 `audit`/`conflict` 模式留人工审核队列；M4 仅直写（`direct`），冲突/合并策略裁剪 → `action` 只保留 `create|skip`（出现 `update/conflict/audit` 即拒绝，fail-closed）。
+   - **无远程**：dsh 支持 remote provider 与中央服务；M4 无远程 API，提取只走本地 SQLite/内存 Provider。
+   - **无 `retention`/scope 输出**：dsh 的 `retention.{durable,evidence}` 保守门与 `scope` 字段裁剪掉——保守性由系统提示词"只收明确陈述或已验证的长期知识"承接（提示词层表达，不需要结构化字段），避免模型输出我们无法校验的字段。
+   - **保留的精神**：幂等 job、严格 JSON fail-closed、fail-open 不阻断回答、拒绝秘密与临时输出、条目长度上限（title 1–200 / body 1–50000，由 `normalizeDraft` 兜底）。
+4. **为什么 `extractTurn` 在 cmd/pa 而非 loop**：延续 M4b"新功能挂扩展点、不改循环"（D4）；loop 只负责 turn/step，提取是回答结束后的产品编排，属于组合根（与 `recallContext` 同层）。
 
 ## 后果
 
@@ -113,12 +140,15 @@ M4 要给个人 Agent 接入知识库能力（设计基线 design.md §8，参�
 ### 残余风险与后果
 
 - **二元组兜底是启发式**：过短的查询（如"知识"）因二元组命中多条属预期；匹配无权重、无语义（"来源"会把不相干条目带进来）。个人规模可接受，M5 若引入向量可替换 Provider 解决。
-- **同 source 更新只记当前版本**：版本历史表（dsh-knowledge `knowledge_versions`）留 M4c/M5 评估；M4a 满足"只记当前版本 + updated 时间"。
+- **同 source 更新只记当前版本**：版本历史表（dsh-knowledge `knowledge_versions`）留 M5 评估；M4a 满足"只记当前版本 + updated 时间"。
 - **内存 Provider 是简化实现**（词包含匹配），仅用于验证接口边界与作参考实现，非生产后端；生产默认 SQLite。
 - **`kb/recall` 载荷含 snippet**：正文摘要的有界性由 M4b 的注入格式化保证；事件只记录注入前的那一刻，避免日志膨胀。
 - **`kb_add` 每次写独立条目（M4b 取舍）**：随机 `manual:` source 使重复记录同一事实会生成重复条目，而不是更新旧条目；v1 接受（显式写入天然低频、重复可容忍），合并/去重策略留 M5。
 - **loop 的 `Recall` 是单一扩展点（M4b）**：只服务 kb 主动召回；若未来多个能力都要在 turn 前注入上下文（子代理、技能等），需把单钩子升级为统一 pre-step 扩展机制（M5 评估），届时 `Recall` 是其首个消费者。
+- **提取无去重/合并（M4c 取舍）**：同一事实的重复陈述（不同 session:turn）会生成多条独立条目；候选模型提示已要求"对照 existing 只 create 新知识"，但引擎层不做正文相似度去重。M4 接受（个人规模、提取低频、`kb_search` 可按需检索），去重/合并策略留 M5（与 `kb_add` 同一取舍）。
+- **提取质量依赖当前模型（M4c 取舍）**：坏输出走 fail-closed（不写、记 failed），但"该提取的没提取、不该写的写了但格式合法"这类语义误判无法被引擎拦截——保守系统提示词缓解，人工 `kb_add`/`kb_search` 可纠偏；M5 若引入独立审核队列（dsh 的 audit 模式）再评估。
+- **`turn` 号从日志派生（M4c）**：`countTurns` = 日志中 `user/message` 事件数。会话命令（/new /list 等）不产生 `user/message`，故 turn 号只反映真实对话轮次；若未来 loop 增加显式 turn 标记事件（turn/start），派生规则同步升级即可（不改结构，D4）。
 
 ### 何时可重评
 
-M5 出现子代理、多租户或共享知识库需求时，评估向量/远程 Provider（一次接口新增，消费方不变）；提取回写（M4c）决策后续补写进本 ADR。
+M5 出现子代理、多租户或共享知识库需求时，评估向量/远程 Provider（一次接口新增，消费方不变）；届时一并评估：提取去重/合并、候选审核队列、独立提取模型配置（各为一次 config/接口增量，消费方不变）。

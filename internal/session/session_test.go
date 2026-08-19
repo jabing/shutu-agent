@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -301,6 +302,58 @@ func TestKBAddEventAppendsAndReplays(t *testing.T) {
 	}
 	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
 		t.Fatalf("kb/add must not derive into messages: %+v", msgs)
+	}
+}
+
+// TestKBExtractEventAppendsAndReplays verifies the M4c kb/extract event type
+// (dispatch-m4c §2 / D3): the post-answer extraction outcome (created /
+// skipped / failed + reason) appends with the right vocabulary, survives the
+// JSON round-trip and restart replay, and stays opaque to history derivation
+// (an extraction outcome is a log fact, not conversation).
+func TestKBExtractEventAppendsAndReplays(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	// A created outcome carries the written entry ids.
+	if _, err := l.Append(EventKBExtract, NewKBExtract("created", "s1", 3, "", []string{"kb-1", "kb-2"})); err != nil {
+		t.Fatalf("append created: %v", err)
+	}
+	// A failed outcome carries a reason.
+	if _, err := l.Append(EventKBExtract, NewKBExtract("failed", "s1", 4, "extraction model returned invalid JSON", nil)); err != nil {
+		t.Fatalf("append failed: %v", err)
+	}
+	if len(l.Events()) != 2 || l.Events()[0].Type != EventKBExtract || l.Events()[0].Version != EventVersion {
+		t.Fatalf("events = %+v, want 2 kb/extract at version %d", l.Events(), EventVersion)
+	}
+	var d kbExtractData
+	if err := json.Unmarshal(l.Events()[0].Data, &d); err != nil {
+		t.Fatalf("unmarshal created: %v", err)
+	}
+	if d.Status != "created" || d.Session != "s1" || d.Turn != 3 || d.Reason != "" || len(d.IDs) != 2 || d.IDs[0] != "kb-1" {
+		t.Fatalf("created payload = %+v", d)
+	}
+	var f kbExtractData
+	if err := json.Unmarshal(l.Events()[1].Data, &f); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if f.Status != "failed" || !strings.Contains(f.Reason, "invalid JSON") {
+		t.Fatalf("failed payload = %+v", f)
+	}
+	if len(persisted) != 2 || persisted[1].Type != EventKBExtract {
+		t.Fatalf("sink (append path) = %+v", persisted)
+	}
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if got := fresh.Events()[0]; got.Type != EventKBExtract {
+		t.Fatalf("replayed type = %q", got.Type)
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
+		t.Fatalf("kb/extract must not derive into messages: %+v", msgs)
 	}
 }
 

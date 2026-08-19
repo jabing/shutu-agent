@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -169,4 +170,84 @@ func (a *app) kbReindex(ctx context.Context) error {
 	}
 	fmt.Println("kb: FTS index rebuilt")
 	return nil
+}
+
+// extractTurn runs the M4c post-answer extraction writeback (dispatch-m4c §1)
+// after a completed turn. It is orchestrated by the composition root, outside
+// the loop (D4): the loop's turn/step structure is unchanged. The turn number
+// and the final answer are derived from the session log (D1), so resuming or
+// replaying a session keeps the same session:turn job key, and the
+// extraction_jobs claim makes the write idempotent. Fail-open by contract: any
+// model, validation, or storage failure becomes a kb/extract event with status
+// failed and never blocks the next answer.
+func (a *app) extractTurn(ctx context.Context, userText string) {
+	if a.kb == nil || a.llm == nil || !a.cfg.KB.ExtractionValue() {
+		return
+	}
+	turn := countTurns(a.log)
+	assistantText := lastAssistantText(a.log)
+
+	status, reason := "skipped", ""
+	var ids []string
+	if strings.TrimSpace(assistantText) == "" {
+		reason = "no final assistant message"
+	} else {
+		result, err := a.kb.Extract(ctx, kb.ExtractOpts{
+			LLM:           a.llm,
+			Model:         a.cfg.Model,
+			SessionID:     a.currentID,
+			Turn:          turn,
+			UserText:      userText,
+			AssistantText: assistantText,
+		})
+		switch {
+		case err != nil:
+			status, reason = "failed", err.Error()
+		case result.Status == kb.ExtractDuplicate:
+			status, reason = "skipped", fmt.Sprintf("already extracted %s:turn:%d", a.currentID, turn)
+		default:
+			status, reason = result.Status, result.Reason
+			for _, w := range result.Created {
+				ids = append(ids, w.ID)
+			}
+		}
+	}
+	if _, err := a.log.Append(session.EventKBExtract, session.NewKBExtract(status, a.currentID, turn, reason, ids)); err != nil {
+		fmt.Fprintln(os.Stderr, "pa: kb/extract event:", err)
+	}
+}
+
+// countTurns derives the current turn number from the log: every conversation
+// turn appends exactly one user/message (loop.Run), so the count of
+// user/message events is the 1-based turn number of the turn just completed.
+// Deriving it from the log (D1) keeps resuming a session on the same
+// session:turn job key as the original run, so the extraction claim stays
+// idempotent across restarts.
+func countTurns(log *session.Log) int {
+	n := 0
+	for _, ev := range log.Events() {
+		if ev.Type == session.EventUserMessage {
+			n++
+		}
+	}
+	return n
+}
+
+// lastAssistantText returns the text of the most recent assistant/message with
+// non-empty text — the final answer of the just-completed turn (the loop closes
+// each step with an assistant/message; the last one is the final answer).
+func lastAssistantText(log *session.Log) string {
+	events := log.Events()
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type != session.EventAssistantMessage {
+			continue
+		}
+		var d struct {
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(events[i].Data, &d) == nil && strings.TrimSpace(d.Text) != "" {
+			return d.Text
+		}
+	}
+	return ""
 }

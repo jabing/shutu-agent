@@ -2,7 +2,9 @@
 // boundary — the same consumer code runs unchanged against SQLite and memory
 // (design.md D2/D9) — and to double as a lightweight reference implementation.
 // It is not a production backend: search is a simplified term-containment
-// match over the same fallbackTerms vocabulary, and it is not durable.
+// match over the same fallbackTerms vocabulary, and it is not durable. M4c
+// adds Extract (delegating to the shared pipeline) with an in-memory
+// extraction_jobs map for the idempotency claim.
 package kb
 
 import (
@@ -20,6 +22,7 @@ type MemProvider struct {
 	entries []memEntry
 	seq     int
 	closed  bool
+	jobs    map[string]memJob // sessionID:turn → job state (extraction idempotency)
 }
 
 type memEntry struct {
@@ -27,9 +30,16 @@ type memEntry struct {
 	updatedAt time.Time
 }
 
+// memJob is the in-memory extraction_jobs row: status/reason mirror the SQLite
+// table so both backends expose the same idempotency and audit trail.
+type memJob struct {
+	status string
+	reason string
+}
+
 // NewMemProvider returns an empty in-memory KB provider.
 func NewMemProvider() *MemProvider {
-	return &MemProvider{}
+	return &MemProvider{jobs: map[string]memJob{}}
 }
 
 // Search matches every active entry whose title/body/tags contain at least one
@@ -102,6 +112,43 @@ func (p *MemProvider) Add(ctx context.Context, draft Entry) (Entry, error) {
 // Recall is a bounded search (orchestration lands in M4b).
 func (p *MemProvider) Recall(ctx context.Context, query string, limit int) ([]Hit, error) {
 	return p.Search(ctx, query, SearchOpts{TopK: limit})
+}
+
+// Extract runs the shared post-answer extraction pipeline (M4c, extract.go)
+// against this in-memory backend, proving the extraction behavior is backend-
+// independent like the rest of the seam.
+func (p *MemProvider) Extract(ctx context.Context, opts ExtractOpts) (ExtractResult, error) {
+	return runExtraction(ctx, p, opts)
+}
+
+// claimExtraction atomically claims the job key sessionID:turn in memory; it
+// returns false when the key was already claimed (idempotency, dispatch-m4c
+// §1).
+func (p *MemProvider) claimExtraction(ctx context.Context, sessionID string, turn int) (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return false, fmt.Errorf("kb: provider is closed")
+	}
+	key := fmt.Sprintf("%s:%d", sessionID, turn)
+	if _, ok := p.jobs[key]; ok {
+		return false, nil
+	}
+	p.jobs[key] = memJob{status: "running"}
+	return true, nil
+}
+
+// completeExtraction records the outcome of a claimed job (mirrors the SQLite
+// audit trail).
+func (p *MemProvider) completeExtraction(ctx context.Context, sessionID string, turn int, status, reason string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	key := fmt.Sprintf("%s:%d", sessionID, turn)
+	if j, ok := p.jobs[key]; ok {
+		j.status, j.reason = status, reason
+		p.jobs[key] = j
+	}
+	return nil
 }
 
 // Get returns one full entry by id (kb_read, dispatch-m4b §1). An unknown id

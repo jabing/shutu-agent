@@ -41,11 +41,11 @@ tools:
     # Fixed working directory; empty = the agent's process working directory.
     # workdir: ""
 
-# Knowledge base capability (M4a kernel + M4b tools/recall; design.md §8 / ADR
-# 2026-08-18-m4-kb-architecture). Off by default (D10): when disabled no KB
-# provider is initialized and no kb_* tool is registered or whitelisted. M4b
-# adds the kb_search/kb_read/kb_add tools and the proactive recall
-# orchestration; M4c adds extraction writeback.
+# Knowledge base capability (M4a kernel + M4b tools/recall + M4c extraction;
+# design.md §8 / ADR 2026-08-18-m4-kb-architecture). Off by default (D10): when
+# disabled no KB provider is initialized and no kb_* tool is registered or
+# whitelisted. M4b adds the kb_search/kb_read/kb_add tools and the proactive
+# recall orchestration; M4c adds the post-answer extraction writeback.
 kb:
   # Master switch. false ⇒ kb never opens a database (默认关闭，不初始化) and the
   # kb_* tools are neither registered nor whitelisted.
@@ -61,3 +61,8 @@ kb:
   # Whether the lightweight knowledge-base catalog (name/description, no
   # bodies) is injected into the system prompt (absent ⇒ true).
   catalog: true
+  # Whether the post-answer extraction writeback runs after each completed
+  # turn, extracting durable knowledge from the conversation into the KB
+  # (absent ⇒ true; false = skip extraction entirely). Extraction is
+  # fail-open and never blocks the next answer.
+  extraction: true

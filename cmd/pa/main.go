@@ -253,6 +253,12 @@ func (a *app) repl(ctx context.Context) {
 		}
 		if err := a.newLoop().Run(ctx, line); err != nil {
 			fmt.Fprintln(os.Stderr, "\npa:", err)
+		} else {
+			// M4c: post-answer extraction writeback, orchestrated by the
+			// composition root outside the loop (D4). Fail-open by contract:
+			// extractTurn never returns an error and never affects the next
+			// answer.
+			a.extractTurn(ctx, line)
 		}
 	}
 	if err := scanner.Err(); err != nil {

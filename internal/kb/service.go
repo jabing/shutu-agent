@@ -4,9 +4,10 @@
 // (Service / Provider / Tool): consumers depend only on this interface, never
 // on a concrete backend, so swapping the backend never touches consumer code.
 // M4a ships the Service plus two Providers — the default SQLite FTS5 backend
-// and a tiny in-memory backend used to prove the seam boundary. The kb_* Tools
-// and the recall orchestration arrive in M4b; Extract is reserved for M4c and
-// is deliberately not declared here (a declared method would force stubs).
+// and a tiny in-memory backend used to prove the seam boundary. M4b adds the
+// kb_* consumer tools and the recall orchestration lives in cmd/pa. M4c adds
+// the reserved Extract method (post-answer extraction writeback) implemented
+// by both providers through the shared pipeline in extract.go.
 package kb
 
 import (
@@ -16,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"personal-agent/internal/llm"
 )
 
 // Knowledge entry types (design.md §8, dsh-knowledge 同款数据模型).
@@ -90,6 +93,54 @@ type Stats struct {
 	Recent     []RecentWrite // most recently written first
 }
 
+// Extract statuses (dispatch-m4c §1). Extract never writes through an invalid
+// or unusable model output (fail-closed) and always reports an outcome; the
+// caller (cmd/pa) records created | skipped | failed as a kb/extract event.
+const (
+	ExtractCreated   = "created"
+	ExtractSkipped   = "skipped"
+	ExtractDuplicate = "duplicate"
+	ExtractFailed    = "failed"
+)
+
+// ExtractOpts describes one post-answer extraction job (dispatch-m4c §1). The
+// current session LLM and model are carried here — the extraction model always
+// follows the session model (no separate extraction config), and the job key is
+// SessionID:Turn (the idempotency key into extraction_jobs).
+type ExtractOpts struct {
+	// LLM is the current model adapter (internal/llm). The extraction calls
+	// the same model that answered the turn.
+	LLM llm.LLM
+	// Model is the session model name (advisory: the adapter owns the
+	// effective model, deepseek.go uses its configured Model).
+	Model string
+	// SessionID is the session part of the job key.
+	SessionID string
+	// Turn is the turn part of the job key (>= 1).
+	Turn int
+	// UserText is this turn's user input.
+	UserText string
+	// AssistantText is this turn's final (non-empty) answer.
+	AssistantText string
+}
+
+// ExtractWrite is one entry created by an extraction run — a bounded summary
+// carried in ExtractResult so the caller can log the kb/extract event.
+type ExtractWrite struct {
+	ID    string
+	Title string
+	Type  string
+}
+
+// ExtractResult is the outcome of one extraction job. Status is one of the
+// Extract* constants; Reason explains a skip or failure; Created lists the
+// entries written by a successful run.
+type ExtractResult struct {
+	Status  string
+	Reason  string
+	Created []ExtractWrite
+}
+
 // KB is the knowledge-base Service.
 //
 //   - Search runs FTS5 BM25 and, when that under-fills topK, supplements with
@@ -102,16 +153,22 @@ type Stats struct {
 //     (dispatch-m4a §2).
 //   - Recall is a bounded search (its injection orchestration lands in M4b;
 //     this segment implements the retrieval logic only).
+//   - Extract runs the post-answer extraction writeback for one session:turn
+//     (M4c): idempotent claim, search context, strict-JSON model extraction
+//     (fail-closed), direct write. It returns a result, not a crash, for every
+//     model-output problem; a non-nil error is reserved for fatal provider
+//     failures only.
 //   - Stats reports entry count / database size / recent writes for
 //     /kb-status (M4b).
 //
-// Extract is reserved for M4c and intentionally absent. Close is part of the
-// interface so a swapped provider never leaks its backend (DB file, handles).
+// Close is part of the interface so a swapped provider never leaks its backend
+// (DB file, handles).
 type KB interface {
 	Search(ctx context.Context, query string, opts SearchOpts) ([]Hit, error)
 	Get(ctx context.Context, id string) (Entry, error)
 	Add(ctx context.Context, draft Entry) (Entry, error)
 	Recall(ctx context.Context, query string, limit int) ([]Hit, error)
+	Extract(ctx context.Context, opts ExtractOpts) (ExtractResult, error)
 	Stats(ctx context.Context) (Stats, error)
 	Close() error
 }

@@ -80,6 +80,11 @@ type KBConfig struct {
 	// Catalog toggles injecting the lightweight KB catalog (name/description,
 	// no bodies) into the system prompt; nil (absent) means true.
 	Catalog *bool `yaml:"catalog"`
+	// Extraction toggles the post-answer extraction writeback (dispatch-m4c
+	// §3): when false, the composition root never invokes kb.Extract. nil
+	// (absent) means true — within an enabled kb the extraction defaults on,
+	// matching the config.yaml documentation.
+	Extraction *bool `yaml:"extraction"`
 }
 
 // RecallLimitValue returns the effective per-round proactive recall count:
@@ -99,6 +104,15 @@ func (k KBConfig) CatalogValue() bool {
 		return true
 	}
 	return *k.Catalog
+}
+
+// ExtractionValue returns whether the post-answer extraction writeback runs
+// (true by default; false skips extraction even when kb is enabled).
+func (k KBConfig) ExtractionValue() bool {
+	if k.Extraction == nil {
+		return true
+	}
+	return *k.Extraction
 }
 
 // ToolsConfig is the M3 tool-execution policy: the whitelist, the per-tool

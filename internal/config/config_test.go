@@ -275,6 +275,46 @@ func TestLoadRecallLimitZeroDisables(t *testing.T) {
 	}
 }
 
+// M4c: kb.extraction defaults to true when absent (dispatch-m4c §3 — within an
+// enabled kb the extraction writeback is on by default, matching config.yaml),
+// and an explicit false is honored.
+func TestLoadKBExtractionDefaultsAndDisables(t *testing.T) {
+	// Absent ⇒ true.
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.KB.ExtractionValue() {
+		t.Error("kb.extraction (absent) must default to true")
+	}
+
+	// Explicit false ⇒ skipped.
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("kb:\n  enabled: true\n  extraction: false\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.KB.ExtractionValue() {
+		t.Error("kb.extraction = true, want false (explicitly disabled)")
+	}
+
+	// Explicit true is honored too.
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("kb:\n  enabled: true\n  extraction: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg3, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg3.KB.ExtractionValue() {
+		t.Error("kb.extraction = false, want true (explicitly enabled)")
+	}
+}
+
 // M4b: kb.enabled: true is the single switch that turns the whole capability
 // on — the three kb_* tools must also become whitelisted (dispatch-m4b §1,
 // mirrors run_command). When kb is disabled they must NOT be whitelisted.

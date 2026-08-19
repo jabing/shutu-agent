@@ -21,12 +21,14 @@ const (
 
 	// M4 knowledge-base events (design.md §3): kb/recall lands with the M4a
 	// kernel so the D3 logging mechanism exists before any orchestration;
-	// kb/add arrives with M4b (explicit writes) and kb/extract with M4c.
-	// DeriveHistory ignores these types (the recall is injected into context by
-	// the caller, design.md §8), so adding them never changes the turn/step
-	// structure (D4).
-	EventKBRecall = "kb/recall"
-	EventKBAdd    = "kb/add"
+	// kb/add arrives with M4b (explicit writes) and kb/extract with M4c
+	// (post-answer extraction writeback). DeriveHistory ignores these types
+	// (the recall is injected into context by the caller, design.md §8; the
+	// extraction outcome is a log fact, not conversation), so adding them never
+	// changes the turn/step structure (D4).
+	EventKBRecall  = "kb/recall"
+	EventKBAdd     = "kb/add"
+	EventKBExtract = "kb/extract"
 )
 
 // EventVersion is the current event vocabulary version. It is stored per event
@@ -279,4 +281,24 @@ type kbAddData struct {
 // (dispatch-m4b §3 / D3).
 func NewKBAdd(entryID, title, typ string, tags []string, source string, version int) any {
 	return kbAddData{EntryID: entryID, Title: title, Type: typ, Tags: tags, Source: source, Version: version}
+}
+
+// kbExtractData is the kb/extract payload: the outcome of a post-answer
+// extraction job (dispatch-m4c §2 / D3). Status is one of created | skipped |
+// failed; Reason explains a skip or failure; IDs carries the ids of the entries
+// created by a successful run. Only the summary is logged, never the model
+// output or entry bodies. DeriveHistory treats it as opaque data.
+type kbExtractData struct {
+	Status  string   `json:"status"` // created | skipped | failed
+	Session string   `json:"session,omitempty"`
+	Turn    int      `json:"turn,omitempty"`
+	Reason  string   `json:"reason,omitempty"`
+	IDs     []string `json:"ids,omitempty"` // created entry ids
+}
+
+// NewKBExtract builds the kb/extract payload recorded when the post-answer
+// extraction writeback finishes for one session:turn (dispatch-m4c §2 / D3).
+// status is created | skipped | failed.
+func NewKBExtract(status, sessionID string, turn int, reason string, ids []string) any {
+	return kbExtractData{Status: status, Session: sessionID, Turn: turn, Reason: reason, IDs: ids}
 }
