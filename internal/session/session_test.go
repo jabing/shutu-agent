@@ -73,7 +73,7 @@ func TestDeriveHistoryToolRoundTrip(t *testing.T) {
 	l.Append(EventAssistantMessage, NewAssistantMessage("", []llm.ToolCall{
 		{ID: "call_1", Name: "read_file", Arguments: `{"path":"/tmp/x"}`},
 	}, "tool_calls"))
-	l.Append(EventToolResult, NewToolResult("call_1", "read_file", "file contents"))
+	l.Append(EventToolResult, NewToolResult("call_1", "read_file", "file contents", nil))
 
 	msgs := l.DeriveHistory()
 	if len(msgs) != 3 {
@@ -202,5 +202,47 @@ func TestRestoreDoesNotInvokeSink(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatalf("sink invoked %d times during restore, want 0", calls)
+	}
+}
+
+// TestNextSeq verifies NextSeq reports the seq the next Append will assign
+// (M3 spill naming depends on it).
+func TestNextSeq(t *testing.T) {
+	l := New()
+	if got := l.NextSeq(); got != 1 {
+		t.Fatalf("NextSeq = %d, want 1", got)
+	}
+	l.Append(EventUserMessage, NewUserMessage("a"))
+	l.Append(EventUserMessage, NewUserMessage("b"))
+	if got := l.NextSeq(); got != 3 {
+		t.Fatalf("NextSeq = %d, want 3", got)
+	}
+}
+
+// TestToolResultSpillRecordsLocator verifies a spilled tool/result event keeps
+// the structured spill record (locator + byte count) alongside the truncated
+// output, and that deriving history still yields the model-visible text (which
+// embeds the locator notice, D3).
+func TestToolResultSpillRecordsLocator(t *testing.T) {
+	l := New()
+	l.Append(EventUserMessage, NewUserMessage("read it"))
+	l.Append(EventAssistantMessage, NewAssistantMessage("", []llm.ToolCall{
+		{ID: "call_9", Name: "read_file", Arguments: `{"path":"/big"}`},
+	}, "tool_calls"))
+	l.Append(EventToolResult, NewToolResult("call_9", "read_file", "head...[truncated; see spill]", &SpillRef{
+		Locator: `D:\data\spill\s-x-7.txt`,
+		Bytes:   100000,
+	}))
+
+	var d toolResultData
+	if err := json.Unmarshal(l.Events()[2].Data, &d); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if d.Spill == nil || d.Spill.Locator != `D:\data\spill\s-x-7.txt` || d.Spill.Bytes != 100000 {
+		t.Fatalf("spill record = %+v", d.Spill)
+	}
+	msgs := l.DeriveHistory()
+	if msgs[2].Content != "head...[truncated; see spill]" {
+		t.Fatalf("derived tool content = %q", msgs[2].Content)
 	}
 }

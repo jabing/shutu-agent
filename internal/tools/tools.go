@@ -2,6 +2,9 @@
 // model-facing schema projection, and the single validated execution gate
 // (D7). Every Execute validates the model-generated arguments against the
 // tool's JSON Schema before dispatch; tools never parse bare JSON themselves.
+// M3 added the safety policy to this same gate: a name whitelist, a per-tool
+// deadline (context.WithTimeout), and an output-size cap with spill-to-disk —
+// all inside the tools package, never in the loop (design.md §5, D4).
 package tools
 
 import (
@@ -27,19 +30,53 @@ type Tool interface {
 	Execute(ctx context.Context, args json.RawMessage) (string, error)
 }
 
+// Result is the outcome of one tool execution after the Execute pipeline has
+// applied the timeout and output cap. Output is the model-facing text (the
+// truncated head plus the locator notice when spilled); SpillPath is the
+// absolute spill-file path when the full output was too large.
+type Result struct {
+	Output     string
+	SpillPath  string // non-empty => Output was truncated and the full text spilled
+	SpillBytes int    // full output size in bytes (when spilled)
+}
+
+// Owner binds the registry's spill naming to the active session. It is set by
+// the REPL whenever the current session changes; the agent loop is strictly
+// serial (D5), so a single owner is safe.
+type Owner struct {
+	SessionID string
+	// NextSeq returns the Seq the upcoming tool/result event will receive; it
+	// is consulted only when a spill is about to be written.
+	NextSeq func() uint64
+}
+
 // Registry owns the registered tools and their compiled schemas.
 type Registry struct {
 	tools   map[string]Tool
 	schemas map[string]*jsonschema.Schema
+	policy  Policy
+	owner   Owner
+	// fallbackSeq is used only when Owner.NextSeq is nil (a spill with no
+	// bound session); it keeps spill filenames unique.
+	fallbackSeq uint64
 }
 
-// New returns an empty registry.
+// New returns a registry with the safe-by-default policy (M3): read-only
+// whitelist, 30s deadline, 64KB output cap.
 func New() *Registry {
 	return &Registry{
 		tools:   map[string]Tool{},
 		schemas: map[string]*jsonschema.Schema{},
+		policy:  DefaultPolicy(),
 	}
 }
+
+// SetPolicy installs the Execute pipeline's safety policy (M3). The REPL
+// installs the config-derived policy at startup.
+func (r *Registry) SetPolicy(p Policy) { r.policy = p }
+
+// SetOwner binds the registry to the active session for spill naming (M3).
+func (r *Registry) SetOwner(o Owner) { r.owner = o }
 
 // Register adds a tool. A duplicate name is rejected. The argument schema is
 // compiled once at registration so Execute has no per-call compile cost.
@@ -84,20 +121,70 @@ func (r *Registry) Specs() []llm.ToolSchema {
 	return specs
 }
 
-// Execute validates name and arguments, then dispatches to the tool. An
-// unknown tool name is an error; malformed or schema-invalid arguments never
-// reach the tool body (D7).
-func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessage) (string, error) {
+// Execute is the single execution gate. In order it rejects unknown names,
+// enforces the M3 whitelist (未启用 ⇒ 拒绝执行), validates the arguments against
+// the compiled JSON Schema (D7), runs the tool under a per-tool deadline, and
+// applies the output cap (truncate + spill). All policy lives here, never in
+// the loop.
+func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessage) (Result, error) {
 	t, ok := r.tools[name]
 	if !ok {
-		return "", fmt.Errorf("tools: unknown tool %q", name)
+		return Result{}, fmt.Errorf("tools: unknown tool %q", name)
+	}
+	if !r.policy.Allows(name) {
+		return Result{}, fmt.Errorf("tools: tool %q is not enabled (see tools.enabled)", name)
 	}
 	var v any
 	if err := json.Unmarshal(args, &v); err != nil {
-		return "", fmt.Errorf("tools: %s: invalid arguments JSON: %w", name, err)
+		return Result{}, fmt.Errorf("tools: %s: invalid arguments JSON: %w", name, err)
 	}
 	if err := r.schemas[name].Validate(v); err != nil {
-		return "", fmt.Errorf("tools: %s: invalid arguments: %w", name, err)
+		return Result{}, fmt.Errorf("tools: %s: invalid arguments: %w", name, err)
 	}
-	return t.Execute(ctx, args)
+
+	timeout := r.policy.Timeout
+	if name == runCommandName && r.policy.RunCommand.Timeout > 0 {
+		timeout = r.policy.RunCommand.Timeout
+	}
+	execCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		execCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	out, err := t.Execute(execCtx, args)
+	if err != nil {
+		if execCtx.Err() == context.DeadlineExceeded {
+			return Result{}, fmt.Errorf("tools: %s: timed out after %s: %w", name, timeout, err)
+		}
+		return Result{}, err
+	}
+	return r.applyOutputCap(name, out), nil
+}
+
+// applyOutputCap truncates oversized results and spills the full text. A spill
+// failure is best-effort: it must never turn a successful tool call into an
+// error, so the inline result is kept unchanged (mirrors dsh-spill-policy).
+func (r *Registry) applyOutputCap(name, out string) Result {
+	limit := r.policy.OutputLimit
+	if limit <= 0 || len(out) <= limit {
+		return Result{Output: out}
+	}
+	store := &SpillStore{dir: r.policy.spillDir()}
+	locator, err := store.Save(r.owner.SessionID, r.nextSeq(), out)
+	if err != nil {
+		return Result{Output: out}
+	}
+	return truncateResult(out, locator, limit)
+}
+
+// nextSeq returns the spill sequence number: the bound session's next event
+// seq when an owner is installed, else a per-registry counter.
+func (r *Registry) nextSeq() uint64 {
+	if r.owner.NextSeq != nil {
+		return r.owner.NextSeq()
+	}
+	r.fallbackSeq++
+	return r.fallbackSeq
 }

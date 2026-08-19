@@ -60,6 +60,8 @@ func TestExecuteValidatesArgumentsBeforeDispatch(t *testing.T) {
 	}
 	r := New()
 	r.Register(ft)
+	// M3 whitelist gate: the fake must be whitelisted before it can run.
+	r.SetPolicy(Policy{Enabled: []string{"needs_path"}})
 
 	// Missing required field: must be rejected, tool must not run.
 	if _, err := r.Execute(context.Background(), "needs_path", json.RawMessage(`{}`)); err == nil {
@@ -70,18 +72,19 @@ func TestExecuteValidatesArgumentsBeforeDispatch(t *testing.T) {
 	}
 
 	// Valid arguments: tool runs.
-	out, err := r.Execute(context.Background(), "needs_path", json.RawMessage(`{"path":"/a"}`))
+	res, err := r.Execute(context.Background(), "needs_path", json.RawMessage(`{"path":"/a"}`))
 	if err != nil {
 		t.Fatalf("valid args: %v", err)
 	}
-	if out != "ok" || !ft.executed {
-		t.Fatalf("out=%q executed=%v", out, ft.executed)
+	if res.Output != "ok" || !ft.executed {
+		t.Fatalf("out=%q executed=%v", res.Output, ft.executed)
 	}
 }
 
 func TestExecuteMalformedJSON(t *testing.T) {
 	r := New()
 	r.Register(&fakeTool{name: "x"})
+	r.SetPolicy(Policy{Enabled: []string{"x"}})
 	if _, err := r.Execute(context.Background(), "x", json.RawMessage(`not json`)); err == nil {
 		t.Fatal("malformed JSON should be rejected")
 	}
@@ -103,11 +106,11 @@ func TestSpecsSorted(t *testing.T) {
 func TestGetTime(t *testing.T) {
 	r := New()
 	r.Register(GetTime{})
-	out, err := r.Execute(context.Background(), "get_time", json.RawMessage(`{}`))
+	res, err := r.Execute(context.Background(), "get_time", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("get_time: %v", err)
 	}
-	if out == "" {
+	if res.Output == "" {
 		t.Fatal("get_time returned empty")
 	}
 }
@@ -121,12 +124,12 @@ func TestReadFile(t *testing.T) {
 	r := New()
 	r.Register(ReadFile{})
 	args, _ := json.Marshal(map[string]string{"path": path})
-	out, err := r.Execute(context.Background(), "read_file", args)
+	res, err := r.Execute(context.Background(), "read_file", args)
 	if err != nil {
 		t.Fatalf("read_file: %v", err)
 	}
-	if out != "hello agent" {
-		t.Fatalf("read_file out = %q", out)
+	if res.Output != "hello agent" {
+		t.Fatalf("read_file out = %q", res.Output)
 	}
 }
 

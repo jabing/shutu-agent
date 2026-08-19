@@ -109,9 +109,19 @@ type Registry struct{ ... }  // Register / Specs / Execute（入口统一校验�
 ```
 
 - 校验库：`github.com/santhosh-tekuri/jsonschema/v5`（纯 Go）。
-- **v1 工具**：`get_time`、`read_file`（只读）。执行类工具（bash 等）M3 随安全白名单一起上。
+- **v1 工具**：`get_time`、`read_file`（只读）。
 - 白名单在 `config.yaml` 按名称启用/禁用；未注册或未启用 ⇒ 拒绝执行。
 - 超时与输出上限（截断/spill）是 Execute 管道的固定环节，M3 落地。
+
+### M3 安全策略（2026-08-18 落地，决策：docs/decisions/2026-08-18-m3-sandbox-scope.md）
+
+全部属于 `tools` 包的策略层 / Execute 管道，循环零改动（D4）：
+
+- **白名单 `tools.enabled`**：按名称启用/禁用；默认只含只读工具 `get_time`、`read_file`。未启用 ⇒ Execute 门拒绝（`tool "x" is not enabled`）。
+- **超时 `tools.timeout`**：每次工具 Execute 用 `context.WithTimeout` 包裹，默认 30s；`run_command` 可用 `tools.run_command.timeout` 单独覆盖。超时作为 `tool/error` 事件落日志（D3）。
+- **输出截断 / spill `tools.output_limit`**：输出超过默认 64KB 时截断，全文落盘 `data/spill/<session>-<seq>.txt`；`tool/result` 事件记录截断文本 + 定位符（模型可见 ⇒ 落日志 D3）。spill 失败是 best-effort：保留内联输出，不把成功调用变成错误。
+- **执行类工具 `run_command`**：唯一的执行类工具（D10 落地），仅当 `tools.run_command.enabled: true` 时注册/可用，**默认关闭**。单行命令经 `cmd /C`（Windows）或 `/bin/sh -c`（其他）执行，固定工作目录（`tools.run_command.workdir`），不暴露交互式 shell；执行前从环境变量中移除含 `KEY`/`SECRET`/`TOKEN`/`PASSWORD`/`API` 的条目；非零退出码以 `[exit code: N]` 内联报告（结果仍为 `tool/result`）。超时/取消通过进程终止生效：Windows 杀直系进程（输出走临时文件，孙进程不占管道），Unix 用进程组 `kill(-pgid)`。
+- **取消（Ctrl+C）**：`signal.NotifyContext` 取消当前 step——流式中断（HTTP 请求上下文）与工具执行中断即时生效；事件追加即持久化（D8），内存日志与磁盘一致。
 
 ---
 

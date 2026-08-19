@@ -2,9 +2,13 @@ package loop
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"personal-agent/internal/llm"
 	"personal-agent/internal/prompt"
@@ -224,5 +228,152 @@ func TestRunMaxSteps(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "steps") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+// cancelReader blocks on Next until the context is done, standing in for a
+// streaming HTTP body that honors ctx (the DeepSeek SSE reader aborts its read
+// when the request context is cancelled).
+type cancelReader struct{ ctx context.Context }
+
+func (r *cancelReader) Next() (llm.StreamEvent, error) {
+	<-r.ctx.Done()
+	return llm.StreamEvent{}, r.ctx.Err()
+}
+
+type cancelLLM struct{ ctx context.Context }
+
+func (m *cancelLLM) Stream(ctx context.Context, req llm.ChatRequest) (llm.StreamReader, error) {
+	return &cancelReader{ctx: m.ctx}, nil
+}
+
+// TestRunCancelDuringStream covers Ctrl+C during streaming (dispatch-m3: 流式
+// 中断): the loop returns promptly with a cancellation error.
+func TestRunCancelDuringStream(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	loop, _, _ := newTestLoop(t, &cancelLLM{ctx: ctx})
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		cancel()
+	}()
+	err := loop.Run(ctx, "go")
+	if err == nil {
+		t.Fatal("expected cancellation error during stream")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+// blockingTool is a slow tool killed by the Execute pipeline's deadline.
+type blockingTool struct{ name string }
+
+func (b blockingTool) Name() string        { return b.name }
+func (b blockingTool) Description() string { return "blocks until the context is done" }
+func (b blockingTool) Schema() map[string]any {
+	return map[string]any{"type": "object", "properties": map[string]any{}}
+}
+func (b blockingTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+// TestRunToolTimeoutLogsToolError verifies a tool that blows its deadline is
+// interrupted by the Execute pipeline and the timeout lands as a tool/error
+// event (dispatch-m3: sleep 工具被掐断并落 tool/error, D3).
+func TestRunToolTimeoutLogsToolError(t *testing.T) {
+	model := &scriptedLLM{steps: [][]llm.StreamEvent{
+		{ // step 1: model calls the slow tool
+			{Kind: llm.StreamFinish, FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{
+				{ID: "call_t", Name: "sleep_tool", Arguments: "{}"},
+			}},
+		},
+		{ // step 2: model answers
+			{Kind: llm.StreamFinish, FinishReason: "stop"},
+		},
+	}}
+	loop, log, reg := newTestLoop(t, model)
+	reg.Register(blockingTool{name: "sleep_tool"})
+	reg.SetPolicy(tools.Policy{
+		Enabled:     []string{"get_time", "sleep_tool"},
+		Timeout:     100 * time.Millisecond,
+		OutputLimit: tools.DefaultOutputLimit,
+	})
+
+	if err := loop.Run(context.Background(), "run it"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var found bool
+	for _, ev := range log.Events() {
+		if ev.Type == session.EventToolError && strings.Contains(string(ev.Data), "timed out") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a tool/error with a timeout message; events: %+v", log.Events())
+	}
+}
+
+// bigResultTool returns a payload larger than any test output cap.
+type bigResultTool struct{ text string }
+
+func (b bigResultTool) Name() string        { return "big_tool" }
+func (b bigResultTool) Description() string { return "returns a lot of text" }
+func (b bigResultTool) Schema() map[string]any {
+	return map[string]any{"type": "object", "properties": map[string]any{}}
+}
+func (b bigResultTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	return b.text, nil
+}
+
+// TestRunSpilledResultLogsLocator verifies an oversized tool result is
+// truncated and spilled, and the tool/result event records the locator (which
+// the model reads the full output through, D3).
+func TestRunSpilledResultLogsLocator(t *testing.T) {
+	spillDir := t.TempDir()
+	model := &scriptedLLM{steps: [][]llm.StreamEvent{
+		{ // step 1: model calls the big-output tool
+			{Kind: llm.StreamFinish, FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{
+				{ID: "call_s", Name: "big_tool", Arguments: "{}"},
+			}},
+		},
+		{ // step 2: model answers
+			{Kind: llm.StreamFinish, FinishReason: "stop"},
+		},
+	}}
+	loop, log, reg := newTestLoop(t, model)
+	reg.Register(bigResultTool{text: strings.Repeat("x", 4096)})
+	reg.SetPolicy(tools.Policy{
+		Enabled:     []string{"get_time", "big_tool"},
+		Timeout:     time.Hour,
+		OutputLimit: 64,
+		SpillDir:    spillDir,
+	})
+	reg.SetOwner(tools.Owner{SessionID: "s-loop", NextSeq: func() uint64 { return log.NextSeq() }})
+
+	if err := loop.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var found bool
+	for _, ev := range log.Events() {
+		if ev.Type != session.EventToolResult {
+			continue
+		}
+		var d struct {
+			Output string            `json:"output"`
+			Spill  *session.SpillRef `json:"spill"`
+		}
+		if err := json.Unmarshal(ev.Data, &d); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if d.Spill != nil && d.Spill.Locator != "" && strings.Contains(d.Output, d.Spill.Locator) {
+			if _, err := os.Stat(d.Spill.Locator); err != nil {
+				t.Fatalf("spill file %s: %v", d.Spill.Locator, err)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a spilled tool/result with a locator; events: %+v", log.Events())
 	}
 }

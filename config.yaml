@@ -14,3 +14,29 @@ data_dir: data
 
 # Directory of prompt section files (see config/prompts/README.md).
 prompts_dir: config/prompts
+
+# Tool execution policy (M3, design.md §5 / ADR 2026-08-18-m3-sandbox-scope).
+# API keys never appear here — they only come from environment variables.
+tools:
+  # Whitelist: only these tool names may execute (未启用 ⇒ 拒绝执行).
+  # Defaults to the read-only pair when absent.
+  enabled:
+    - get_time
+    - read_file
+  # Per-tool execute deadline wrapped around every Execute (Go duration).
+  # run_command may override it via tools.run_command.timeout.
+  timeout: 30s
+  # Tool output over this many bytes is truncated; the full text is spilled to
+  # <data_dir>/spill/<session>-<seq>.txt and the locator is returned to the
+  # model (and logged into tool/result).
+  output_limit: 65536
+  # The sole execution-class tool (design.md §5 / D10). Off by default; only
+  # when enabled: true is it registered and usable. Commands run as a single
+  # line through cmd /C (Windows) or /bin/sh -c (elsewhere) in a fixed
+  # working directory, with credential-shaped environment entries scrubbed.
+  run_command:
+    enabled: false
+    # Optional per-tool timeout override; empty uses tools.timeout.
+    # timeout: 60s
+    # Fixed working directory; empty = the agent's process working directory.
+    # workdir: ""

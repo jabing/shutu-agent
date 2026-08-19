@@ -105,6 +105,11 @@ func (l *Log) Events() []Event {
 	return out
 }
 
+// NextSeq returns the Seq the next Append will assign (current Seq + 1). M3
+// uses it to name a spill file after the tool/result event that will carry the
+// locator.
+func (l *Log) NextSeq() uint64 { return l.seq + 1 }
+
 // DeriveHistory folds the log into model-visible messages (design.md §3:
 // history is a pure derivation of the log). assistant/chunk rows are streaming
 // fidelity records and are folded away in favor of the authoritative
@@ -177,9 +182,20 @@ type assistantMessageData struct {
 }
 
 type toolResultData struct {
-	CallID string `json:"callId"`
-	Name   string `json:"name"`
-	Output string `json:"output"`
+	CallID string    `json:"callId"`
+	Name   string    `json:"name"`
+	Output string    `json:"output"`
+	Spill  *SpillRef `json:"spill,omitempty"` // set when the output was truncated and spilled
+}
+
+// SpillRef is recorded on a tool/result event when the tool output exceeded
+// the output limit and the full text was spilled to disk. The locator is
+// model-visible — the model reads the full file through it — so it must be
+// logged (D3). Output already carries the truncation notice with the locator;
+// this structured copy is for tooling/replay.
+type SpillRef struct {
+	Locator string `json:"locator"`
+	Bytes   int    `json:"bytes"`
 }
 
 type toolErrorData struct {
@@ -200,9 +216,10 @@ func NewAssistantMessage(text string, toolCalls []llm.ToolCall, finishReason str
 	return assistantMessageData{Text: text, ToolCalls: toolCalls, FinishReason: finishReason}
 }
 
-// NewToolResult builds one successful tool/result payload.
-func NewToolResult(callID, name, output string) any {
-	return toolResultData{CallID: callID, Name: name, Output: output}
+// NewToolResult builds one successful tool/result payload. spill is the
+// truncation record (non-nil only when the output was spilled to disk, M3).
+func NewToolResult(callID, name, output string, spill *SpillRef) any {
+	return toolResultData{CallID: callID, Name: name, Output: output, Spill: spill}
 }
 
 // NewToolError builds one failed tool/error payload.

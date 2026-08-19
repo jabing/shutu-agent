@@ -133,13 +133,17 @@ func (l *Loop) step(ctx context.Context) (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return false, fmt.Errorf("loop: cancelled: %w", err)
 		}
-		out, err := l.tools.Execute(ctx, call.Name, []byte(call.Arguments))
+		res, err := l.tools.Execute(ctx, call.Name, []byte(call.Arguments))
 		if err != nil {
 			if _, aerr := l.log.Append(session.EventToolError, session.NewToolError(call.ID, call.Name, err.Error())); aerr != nil {
 				return false, aerr
 			}
 		} else {
-			if _, aerr := l.log.Append(session.EventToolResult, session.NewToolResult(call.ID, call.Name, out)); aerr != nil {
+			var spill *session.SpillRef
+			if res.SpillPath != "" {
+				spill = &session.SpillRef{Locator: res.SpillPath, Bytes: res.SpillBytes}
+			}
+			if _, aerr := l.log.Append(session.EventToolResult, session.NewToolResult(call.ID, call.Name, res.Output, spill)); aerr != nil {
 				return false, aerr
 			}
 		}

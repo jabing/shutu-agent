@@ -1,8 +1,10 @@
-// Command pa is the personal agent REPL (M1→M2). It wires the thin core — llm,
+// Command pa is the personal agent REPL (M1→M3). It wires the thin core — llm,
 // session, tools, prompt, loop — plus the durable store (design.md D8) and
 // drives turns from stdin. Sessions persist to data_dir/pa.db and are resumed
-// across restarts; /new, /list and /resume manage multiple sessions. The
-// DeepSeek API key is read from the DEEPSEEK_API_KEY environment variable only.
+// across restarts; /new, /list and /resume manage multiple sessions. M3 adds
+// the tool-execution safety policy (whitelist, timeout, output truncation/spill)
+// and --config. The DeepSeek API key is read from the DEEPSEEK_API_KEY
+// environment variable only.
 package main
 
 import (
@@ -11,6 +13,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -29,13 +32,16 @@ import (
 )
 
 func main() {
+	configPath := flag.String("config", "config.yaml", "path to the configuration file")
+	flag.Parse()
+
 	apiKey := os.Getenv("DEEPSEEK_API_KEY")
 	if apiKey == "" {
 		fmt.Fprintln(os.Stderr, "pa: DEEPSEEK_API_KEY is not set (API keys only ever come from the environment)")
 		os.Exit(1)
 	}
 
-	cfg, err := config.Load("config.yaml")
+	cfg, err := config.Load(*configPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
@@ -48,7 +54,13 @@ func main() {
 	}
 	defer st.Close()
 
+	// M3: the Execute pipeline's safety policy — whitelist, deadline, output
+	// cap with spill to <data_dir>/spill (design.md §5).
 	reg := tools.New()
+	reg.SetPolicy(tools.PolicyFromConfig(cfg.Tools, cfg.DataDir))
+	// The read-only built-ins are always registered; the whitelist gates their
+	// execution. The execution-class tool is registered only when enabled
+	// (默认关闭, D10).
 	if err := reg.Register(tools.GetTime{}); err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
@@ -56,6 +68,12 @@ func main() {
 	if err := reg.Register(tools.ReadFile{}); err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
+	}
+	if cfg.Tools.RunCommand.Enabled {
+		if err := reg.Register(tools.NewRunCommand(cfg.Tools.RunCommand.Workdir)); err != nil {
+			fmt.Fprintln(os.Stderr, "pa:", err)
+			os.Exit(1)
+		}
 	}
 
 	promptBuilder, err := prompt.LoadDir(cfg.PromptsDir)
@@ -135,6 +153,7 @@ func (a *app) newSession(ctx context.Context) error {
 	a.currentID = id
 	a.log = session.New()
 	a.attachSink(ctx)
+	a.bindSpillOwner()
 	return nil
 }
 
@@ -153,6 +172,7 @@ func (a *app) resumeSession(ctx context.Context, id string) error {
 		return err
 	}
 	a.attachSink(ctx)
+	a.bindSpillOwner()
 	return nil
 }
 
@@ -162,6 +182,18 @@ func (a *app) attachSink(ctx context.Context) {
 	id := a.currentID
 	a.log.SetSink(func(ev session.Event) error {
 		return a.store.AppendEvents(ctx, id, []session.Event{ev})
+	})
+}
+
+// bindSpillOwner points the tool registry's spill naming at the active
+// session. The next-seq closure is pinned to the current log, so a spill is
+// named <session>-<seq>.txt with the exact seq of the tool/result event that
+// will carry the locator (M3). Called on every session switch.
+func (a *app) bindSpillOwner() {
+	log := a.log
+	a.reg.SetOwner(tools.Owner{
+		SessionID: a.currentID,
+		NextSeq:   func() uint64 { return log.NextSeq() },
 	})
 }
 
@@ -180,10 +212,10 @@ func (a *app) newLoop() *loop.Loop {
 	})
 }
 
-// repl drives turns from stdin, handling the M2 session commands.
+// repl drives turns from stdin, handling the session commands.
 func (a *app) repl(ctx context.Context) {
 	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Println("pa — personal agent REPL. Commands: /new /list /resume <id> /help /exit")
+	fmt.Println("pa — personal agent REPL. Type /help for the command table.")
 	for {
 		fmt.Print("\n> ")
 		if !scanner.Scan() {
@@ -217,7 +249,7 @@ func (a *app) command(ctx context.Context, line string) error {
 	fields := strings.Fields(line)
 	switch fields[0] {
 	case "/help":
-		fmt.Println("commands: /new /list /resume <id> /help /exit")
+		a.printHelp()
 	case "/new":
 		if err := a.newSession(ctx); err != nil {
 			return err
@@ -237,6 +269,20 @@ func (a *app) command(ctx context.Context, line string) error {
 		return fmt.Errorf("unknown command %q (try /help)", fields[0])
 	}
 	return nil
+}
+
+// printHelp prints the complete command table (M3 CLI 完善).
+func (a *app) printHelp() {
+	fmt.Println(`commands:
+  /new              start a new session
+  /list             list all sessions (most recently updated first)
+  /resume <id>      resume an existing session by id
+  /help             show this command table
+  /exit             quit (alias: /quit)
+  anything else     send to the agent as a message
+
+startup:  pa [--config <path>]   config defaults to config.yaml`)
+	fmt.Printf("enabled tools: %s\n", strings.Join(a.cfg.Tools.Enabled, ", "))
 }
 
 func (a *app) listSessions(ctx context.Context) error {
