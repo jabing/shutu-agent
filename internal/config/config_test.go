@@ -1240,3 +1240,83 @@ func TestLoadMcpEnabledAppendsToolsToWhitelist(t *testing.T) {
 		}
 	}
 }
+
+// M6f-3: an absent fs section means the capability is off by default (D10)
+// with an empty root (the FileService constructor resolves the default
+// <project>), and no fs_* tool is whitelisted while disabled
+// (dispatch-m6f-3 §3).
+func TestLoadFsDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Fs.Enabled {
+		t.Error("fs must be disabled by default (D10)")
+	}
+	if cfg.Fs.Root != "" {
+		t.Errorf("fs.root = %q, want empty (default <project>)", cfg.Fs.Root)
+	}
+	for _, name := range fsToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when fs disabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// M6f-3: an explicit fs section is honored (enabled, root), while an explicit
+// enabled:false leaves the default whitelist untouched (D10, dispatch-m6f-3
+// §3).
+func TestLoadFsParsesSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("fs:\n  enabled: true\n  root: C:\\workspace\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Fs.Enabled {
+		t.Error("fs.enabled should be true")
+	}
+	if cfg.Fs.Root != `C:\workspace` {
+		t.Errorf("fs.root = %q, want C:\\workspace", cfg.Fs.Root)
+	}
+
+	// Explicit enabled:false leaves the default whitelist untouched.
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("fs:\n  enabled: false\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Fs.Enabled {
+		t.Error("fs.enabled = true, want false (explicitly disabled)")
+	}
+	for _, name := range fsToolNames {
+		if contains(cfg2.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when fs explicitly disabled", cfg2.Tools.Enabled, name)
+		}
+	}
+}
+
+// M6f-3: fs.enabled: true is the single switch that turns the whole
+// capability on — the three fs_* tools must also become whitelisted
+// (dispatch-m6f-3 §3, mirrors kb/jobs/subagent/skill/schedule/plan/spill/
+// interact/code/mcp).
+func TestLoadFsEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("fs:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range fsToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after fs.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+}

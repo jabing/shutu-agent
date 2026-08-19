@@ -282,3 +282,23 @@ mcp:
   #     cmd: npx
   #     args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
 
+# Safe-file-operation capability (M6f; design.md §10 D2 / ADR
+# 2026-08-19-m6-agent-full.md 决策 M6f). Off by default (D10): when disabled no
+# FileService is created and no fs_* tool is registered or whitelisted. When
+# enabled, fs_read reads a file (capped at 1MiB to keep large files from
+# blowing the model context), fs_write creates or overwrites a file (creating
+# missing parent directories), and fs_list lists a directory's direct children
+# (non-recursive). Every fs_* path is constrained to the allowed root — a
+# path that escapes it (a ".." escape) is rejected before any file is touched.
+# fs/read, fs/write and fs/list are logged as facts (D3). The tools run on the
+# serial tool path (D5).
+fs:
+  # Master switch. false ⇒ no FileService is created and the fs_* tools are
+  # neither registered nor whitelisted (默认关闭，不初始化).
+  enabled: false
+  # Allowed root every fs_* path must stay inside. Empty ⇒ <project> (the
+  # process working directory). An absolute or relative directory path is
+  # resolved to its absolute form at startup.
+  root: ""
+
+

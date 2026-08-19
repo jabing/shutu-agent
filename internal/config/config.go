@@ -112,6 +112,7 @@ type Config struct {
 	Interact   InteractConfig   `yaml:"interact"`    // human-approval policy (M6d)
 	Code       CodeConfig       `yaml:"code"`        // code-sandbox policy (M6e)
 	Mcp        McpConfig        `yaml:"mcp"`         // MCP tool-ecosystem policy (M6f)
+	Fs         FsConfig         `yaml:"fs"`          // safe-file-operation policy (M6f)
 }
 
 // JobsConfig is the background-job policy (dispatch-m5a-2 §3 / ADR
@@ -321,6 +322,21 @@ type McpServer struct {
 	Name string   `yaml:"name"`
 	Cmd  string   `yaml:"cmd"`
 	Args []string `yaml:"args"`
+}
+
+// FsConfig is the safe-file-operation policy (dispatch-m6f-3 §3 / ADR
+// 2026-08-19-m6-agent-full.md 决策 M6f). The fs capability is off by default
+// (D10): when disabled the composition root neither creates a FileService nor
+// registers or whitelists the fs_* tools. When enabled, every fs_* operation
+// is constrained to the allowed root.
+type FsConfig struct {
+	// Enabled gates the whole capability: when false, no FileService is
+	// created and the fs_* tools are neither registered nor whitelisted (D10).
+	Enabled bool `yaml:"enabled"`
+	// Root is the allowed root every fs_* path must stay inside. Empty means
+	// the default <project> (the process working directory), resolved by the
+	// FileService constructor.
+	Root string `yaml:"root"`
 }
 
 // KBConfig is the knowledge-base policy (dispatch-m4a §3 / dispatch-m4b §5).
@@ -659,6 +675,19 @@ func applyDefaults(cfg *Config) {
 			}
 		}
 	}
+	// M6f-3 fs defaults: off by default (D10); root empty means the default
+	// <project> (the process working directory), resolved by the FileService
+	// constructor — there is nothing to default here. Enabling fs whitelists
+	// its three consumer tools, so the one fs.enabled switch turns the whole
+	// capability (FileService + fs_* tools + event logging) on (mirrors
+	// kb/jobs/subagent/skill/schedule/plan/spill/interact/code/mcp).
+	if cfg.Fs.Enabled {
+		for _, name := range fsToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
 }
 
 // kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /
@@ -722,6 +751,12 @@ var codeToolNames = []string{"code_run"}
 // (mcp.<server>.<tool>) are dynamic and are whitelisted by the composition root
 // as they are registered.
 var mcpToolNames = []string{"mcp_list", "mcp_call"}
+
+// fsToolNames are the safe-file-operation consumer tools (dispatch-m6f-3 §3).
+// They are registered and whitelisted only when fs is enabled; keeping the
+// names here makes the "fs.enabled ⇒ 工具自动白名单" rule a single, tested fact
+// shared by applyDefaults and the composition root.
+var fsToolNames = []string{"fs_read", "fs_write", "fs_list"}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {
