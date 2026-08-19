@@ -257,3 +257,28 @@ code:
   # network credentials (the local provider always scrubs credential-shaped
   # environment entries regardless). Recorded boundary, not strong isolation.
   allow_network: false
+
+# MCP tool-ecosystem capability (M6f; design.md §10 D2 / ADR
+# 2026-08-19-m6-agent-full.md 决策 M6f). Off by default (D10): when disabled no
+# mcp Factory is created, the mcp_* tools are neither registered nor
+# whitelisted, and no server is bridged. When enabled, mcp_list lists a
+# configured server's tools and mcp_call invokes one by name (each a fresh
+# stdio client per call), and every tool each configured server advertises is
+# bridged into the tool registry as mcp.<server>.<tool> with its input schema
+# passed through, calling back into the server via tools/call. mcp/list and
+# mcp/call are logged as facts (D3). The client is self-implemented JSON-RPC 2.0
+# over stdio (zero new dependencies, ADR 决策 M6f) — no MCP SDK.
+mcp:
+  # Master switch. false ⇒ no mcp Factory is created, the mcp_* tools are
+  # neither registered nor whitelisted, and no server is bridged
+  # (默认关闭，不初始化).
+  enabled: false
+  # Configured MCP servers (stdio, newline-delimited JSON-RPC). Each server's
+  # tools are bridged at startup under the mcp.<server>.<tool> prefix. Empty by
+  # default; enabling mcp with no servers still registers the mcp_* tools.
+  servers: []
+  # servers:
+  #   - name: filesystem
+  #     cmd: npx
+  #     args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+

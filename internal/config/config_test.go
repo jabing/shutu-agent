@@ -1149,3 +1149,94 @@ func TestLoadCodeEnabledAppendsToolsToWhitelist(t *testing.T) {
 		}
 	}
 }
+
+// M6f-2: an absent mcp section means the capability is off by default (D10),
+// with no servers, and the mcp_* tools are not whitelisted while disabled
+// (dispatch-m6f-2 §2).
+func TestLoadMcpDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Mcp.Enabled {
+		t.Error("mcp must be disabled by default (D10)")
+	}
+	if len(cfg.Mcp.Servers) != 0 {
+		t.Errorf("mcp.servers = %v, want empty", cfg.Mcp.Servers)
+	}
+	for _, name := range mcpToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when mcp disabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// M6f-2: an explicit mcp section is honored (enabled, servers with
+// name/cmd/args), while an explicit enabled:false leaves the default whitelist
+// untouched (D10, dispatch-m6f-2 §2).
+func TestLoadMcpParsesSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := "mcp:\n  enabled: true\n  servers:\n    - name: filesystem\n      cmd: npx\n      args: [\"-y\", \"@modelcontextprotocol/server-filesystem\", \".\"]\n    - name: echo\n      cmd: echo-server\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Mcp.Enabled {
+		t.Error("mcp.enabled should be true")
+	}
+	if len(cfg.Mcp.Servers) != 2 {
+		t.Fatalf("mcp.servers = %v, want 2 entries", cfg.Mcp.Servers)
+	}
+	fs := cfg.Mcp.Servers[0]
+	if fs.Name != "filesystem" || fs.Cmd != "npx" {
+		t.Errorf("mcp.servers[0] = %+v, want name filesystem / cmd npx", fs)
+	}
+	if len(fs.Args) != 3 || fs.Args[0] != "-y" || fs.Args[1] != "@modelcontextprotocol/server-filesystem" || fs.Args[2] != "." {
+		t.Errorf("mcp.servers[0].args = %v, want the npx args", fs.Args)
+	}
+	ec := cfg.Mcp.Servers[1]
+	if ec.Name != "echo" || ec.Cmd != "echo-server" || len(ec.Args) != 0 {
+		t.Errorf("mcp.servers[1] = %+v, want name echo / cmd echo-server / no args", ec)
+	}
+
+	// Explicit enabled:false leaves the default whitelist untouched.
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("mcp:\n  enabled: false\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Mcp.Enabled {
+		t.Error("mcp.enabled = true, want false (explicitly disabled)")
+	}
+	for _, name := range mcpToolNames {
+		if contains(cfg2.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when mcp explicitly disabled", cfg2.Tools.Enabled, name)
+		}
+	}
+}
+
+// M6f-2: mcp.enabled: true is the single switch that turns the whole
+// capability on — the mcp_list and mcp_call tools must also become whitelisted
+// (dispatch-m6f-2 §2, mirrors kb/jobs/subagent/skill/schedule/plan/spill/
+// interact/code).
+func TestLoadMcpEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("mcp:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range mcpToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after mcp.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+}

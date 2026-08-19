@@ -111,6 +111,7 @@ type Config struct {
 	Spill      SpillConfig      `yaml:"spill"`       // long-term-memory policy (M6c)
 	Interact   InteractConfig   `yaml:"interact"`    // human-approval policy (M6d)
 	Code       CodeConfig       `yaml:"code"`        // code-sandbox policy (M6e)
+	Mcp        McpConfig        `yaml:"mcp"`         // MCP tool-ecosystem policy (M6f)
 }
 
 // JobsConfig is the background-job policy (dispatch-m5a-2 §3 / ADR
@@ -292,6 +293,34 @@ type CodeConfig struct {
 	// is a recorded boundary, not strong isolation: denying network access at
 	// the OS level is out of scope on Windows (no network namespace).
 	AllowNetwork bool `yaml:"allow_network"`
+}
+
+// McpConfig is the MCP tool-ecosystem policy (dispatch-m6f-2 §2 / ADR
+// 2026-08-19-m6-agent-full.md 决策 M6f). MCP is off by default (D10): when
+// disabled the composition root neither creates a Factory nor registers or
+// whitelists the mcp_* tools, and no server is bridged. When enabled, mcp_list
+// lists a configured server's tools and mcp_call invokes one by name (each a
+// fresh stdio client per call, D5), and every tool each configured server
+// advertises is bridged into the tool registry as mcp.<server>.<tool> with its
+// input schema passed through, calling back into the server via tools/call.
+type McpConfig struct {
+	// Enabled gates the whole capability: when false, no mcp Factory is
+	// created, the mcp_* tools are neither registered nor whitelisted, and no
+	// server is bridged (D10).
+	Enabled bool `yaml:"enabled"`
+	// Servers are the configured MCP servers (stdio, newline-delimited
+	// JSON-RPC). Each server's tools are bridged at startup with the
+	// mcp.<server>.<tool> prefix.
+	Servers []McpServer `yaml:"servers"`
+}
+
+// McpServer is one configured MCP server: a unique Name (used as the
+// mcp_list/mcp_call selector and the mcp.<server>.<tool> bridge prefix) and a
+// stdio command line (Cmd plus Args) the Factory spawns.
+type McpServer struct {
+	Name string   `yaml:"name"`
+	Cmd  string   `yaml:"cmd"`
+	Args []string `yaml:"args"`
 }
 
 // KBConfig is the knowledge-base policy (dispatch-m4a §3 / dispatch-m4b §5).
@@ -616,6 +645,20 @@ func applyDefaults(cfg *Config) {
 	if cfg.Code.MaxOutput <= 0 {
 		cfg.Code.MaxOutput = DefaultCodeMaxOutput
 	}
+	// M6f-2 mcp defaults: off by default (D10). Enabling mcp whitelists its two
+	// consumer tools mcp_list and mcp_call, so the one mcp.enabled switch turns
+	// the whole capability (Factory + mcp_* tools + server bridging + event
+	// logging) on (mirrors kb/jobs/subagent/skill/schedule/plan/spill/interact/
+	// code). Bridged server tools (mcp.<server>.<tool>) cannot be whitelisted
+	// here — their names are only known at runtime — so the composition root
+	// whitelists each one as it is registered.
+	if cfg.Mcp.Enabled {
+		for _, name := range mcpToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
 }
 
 // kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /
@@ -671,6 +714,14 @@ var interactToolNames = []string{"interact_ask", "interact_status"}
 // name here makes the "code.enabled ⇒ 工具自动白名单" rule a single, tested fact
 // shared by applyDefaults and the composition root.
 var codeToolNames = []string{"code_run"}
+
+// mcpToolNames are the MCP consumer tools (dispatch-m6f-2 §2). mcp_list and
+// mcp_call are registered and whitelisted only when mcp is enabled; keeping the
+// names here makes the "mcp.enabled ⇒ 工具自动白名单" rule a single, tested fact
+// shared by applyDefaults and the composition root. Bridged server tools
+// (mcp.<server>.<tool>) are dynamic and are whitelisted by the composition root
+// as they are registered.
+var mcpToolNames = []string{"mcp_list", "mcp_call"}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {
