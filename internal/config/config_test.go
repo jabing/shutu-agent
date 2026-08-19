@@ -455,3 +455,84 @@ func TestLoadJobsMaxConcurrentExplicitAndDefault(t *testing.T) {
 			cfg2.Jobs.MaxConcurrentJobsPerOwner, DefaultMaxConcurrentJobsPerOwner)
 	}
 }
+
+// M5b: subagent is off by default (D10), the delegation depth cap defaults to
+// 8, the default provider to "spawn", and no subagent tool is whitelisted
+// while disabled (dispatch-m5b-2 §3).
+func TestLoadSubagentDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Subagent.Enabled {
+		t.Error("subagent must be disabled by default (D10)")
+	}
+	if cfg.Subagent.MaxDepth != DefaultSubagentMaxDepth {
+		t.Errorf("subagent.max_depth = %d, want default %d", cfg.Subagent.MaxDepth, DefaultSubagentMaxDepth)
+	}
+	if cfg.Subagent.DefaultProvider != DefaultSubagentProvider {
+		t.Errorf("subagent.default_provider = %q, want default %q", cfg.Subagent.DefaultProvider, DefaultSubagentProvider)
+	}
+	for _, name := range subagentToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when subagent disabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// M5b: an explicit subagent section is honored (enabled, max_depth,
+// default_provider), while a non-positive max_depth and an empty
+// default_provider fall back to their defaults (dispatch-m5b-2 §3).
+func TestLoadSubagentParsesSectionAndFallsBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("subagent:\n  enabled: true\n  max_depth: 4\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Subagent.Enabled {
+		t.Error("subagent.enabled should be true")
+	}
+	if cfg.Subagent.MaxDepth != 4 {
+		t.Errorf("subagent.max_depth = %d, want 4", cfg.Subagent.MaxDepth)
+	}
+	if cfg.Subagent.DefaultProvider != DefaultSubagentProvider {
+		t.Errorf("absent subagent.default_provider = %q, want default %q", cfg.Subagent.DefaultProvider, DefaultSubagentProvider)
+	}
+
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("subagent:\n  enabled: true\n  max_depth: 0\n  default_provider: \"\"\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Subagent.MaxDepth != DefaultSubagentMaxDepth {
+		t.Errorf("subagent.max_depth 0 = %d, want default %d", cfg2.Subagent.MaxDepth, DefaultSubagentMaxDepth)
+	}
+	if cfg2.Subagent.DefaultProvider != DefaultSubagentProvider {
+		t.Errorf("subagent.default_provider empty = %q, want default %q", cfg2.Subagent.DefaultProvider, DefaultSubagentProvider)
+	}
+}
+
+// M5b: subagent.enabled: true is the single switch that turns the whole
+// capability on — the four subagent_* tools must also become whitelisted
+// (dispatch-m5b-2 §3, mirrors jobs/kb).
+func TestLoadSubagentEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("subagent:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range subagentToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after subagent.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+}

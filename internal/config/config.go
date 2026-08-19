@@ -44,6 +44,13 @@ const (
 	// 10 when jobs.max_concurrent_jobs_per_owner is absent or non-positive
 	// (mirrors dsh jobs-local and internal/jobs' own default).
 	DefaultMaxConcurrentJobsPerOwner = 10
+
+	// M5b subagent defaults (dispatch-m5b-2 §3): the delegation depth cap is 8
+	// when subagent.max_depth is absent or non-positive, and the default
+	// provider is "spawn" (the only provider shipped in M5b) when
+	// subagent.default_provider is empty.
+	DefaultSubagentMaxDepth    = 8
+	DefaultSubagentProvider    = "spawn"
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
@@ -58,9 +65,10 @@ type Config struct {
 	BaseURL    string      `yaml:"base_url"`    // optional OpenAI-compatible base URL; empty means the provider default
 	DataDir    string      `yaml:"data_dir"`    // directory for pa.db (and runtime data); default "data"
 	PromptsDir string      `yaml:"prompts_dir"` // directory of prompt section files; default "config/prompts"
-	Tools      ToolsConfig `yaml:"tools"`       // tool-execution policy (M3)
-	KB         KBConfig    `yaml:"kb"`          // knowledge-base policy (M4a kernel)
-	Jobs       JobsConfig  `yaml:"jobs"`        // background-job policy (M5a)
+	Tools      ToolsConfig    `yaml:"tools"`       // tool-execution policy (M3)
+	KB         KBConfig       `yaml:"kb"`          // knowledge-base policy (M4a kernel)
+	Jobs       JobsConfig     `yaml:"jobs"`        // background-job policy (M5a)
+	Subagent   SubagentConfig `yaml:"subagent"`    // subagent policy (M5b)
 }
 
 // JobsConfig is the background-job policy (dispatch-m5a-2 §3 / ADR
@@ -75,6 +83,24 @@ type JobsConfig struct {
 	// MaxConcurrentJobsPerOwner caps the running+stopping jobs in one owner
 	// bucket (and the shared unowned bucket); <= 0 means the default 10.
 	MaxConcurrentJobsPerOwner int `yaml:"max_concurrent_jobs_per_owner"`
+}
+
+// SubagentConfig is the subagent policy (dispatch-m5b-2 §3 / ADR
+// 2026-08-18-m5-agent-core.md 决策 ②). Subagents are off by default (D10): when
+// disabled the composition root neither initializes a runtime nor registers or
+// whitelists the subagent_* tools.
+type SubagentConfig struct {
+	// Enabled gates the whole capability: when false, no Runtime/SpawnProvider
+	// is created and the subagent_* tools are neither registered nor
+	// whitelisted (D10).
+	Enabled bool `yaml:"enabled"`
+	// MaxDepth is the default delegation depth cap applied by subagent_spawn
+	// when the model omits max_depth; <= 0 means the default 8.
+	MaxDepth int `yaml:"max_depth"`
+	// DefaultProvider is the provider subagent_spawn delegates to; empty means
+	// the default "spawn" (the only provider shipped in M5b, so the tool
+	// resolves to it regardless).
+	DefaultProvider string `yaml:"default_provider"`
 }
 
 // KBConfig is the knowledge-base policy (dispatch-m4a §3 / dispatch-m4b §5).
@@ -272,6 +298,25 @@ func applyDefaults(cfg *Config) {
 	if cfg.Jobs.MaxConcurrentJobsPerOwner <= 0 {
 		cfg.Jobs.MaxConcurrentJobsPerOwner = DefaultMaxConcurrentJobsPerOwner
 	}
+	// Enabling subagent whitelists its four consumer tools as well, so the
+	// single subagent.enabled switch turns the whole capability (runtime +
+	// provider + tools + event logging) on; default off (D10, dispatch-m5b-2
+	// §3 — mirrors kb/jobs).
+	if cfg.Subagent.Enabled {
+		for _, name := range subagentToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
+	// M5b subagent defaults: off by default; the delegation depth cap is 8;
+	// the default provider is "spawn".
+	if cfg.Subagent.MaxDepth <= 0 {
+		cfg.Subagent.MaxDepth = DefaultSubagentMaxDepth
+	}
+	if cfg.Subagent.DefaultProvider == "" {
+		cfg.Subagent.DefaultProvider = DefaultSubagentProvider
+	}
 }
 
 // kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /
@@ -285,6 +330,12 @@ var kbToolNames = []string{"kb_search", "kb_read", "kb_add"}
 // names here makes the "jobs.enabled ⇒ 工具自动白名单" rule a single, tested fact
 // shared by applyDefaults and the composition root.
 var jobsToolNames = []string{"job_start", "job_status", "job_cancel", "job_wait", "job_read"}
+
+// subagentToolNames are the subagent consumer tools (dispatch-m5b-2 §2). They
+// are registered and whitelisted only when subagent is enabled; keeping the
+// names here makes the "subagent.enabled ⇒ 工具自动白名单" rule a single, tested
+// fact shared by applyDefaults and the composition root.
+var subagentToolNames = []string{"subagent_spawn", "subagent_status", "subagent_cancel", "subagent_list"}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {

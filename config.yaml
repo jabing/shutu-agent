@@ -82,3 +82,24 @@ jobs:
   # Cap on running+stopping jobs in one owner bucket (and the shared unowned
   # bucket); 0/absent ⇒ 10.
   max_concurrent_jobs_per_owner: 10
+
+# Subagent capability (M5b; design.md §10 D2 / ADR 2026-08-18-m5-agent-core.md
+# 决策 ②). Off by default (D10): when disabled no Runtime/SpawnProvider is
+# initialized and no subagent_* tool is registered or whitelisted.
+# subagent_spawn delegates a task to a brand-new child agent (independent
+# session + independent loop, run in the background); subagent_status observes
+# it (running, or the terminal result once settled), subagent_cancel cancels
+# it, subagent_list enumerates a session's children. Child state/output reach
+# the model through the tools' tool/result; subagent/start, subagent/end and
+# subagent/report are logged as facts (D3). Children are in-memory only — a
+# process restart clears them (no continuation in M5b).
+subagent:
+  # Master switch. false ⇒ no subagent runtime is created and the subagent_*
+  # tools are neither registered nor whitelisted (默认关闭，不初始化).
+  enabled: false
+  # Default delegation depth cap applied by subagent_spawn when max_depth is
+  # omitted; 0/absent ⇒ 8.
+  max_depth: 8
+  # Provider subagent_spawn delegates to. "spawn" (the in-process provider) is
+  # the only one shipped in M5b; empty/absent ⇒ "spawn".
+  default_provider: spawn
