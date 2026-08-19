@@ -77,6 +77,15 @@ const (
 	// that advancement (reserved for a future gated advance; the value is
 	// parsed and defaulted here regardless).
 	DefaultScheduleTickInterval = time.Minute
+
+	// M6e-2 code-sandbox defaults (dispatch-m6e-2 §2): the sandbox execution
+	// deadline is 30s when code.timeout is absent or non-positive (mirrors the
+	// local provider's own default), the per-stream output cap is 65536 bytes
+	// when code.max_output is absent or non-positive (64KiB, the same bound as
+	// the provider default and tools.output_limit), and sandbox_dir stays empty
+	// meaning the provider default (<project>/.sandbox).
+	DefaultCodeTimeout   = 30 * time.Second
+	DefaultCodeMaxOutput = 64 * 1024
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
@@ -101,6 +110,7 @@ type Config struct {
 	Plan       PlanConfig       `yaml:"plan"`        // task-planning policy (M6b)
 	Spill      SpillConfig      `yaml:"spill"`       // long-term-memory policy (M6c)
 	Interact   InteractConfig   `yaml:"interact"`    // human-approval policy (M6d)
+	Code       CodeConfig       `yaml:"code"`        // code-sandbox policy (M6e)
 }
 
 // JobsConfig is the background-job policy (dispatch-m5a-2 §3 / ADR
@@ -253,6 +263,35 @@ type InteractConfig struct {
 	// an enabled interact still registers the interact_* tools but intercepts
 	// nothing.
 	SensitiveTools []string `yaml:"sensitive_tools"`
+}
+
+// CodeConfig is the code-sandbox policy (dispatch-m6e-2 §2 / ADR
+// 2026-08-19-m6-agent-full.md 决策 M6e). The code sandbox is off by default
+// (D10): when disabled the composition root neither creates a local Provider /
+// Engine nor registers or whitelists the code_run tool. It is controlled
+// isolation, not strong isolation (process boundary + timeout + output quota +
+// default no network; Windows has no network namespace — see the internal/code
+// package comment for the exact boundary).
+type CodeConfig struct {
+	// Enabled gates the whole capability: when false, no local Provider/Engine
+	// is created and code_run is neither registered nor whitelisted (D10).
+	Enabled bool `yaml:"enabled"`
+	// Timeout is the sandbox execution deadline code_run applies when the model
+	// omits the per-call timeout (and the outer per-tool deadline bound for
+	// code_run, mirroring tools.run_command.timeout); <= 0 means the default 30s.
+	Timeout Duration `yaml:"timeout"`
+	// MaxOutput is the per-stream output cap of a sandbox run (the model cannot
+	// override it); <= 0 means the default 65536 bytes.
+	MaxOutput int `yaml:"max_output"`
+	// SandboxDir is the sandbox working directory used when the model omits
+	// cwd. Empty means the provider default (<project>/.sandbox).
+	SandboxDir string `yaml:"sandbox_dir"`
+	// AllowNetwork is a declarative network toggle: false (the default) means
+	// the sandbox injects no network credentials — the v1 local provider always
+	// scrubs credential-shaped environment entries regardless of this flag. It
+	// is a recorded boundary, not strong isolation: denying network access at
+	// the OS level is out of scope on Windows (no network namespace).
+	AllowNetwork bool `yaml:"allow_network"`
 }
 
 // KBConfig is the knowledge-base policy (dispatch-m4a §3 / dispatch-m4b §5).
@@ -555,6 +594,28 @@ func applyDefaults(cfg *Config) {
 			}
 		}
 	}
+	// M6e-2 code defaults: off by default (D10); the sandbox timeout is 30s,
+	// the per-stream output cap 65536 bytes, and sandbox_dir empty (the
+	// provider default <project>/.sandbox). Enabling code whitelists its single
+	// consumer tool code_run, so the one code.enabled switch turns the whole
+	// capability (Provider + Engine + tool + event logging) on (mirrors
+	// kb/jobs/subagent/skill/schedule/plan/spill/interact). Non-positive bounds
+	// are clamped to the defaults (校验非负: a negative configured value can
+	// never survive to the wiring). allow_network stays verbatim: false by
+	// default (declarative no-network boundary).
+	if cfg.Code.Enabled {
+		for _, name := range codeToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
+	if cfg.Code.Timeout.Duration <= 0 {
+		cfg.Code.Timeout.Duration = DefaultCodeTimeout
+	}
+	if cfg.Code.MaxOutput <= 0 {
+		cfg.Code.MaxOutput = DefaultCodeMaxOutput
+	}
 }
 
 // kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /
@@ -604,6 +665,12 @@ var spillToolNames = []string{"spill_write", "spill_recall", "spill_list", "spil
 // the names here makes the "interact.enabled ⇒ 工具自动白名单" rule a single,
 // tested fact shared by applyDefaults and the composition root.
 var interactToolNames = []string{"interact_ask", "interact_status"}
+
+// codeToolNames are the code-sandbox consumer tools (dispatch-m6e-2 §2).
+// code_run is registered and whitelisted only when code is enabled; keeping the
+// name here makes the "code.enabled ⇒ 工具自动白名单" rule a single, tested fact
+// shared by applyDefaults and the composition root.
+var codeToolNames = []string{"code_run"}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {

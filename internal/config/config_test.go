@@ -1034,3 +1034,118 @@ func TestLoadInteractEnabledAppendsToolsToWhitelist(t *testing.T) {
 		}
 	}
 }
+
+// M6e-2: an absent code section means the capability is off by default (D10),
+// the sandbox timeout defaults to 30s, the per-stream output cap to 65536,
+// sandbox_dir stays empty (provider default <project>/.sandbox), allow_network
+// stays false (declarative no-network boundary), and code_run is not
+// whitelisted while disabled (dispatch-m6e-2 §2).
+func TestLoadCodeDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Code.Enabled {
+		t.Error("code must be disabled by default (D10)")
+	}
+	if cfg.Code.Timeout.Duration != DefaultCodeTimeout {
+		t.Errorf("code.timeout = %v, want default %v", cfg.Code.Timeout.Duration, DefaultCodeTimeout)
+	}
+	if cfg.Code.MaxOutput != DefaultCodeMaxOutput {
+		t.Errorf("code.max_output = %d, want default %d", cfg.Code.MaxOutput, DefaultCodeMaxOutput)
+	}
+	if cfg.Code.SandboxDir != "" {
+		t.Errorf("code.sandbox_dir = %q, want empty (provider default <project>/.sandbox)", cfg.Code.SandboxDir)
+	}
+	if cfg.Code.AllowNetwork {
+		t.Error("code.allow_network must default to false (declarative no-network boundary)")
+	}
+	for _, name := range codeToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when code disabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// M6e-2: an explicit code section is honored (enabled, timeout, max_output,
+// sandbox_dir, allow_network), while a non-positive timeout/max_output fall
+// back to their defaults (校验非负: a negative configured value never survives).
+func TestLoadCodeParsesSectionAndFallsBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("code:\n  enabled: true\n  timeout: 5s\n  max_output: 4096\n  sandbox_dir: C:\\sandbox\n  allow_network: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Code.Enabled {
+		t.Error("code.enabled should be true")
+	}
+	if cfg.Code.Timeout.Duration != 5*time.Second {
+		t.Errorf("code.timeout = %v, want 5s", cfg.Code.Timeout.Duration)
+	}
+	if cfg.Code.MaxOutput != 4096 {
+		t.Errorf("code.max_output = %d, want 4096", cfg.Code.MaxOutput)
+	}
+	if cfg.Code.SandboxDir != `C:\sandbox` {
+		t.Errorf("code.sandbox_dir = %q, want C:\\sandbox", cfg.Code.SandboxDir)
+	}
+	if !cfg.Code.AllowNetwork {
+		t.Error("code.allow_network = false, want true (explicitly enabled)")
+	}
+
+	// Non-positive (including negative) bounds fall back to the defaults.
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("code:\n  enabled: true\n  timeout: -1s\n  max_output: 0\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Code.Timeout.Duration != DefaultCodeTimeout {
+		t.Errorf("code.timeout -1s = %v, want default %v", cfg2.Code.Timeout.Duration, DefaultCodeTimeout)
+	}
+	if cfg2.Code.MaxOutput != DefaultCodeMaxOutput {
+		t.Errorf("code.max_output 0 = %d, want default %d", cfg2.Code.MaxOutput, DefaultCodeMaxOutput)
+	}
+}
+
+// M6e-2: code.enabled: true is the single switch that turns the whole
+// capability on — the code_run tool must also become whitelisted
+// (dispatch-m6e-2 §2, mirrors kb/jobs/subagent/skill/schedule/plan/spill/
+// interact).
+func TestLoadCodeEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("code:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range codeToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after code.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+
+	// Explicit enabled:false leaves the default whitelist untouched.
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("code:\n  enabled: false\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Code.Enabled {
+		t.Error("code.enabled = true, want false (explicitly disabled)")
+	}
+	for _, name := range codeToolNames {
+		if contains(cfg2.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when code explicitly disabled", cfg2.Tools.Enabled, name)
+		}
+	}
+}

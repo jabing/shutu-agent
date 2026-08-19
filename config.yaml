@@ -222,3 +222,38 @@ interact:
   # Empty ⇒ no gating; an enabled interact still registers the interact_* tools
   # but intercepts nothing.
   sensitive_tools: []
+
+# Code-sandbox capability (M6e; design.md §10 D2 / ADR 2026-08-19-m6-agent-full.md
+# 决策 M6e / dispatch-m6e-2). Off by default (D10): when disabled no local
+# Provider/Engine is initialized and code_run is neither registered nor
+# whitelisted. When enabled, code_run executes a shell script ("sh") in a
+# controlled local subprocess sandbox: a separate child process, a hard-kill
+# timeout, a per-stream output quota with truncation markers, and an isolated
+# sandbox working directory — default no network credentials injected (the
+# child's environment is scrubbed of credential-shaped entries). This is
+# controlled isolation, not strong isolation: on Windows there is no network
+# namespace, so denying network at the OS level is out of scope. The run
+# outcome (exit code / output / timeout / truncation) is returned to the model
+# and code/run is logged as a fact (D3). The tool is a sandboxed sibling of M3's
+# run_command: it keeps run_command available and adds the sandbox semantics
+# (timeout + quota + sandbox cwd) on top.
+code:
+  # Master switch. false ⇒ no local Provider/Engine is created and code_run is
+  # neither registered nor whitelisted (默认关闭，不初始化).
+  enabled: false
+  # Sandbox execution deadline (Go duration) applied when the model omits the
+  # per-call timeout, and the outer per-tool deadline bound for code_run
+  # (mirrors tools.run_command.timeout); 0/absent ⇒ 30s. Keep it ≤ tools.timeout
+  # or raise tools.timeout if you want sandbox runs to outlive the generic
+  # per-tool deadline.
+  timeout: 30s
+  # Per-stream output cap of a sandbox run in bytes (the model cannot override
+  # it); 0/absent ⇒ 65536 (64KiB).
+  max_output: 65536
+  # Sandbox working directory used when the model omits cwd. Empty ⇒ the
+  # provider default <project>/.sandbox (created on demand).
+  # sandbox_dir: ""
+  # Declarative network toggle: false (default) ⇒ the sandbox injects no
+  # network credentials (the local provider always scrubs credential-shaped
+  # environment entries regardless). Recorded boundary, not strong isolation.
+  allow_network: false
