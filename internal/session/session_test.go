@@ -1454,3 +1454,106 @@ func TestCodeRunEventMixedWithConversationDeriveOnlyConversation(t *testing.T) {
 		t.Fatalf("log events = %d, want 4 (append-only)", got)
 	}
 }
+
+// TestMcpEventsAppendAndReplay verifies the M6f-2 mcp/* vocabulary
+// (dispatch-m6f-2 §1 / D3): each of the two event types appends with the next
+// Seq/version, round-trips its payload through the durable sink, survives a
+// restart replay, and never derives into model messages (log-only — the model
+// sees the tool table through mcp_list's tool/result and the call outcome
+// through mcp_call's tool/result).
+func TestMcpEventsAppendAndReplay(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	if _, err := l.Append(EventMcpList, NewMcpList(3)); err != nil {
+		t.Fatalf("append mcp/list: %v", err)
+	}
+	if _, err := l.Append(EventMcpCall, NewMcpCall("echo", false)); err != nil {
+		t.Fatalf("append mcp/call: %v", err)
+	}
+	if _, err := l.Append(EventMcpCall, NewMcpCall("delete_file", true)); err != nil {
+		t.Fatalf("append mcp/call (isError): %v", err)
+	}
+	events := l.Events()
+	if len(events) != 3 {
+		t.Fatalf("events = %d, want 3", len(events))
+	}
+	wantTypes := []string{EventMcpList, EventMcpCall, EventMcpCall}
+	for i, ev := range events {
+		if ev.Type != wantTypes[i] {
+			t.Fatalf("type %d = %q, want %q", i, ev.Type, wantTypes[i])
+		}
+		if ev.Version != EventVersion {
+			t.Fatalf("event %d version = %d, want %d", i, ev.Version, EventVersion)
+		}
+	}
+	// JSON round-trip of each payload.
+	var ml mcpListData
+	if err := json.Unmarshal(events[0].Data, &ml); err != nil {
+		t.Fatalf("unmarshal mcp/list: %v", err)
+	}
+	if ml.Count != 3 {
+		t.Fatalf("mcp/list payload = %+v", ml)
+	}
+	var mc mcpCallData
+	if err := json.Unmarshal(events[1].Data, &mc); err != nil {
+		t.Fatalf("unmarshal mcp/call: %v", err)
+	}
+	if mc.Name != "echo" || mc.IsError {
+		t.Fatalf("mcp/call payload = %+v", mc)
+	}
+	var me mcpCallData
+	if err := json.Unmarshal(events[2].Data, &me); err != nil {
+		t.Fatalf("unmarshal mcp/call (isError): %v", err)
+	}
+	if me.Name != "delete_file" || !me.IsError {
+		t.Fatalf("mcp/call isError payload = %+v", me)
+	}
+	if len(persisted) != 3 || persisted[0].Type != EventMcpList {
+		t.Fatalf("sink (append path) = %+v", persisted)
+	}
+	// Restart replay: a fresh log rebuilt from what was persisted still sees
+	// every mcp event, and deriving history treats them all as opaque data
+	// (log-only, like the M5/M6 events).
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	for i, want := range wantTypes {
+		if got := fresh.Events()[i].Type; got != want {
+			t.Fatalf("replayed type %d = %q, want %q", i, got, want)
+		}
+	}
+	if msgs := fresh.DeriveHistory(); len(msgs) != 0 {
+		t.Fatalf("mcp/* events must not derive into messages: %+v", msgs)
+	}
+}
+
+// TestMcpEventsMixedWithConversationDeriveOnlyConversation verifies the
+// log-only contract: mcp/* rows interleaved with a real conversation do not
+// appear in the derived history, and the conversation round-trips unchanged
+// (D4 — adding the events never changes the turn/step structure).
+func TestMcpEventsMixedWithConversationDeriveOnlyConversation(t *testing.T) {
+	l := New()
+	l.Append(EventUserMessage, NewUserMessage("list the tools"))
+	l.Append(EventMcpList, NewMcpList(2))
+	l.Append(EventAssistantMessage, NewAssistantMessage("Listed 2 tools.", nil, "stop"))
+	l.Append(EventMcpCall, NewMcpCall("echo", false))
+	msgs := l.DeriveHistory()
+	if len(msgs) != 2 {
+		t.Fatalf("derived %d messages, want 2 (conversation only): %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "list the tools" {
+		t.Fatalf("msg0 = %+v", msgs[0])
+	}
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Listed 2 tools." {
+		t.Fatalf("msg1 = %+v", msgs[1])
+	}
+	// D1: the mcp rows stay physically in the log.
+	if got := len(l.Events()); got != 4 {
+		t.Fatalf("log events = %d, want 4 (append-only)", got)
+	}
+}

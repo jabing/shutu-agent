@@ -163,6 +163,19 @@ const (
 	// (D4). The payload is a pure data projection — the session package never
 	// imports the code package.
 	EventCodeRun = "code/run"
+
+	// M6f-2 mcp events (design.md §3 / ADR 2026-08-19-m6-agent-full.md
+	// 决策 M6f / dispatch-m6f-2 §1): mcp/list lands when mcp_list lists a
+	// configured server's tools (carrying the count), mcp/call when mcp_call
+	// invokes one (carrying the tool name and whether the server reported a
+	// tool-level failure inside a successful result). They are log-only (D3):
+	// the model sees the tool table through mcp_list's tool/result and the call
+	// outcome through mcp_call's tool/result, and DeriveHistory treats these
+	// types as opaque data, so adding them never changes the turn/step
+	// structure (D4). The payloads are pure data projections — the session
+	// package never imports the mcp package.
+	EventMcpList = "mcp/list"
+	EventMcpCall = "mcp/call"
 )
 
 // EventVersion is the current event vocabulary version. It is stored per event
@@ -988,4 +1001,31 @@ type codeRunData struct {
 // sandbox execution (dispatch-m6e-2 §1 / D3).
 func NewCodeRun(lang string, exitCode int, timedOut, truncated bool) any {
 	return codeRunData{Lang: lang, ExitCode: exitCode, TimedOut: timedOut, Truncated: truncated}
+}
+
+// mcpListData is the mcp/list payload: the number of tools the listed server
+// advertised. DeriveHistory treats it as opaque data.
+type mcpListData struct {
+	Count int `json:"count"`
+}
+
+// mcpCallData is the mcp/call payload: the invoked tool name and whether the
+// server reported a tool-level execution failure (isError) inside a successful
+// result. A transport/protocol failure returns an error and logs nothing.
+// DeriveHistory treats it as opaque data.
+type mcpCallData struct {
+	Name    string `json:"name"`
+	IsError bool   `json:"isError"`
+}
+
+// NewMcpList builds the mcp/list payload recorded when mcp_list lists a
+// configured server's tools (dispatch-m6f-2 §1 / D3).
+func NewMcpList(count int) any {
+	return mcpListData{Count: count}
+}
+
+// NewMcpCall builds the mcp/call payload recorded when mcp_call invokes a
+// server tool (dispatch-m6f-2 §1 / D3).
+func NewMcpCall(name string, isError bool) any {
+	return mcpCallData{Name: name, IsError: isError}
 }
