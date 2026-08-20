@@ -91,7 +91,7 @@ func main() {
 		}
 	}
 
-	promptBuilder, err := prompt.LoadDir(cfg.PromptsDir)
+	promptBuilder, err := buildPrompt(cfg.Mode, cfg.PromptsDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
@@ -696,6 +696,7 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 	} else {
 		fmt.Println("terminal: disabled (terminal.enabled=false)")
 	}
+	fmt.Printf("mode: %s\n", a.cfg.Mode)
 	if a.cfg.Eval.Enabled {
 		fmt.Printf("eval: enabled (max_records=%d)\n", a.cfg.Eval.MaxRecords)
 	} else {
