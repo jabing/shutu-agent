@@ -169,6 +169,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
 	}
+	// GAP-3: wire the task-DAG orchestration seam (ADR
+	// 2026-08-20-standard-gaps.md D-GAP-2, 用户拍板 JSON DAG 声明式编排) — the
+	// workflow_run tool — when workflow.enabled (默认关 D10). config.applyDefaults
+	// already whitelisted workflow_run when workflow.enabled was true.
+	// registerWorkflow runs after registerSubagent because its spawn closure
+	// depends on a.subagents (the subagent Runtime); it holds no closable
+	// resources, so there is no deferred Close. Each task spawns a child and
+	// blocks until it settles on the serial tool path (D5); the loop's
+	// turn/step structure is untouched (D4).
+	if err := app.registerWorkflow(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
 	// M5c-2b: wire the compaction seam — BasicEngine for the /compact command
 	// and the loop "compaction" pre-step injector — when compaction.enabled
 	// (默认关闭, D10). Compaction whitelists no consumer tools (it has none:

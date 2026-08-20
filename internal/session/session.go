@@ -70,6 +70,15 @@ const (
 	// outcome markers — never the worker outputs.
 	EventRalphRun = "ralph/run"
 
+	// GAP-3 workflow events (design.md §3 / ADR 2026-08-20-standard-gaps.md
+	// D-GAP-2 / dispatch-gap-3 §4): workflow/run lands when a workflow DAG
+	// settles (every task completed or failed). It is log-only (D3): the model
+	// sees the per-task reports through the workflow_run tool's tool/result
+	// event, and DeriveHistory treats this type as opaque data, so adding it
+	// never changes the turn/step structure (D4). The payload is a lean summary
+	// — the task/completed/failed counts — never the task outputs.
+	EventWorkflowRun = "workflow/run"
+
 	// M5b subagent events (design.md §3 / ADR 2026-08-18-m5-agent-core.md
 	// 决策 ② / dispatch-m5b-2 §1): subagent/start lands when a delegation
 	// registers successfully, subagent/end when a child settles (observed on
@@ -715,6 +724,22 @@ type ralphRunData struct {
 // settles (dispatch-gap-2 §4 / D3).
 func NewRalphRun(objective string, rounds int, done, blocked bool) any {
 	return ralphRunData{Objective: objective, Rounds: rounds, Done: done, Blocked: blocked}
+}
+
+// workflowRunData is the workflow/run payload (D-GAP-2 / dispatch-gap-3 §4):
+// the task/completed/failed counts of one settled DAG run. The per-task
+// reports stay in the workflow_run tool's tool/result event — this record is a
+// lean log fact. DeriveHistory treats it as opaque data.
+type workflowRunData struct {
+	Total     int `json:"total"`
+	Completed int `json:"completed"`
+	Failed    int `json:"failed"`
+}
+
+// NewWorkflowRun builds the workflow/run payload recorded when a workflow DAG
+// settles (dispatch-gap-3 §4 / D3).
+func NewWorkflowRun(total, completed, failed int) any {
+	return workflowRunData{Total: total, Completed: completed, Failed: failed}
 }
 
 // summaryHead returns a bounded, whitespace-compacted head of s for a log

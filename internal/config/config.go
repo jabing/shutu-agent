@@ -148,6 +148,11 @@ const (
 	DefaultEvalManualFallback = true
 	DefaultEvalMaxRecords     = 100
 
+	// GAP-3 workflow defaults (dispatch-gap-3 §5): the ready-task concurrency
+	// cap is 4 when workflow.max_concurrent is absent or non-positive — kept in
+	// sync with workflow.DefaultMaxConcurrent (the same D-GAP-2 cap).
+	DefaultWorkflowMaxConcurrent = 4
+
 	// Mode presets (ADR 2026-08-20-mode-presets.md D-MODE-1): the top-level
 	// mode selects the agent's capability preset — minimal (极简: 固定 persona
 	// + 持久 shell + 文件编辑), standard (标准: 全部已实现能力, 默认), code
@@ -199,6 +204,7 @@ type Config struct {
 	Terminal   TerminalConfig   `yaml:"terminal"`    // persistent-shell terminal (M9)
 	Eval       EvalConfig       `yaml:"eval"`        // task-evaluation seam (eval)
 	Ralph      RalphConfig      `yaml:"ralph"`       // fresh-agent loop (D-GAP-3)
+	Workflow   WorkflowConfig   `yaml:"workflow"`    // task-DAG orchestration (D-GAP-2)
 	FsSearch   FsSearchConfig   `yaml:"fs_search"`   // file-content-search policy (D-GAP-1)
 
 	// Mode selects the agent capability preset (D-MODE-1): minimal | standard
@@ -277,6 +283,20 @@ type EvalConfig struct {
 // Runtime). minimal 模式同样关闭 (D-MODE-2).
 type RalphConfig struct {
 	Enabled bool `yaml:"enabled"` // default false (D10)
+}
+
+// WorkflowConfig is the task-DAG orchestration policy (ADR
+// 2026-08-20-standard-gaps.md D-GAP-2 / dispatch-gap-3 §5). The capability is
+// default off (D10): when Enabled is false the composition root registers no
+// workflow_run tool. Enabling workflow also requires subagent (the DAG spawns
+// children through the subagent Runtime). minimal 模式同样关闭 (D-MODE-2).
+type WorkflowConfig struct {
+	// Enabled gates the whole capability: when false, no Engine is created
+	// and workflow_run is neither registered nor whitelisted (D10).
+	Enabled bool `yaml:"enabled"` // default false (D10)
+	// MaxConcurrent is the ready-task concurrency cap the engine applies
+	// (D-GAP-2); <= 0 means the default 4.
+	MaxConcurrent int `yaml:"max_concurrent"` // default 4
 }
 
 // MultimodalConfig is the image-attachment policy (dispatch-m8-3 §3 / ADR
@@ -1126,6 +1146,22 @@ func applyDefaults(cfg *Config) {
 			}
 		}
 	}
+	// GAP-3 workflow defaults: off by default (D10); the ready-task concurrency
+	// cap is 4. Enabling workflow whitelists its single consumer tool
+	// workflow_run, so the one workflow.enabled switch turns the whole
+	// capability (engine + tool + event logging) on (mirrors kb/jobs/subagent/
+	// skill/schedule/plan/spill/interact/code/mcp/fs/web/terminal/eval/
+	// fs_search/ralph). Non-positive caps are clamped to the default (校验非负).
+	if cfg.Workflow.Enabled {
+		for _, name := range workflowToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
+	if cfg.Workflow.MaxConcurrent <= 0 {
+		cfg.Workflow.MaxConcurrent = DefaultWorkflowMaxConcurrent
+	}
 	// D-MODE-2 (ADR 2026-08-20-mode-presets.md): minimal 模式是预设优先 ——
 	// 只保留持久 shell + 文件编辑 + M1 基础只读；其余能力 cap 全关、白名单
 	// 整体重置为 minimal 集合。register* 的 D10 门读这些 Enabled, 因此注册面
@@ -1136,6 +1172,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Fs.Enabled = true
 		cfg.FsSearch.Enabled = false // minimal 不含搜索 (D-MODE-2)
 		cfg.Ralph.Enabled = false    // minimal 不含 fresh-agent 循环 (D-MODE-2)
+		cfg.Workflow.Enabled = false // minimal 不含 workflow DAG 编排 (D-MODE-2)
 		cfg.KB.Enabled = false
 		cfg.Jobs.Enabled = false
 		cfg.Subagent.Enabled = false
@@ -1234,6 +1271,12 @@ var fsSearchToolNames = []string{"fs_search"}
 // makes the "ralph.enabled ⇒ 工具自动白名单" rule a single, tested fact shared by
 // applyDefaults and the composition root.
 var ralphToolNames = []string{"ralph"}
+
+// workflowToolNames are the task-DAG orchestration consumer tools (D-GAP-2).
+// workflow_run is registered and whitelisted only when workflow is enabled;
+// keeping the name here makes the "workflow.enabled ⇒ 工具自动白名单" rule a
+// single, tested fact shared by applyDefaults and the composition root.
+var workflowToolNames = []string{"workflow_run"}
 
 // webToolNames are the web consumer tools (dispatch-m7-2 §5). They are
 // registered and whitelisted only when web is enabled; keeping the names here

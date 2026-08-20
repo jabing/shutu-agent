@@ -1457,6 +1457,103 @@ func TestLoadRalphEnabledAppendsToolsToWhitelist(t *testing.T) {
 	}
 }
 
+// GAP-3: an absent workflow section means the capability is off by default
+// (D10) with max_concurrent at its default, and workflow_run is not
+// whitelisted.
+func TestLoadWorkflowDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Workflow.Enabled {
+		t.Error("workflow must be disabled by default (D10)")
+	}
+	if cfg.Workflow.MaxConcurrent != DefaultWorkflowMaxConcurrent {
+		t.Errorf("workflow.max_concurrent = %d, want %d", cfg.Workflow.MaxConcurrent, DefaultWorkflowMaxConcurrent)
+	}
+	for _, name := range workflowToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when workflow disabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// GAP-3: an explicit workflow.enabled: true is honored (and workflow_run is
+// whitelisted), while an explicit enabled:false leaves the default whitelist
+// untouched (D10); a non-positive max_concurrent is clamped to the default.
+func TestLoadWorkflowParsesSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("workflow:\n  enabled: true\n  max_concurrent: 2\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Workflow.Enabled {
+		t.Error("workflow.enabled should be true")
+	}
+	if cfg.Workflow.MaxConcurrent != 2 {
+		t.Errorf("workflow.max_concurrent = %d, want 2", cfg.Workflow.MaxConcurrent)
+	}
+	for _, name := range workflowToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after workflow.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("workflow:\n  enabled: false\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Workflow.Enabled {
+		t.Error("workflow.enabled = true, want false (explicitly disabled)")
+	}
+	if cfg2.Workflow.MaxConcurrent != DefaultWorkflowMaxConcurrent {
+		t.Errorf("workflow.max_concurrent = %d, want %d when absent", cfg2.Workflow.MaxConcurrent, DefaultWorkflowMaxConcurrent)
+	}
+	for _, name := range workflowToolNames {
+		if contains(cfg2.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when workflow explicitly disabled", cfg2.Tools.Enabled, name)
+		}
+	}
+
+	// A non-positive max_concurrent is clamped to the default (校验非负).
+	path3 := filepath.Join(t.TempDir(), "config3.yaml")
+	if err := os.WriteFile(path3, []byte("workflow:\n  enabled: true\n  max_concurrent: 0\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg3, err := Load(path3)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg3.Workflow.MaxConcurrent != DefaultWorkflowMaxConcurrent {
+		t.Errorf("workflow.max_concurrent = %d, want %d (clamped)", cfg3.Workflow.MaxConcurrent, DefaultWorkflowMaxConcurrent)
+	}
+}
+
+// GAP-3: workflow.enabled: true is the single switch that turns the whole
+// capability on — workflow_run must also become whitelisted.
+func TestLoadWorkflowEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("workflow:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range workflowToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after workflow.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
 // M7-2: an absent web section means the capability is off by default (D10)
 // with every field at its default, and no web_* tool is whitelisted while
 // disabled (dispatch-m7-2 §5).
@@ -2031,7 +2128,7 @@ func TestModeMinimalWhitelist(t *testing.T) {
 // minimal set.
 func TestModeMinimalPresetFirst(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	content := "mode: minimal\nkb:\n  enabled: true\nweb:\n  enabled: true\nfs_search:\n  enabled: true\nralph:\n  enabled: true\ntools:\n  enabled: [web_search]\n"
+	content := "mode: minimal\nkb:\n  enabled: true\nweb:\n  enabled: true\nfs_search:\n  enabled: true\nralph:\n  enabled: true\nworkflow:\n  enabled: true\ntools:\n  enabled: [web_search]\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -2050,6 +2147,9 @@ func TestModeMinimalPresetFirst(t *testing.T) {
 	}
 	if cfg.Ralph.Enabled {
 		t.Error("minimal must override an explicit ralph.enabled: true (D-MODE-2 不含 fresh-agent 循环)")
+	}
+	if cfg.Workflow.Enabled {
+		t.Error("minimal must override an explicit workflow.enabled: true (D-MODE-2 不含 workflow 编排)")
 	}
 	if !cfg.Terminal.Enabled || !cfg.Fs.Enabled {
 		t.Error("minimal must keep terminal and fs enabled despite the explicit overrides")
@@ -2158,6 +2258,7 @@ func modeCapStates(cfg Config) map[string]bool {
 		"fs":             cfg.Fs.Enabled,
 		"fs_search":      cfg.FsSearch.Enabled,
 		"ralph":          cfg.Ralph.Enabled,
+		"workflow":       cfg.Workflow.Enabled,
 		"jobs":           cfg.Jobs.Enabled,
 		"subagent":       cfg.Subagent.Enabled,
 		"web":            cfg.Web.Enabled,

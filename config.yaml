@@ -469,4 +469,25 @@ ralph:
   # whitelisted (默认关 D10，不初始化).
   enabled: false
 
+# Task-DAG orchestration capability (GAP-3; ADR 2026-08-20-standard-gaps.md
+# D-GAP-2 / docs/dispatch-gap-3.md). Off by default (D10): when disabled the
+# composition root registers no workflow_run tool and whitelists nothing
+# (默认关闭，不初始化). When enabled, workflow_run submits a declarative task DAG
+# (tasks[] with id/prompt/depends_on) that the engine topologically sorts and
+# executes layer by layer — dependency-free tasks spawn concurrently (bounded
+# by max_concurrent, D-GAP-2), a dependent receives the bounded output summaries
+# of its dependencies, and a failed dependency never blocks its dependents. No
+# JS engine: the JSON DAG is the declarative form (用户拍板). The per-task
+# reports reach the model through the tool's tool/result, and workflow/run is
+# logged as a fact (D3). The tool runs on the serial tool path (D5). Enabling
+# workflow also requires subagent (the DAG spawns children through the subagent
+# Runtime).
+workflow:
+  # Master switch. false ⇒ no workflow Engine is created and workflow_run is
+  # neither registered nor whitelisted (默认关 D10，不初始化).
+  enabled: false
+  # Ready-task concurrency cap (how many DAG tasks spawn in parallel within one
+  # layer); 0/absent ⇒ 4.
+  max_concurrent: 4
+
 
