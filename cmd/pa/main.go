@@ -26,6 +26,7 @@ import (
 	"personal-agent/internal/code"
 	"personal-agent/internal/compaction"
 	"personal-agent/internal/config"
+	"personal-agent/internal/eval"
 	"personal-agent/internal/fs"
 	"personal-agent/internal/interact"
 	"personal-agent/internal/jobs"
@@ -316,6 +317,18 @@ func main() {
 	if app.interacts != nil {
 		defer app.interacts.Close()
 	}
+	// eval: wire the task-evaluation seam — the CompositeEvaluator (rule → LLM
+	// judge → human fallback) over a.llm/a.interacts + the three eval_* tools +
+	// the /eval-status command + the D3 event sink — when eval.enabled (默认关
+	// D10). config.applyDefaults already whitelisted the eval_* names when
+	// eval.enabled was true. The engine is in-memory; Close is idempotent.
+	if err := app.registerEval(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
+	if app.evalEng != nil {
+		defer app.evalEng.Close()
+	}
 	if err := app.startup(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
@@ -355,6 +368,10 @@ type app struct {
 	mcp        []mcp.Client      // nil when mcp disabled (D10); one live bridged client per configured server
 	fs         fs.FileService    // nil when fs disabled (D10)
 	web        *web.Engine       // nil when web disabled (D10)
+
+	// evalEng is the task-evaluation engine (ADR 2026-08-20-eval-seam.md);
+	// nil when eval disabled (D10).
+	evalEng eval.Engine
 
 	// M9 persistent terminal (dispatch-m9-2): the single active session and
 	// the shared terminal_* tool bundle. Nil when terminal disabled (D10) or
@@ -559,6 +576,8 @@ func (a *app) command(ctx context.Context, line string) error {
 		return a.attachCommand(ctx, fields[1:])
 	case "/term":
 		return a.termCommand(ctx, fields[1:])
+	case "/eval-status":
+		return a.evalStatus()
 	case "/compact":
 		return a.compactCommand(ctx, fields[1:])
 	default:
@@ -578,6 +597,7 @@ func (a *app) printHelp() {
   /llm-status       LLM provider status (provider / model / modalities)
   /attach <path>    attach an image file as a multimodal user message (M8-3)
   /term <start|write|read|signal|stop>  persistent-shell terminal (M9)
+  /eval-status       task-evaluation status (eval)
   /compact          compact the session now (fold old context into a summary)
   /compact region <start> <end>  compact only the given surface event range
   /help             show this command table
@@ -675,6 +695,11 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 			a.cfg.Terminal.Shell, a.cfg.Terminal.ReadIdleMS, a.cfg.Terminal.ReadTimeoutMS)
 	} else {
 		fmt.Println("terminal: disabled (terminal.enabled=false)")
+	}
+	if a.cfg.Eval.Enabled {
+		fmt.Printf("eval: enabled (max_records=%d)\n", a.cfg.Eval.MaxRecords)
+	} else {
+		fmt.Println("eval: disabled (eval.enabled=false)")
 	}
 }
 

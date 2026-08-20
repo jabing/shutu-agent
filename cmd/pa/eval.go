@@ -1,0 +1,191 @@
+// eval.go — the Eval-3b composition-root orchestration (dispatch-eval-3b
+// §交付 1 / ADR 2026-08-20-eval-seam.md D-EVAL-2/3/7). This is where the
+// task-evaluation capability seam is wired into the REPL: registerEval builds
+// the CompositeEvaluator (rule assertions → LLM judge → human fallback,
+// D-EVAL-3) over the app's LLM and interact engines, creates the eval Engine,
+// registers the three eval_* tools and wires the D3 event sink so eval/run
+// lands in the active session log, when eval.enabled (默认关 D10). /eval-status
+// reports the seam's configuration and history summary. The loop's turn/step
+// structure is untouched (D4): evaluation runs on the serial tool path (D5).
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"personal-agent/internal/eval"
+	"personal-agent/internal/interact"
+	"personal-agent/internal/llm"
+	"personal-agent/internal/tools"
+)
+
+// registerEval wires the task-evaluation seam (ADR 2026-08-20-eval-seam.md)
+// when eval.enabled (默认关 D10): it builds the CompositeEvaluator (rule
+// assertions → LLM judge → human fallback, D-EVAL-3) over the app's LLM and
+// interact engines, creates the eval Engine, registers the three eval_* tools,
+// and wires the D3 event sink so eval/run lands in the active session log.
+// config.applyDefaults already whitelisted the eval_* names when eval.enabled
+// was true. The engine is in-memory (no persisted history) and its Close is
+// idempotent. The loop's turn/step structure is untouched (D4): evaluation
+// runs on the serial tool path.
+func (a *app) registerEval() error {
+	if !a.cfg.Eval.Enabled {
+		return nil
+	}
+	manualFallback := true
+	if a.cfg.Eval.ManualFallback != nil {
+		manualFallback = *a.cfg.Eval.ManualFallback
+	}
+	composite := eval.CompositeEvaluator{
+		Rule:           eval.RuleEvaluator{},
+		LLM:            eval.LLMEvaluator{Judge: a.evalJudge()},
+		Manual:         eval.ManualEvaluator{Manual: a.evalManual()},
+		ManualFallback: manualFallback,
+	}
+	eng, err := eval.NewEngine(eval.EngineOpts{Evaluator: composite, MaxRecords: a.cfg.Eval.MaxRecords})
+	if err != nil {
+		return fmt.Errorf("pa: eval engine: %w", err)
+	}
+	a.evalEng = eng
+	onEvent := func(typ string, data any) {
+		if _, err := a.log.Append(typ, data); err != nil {
+			fmt.Fprintln(os.Stderr, "pa: "+typ+" event:", err)
+		}
+	}
+	et := eval.NewEvalTools(eng, onEvent)
+	for _, t := range []tools.Tool{et.Run(), et.Result(), et.List()} {
+		if err := a.reg.Register(t); err != nil {
+			return fmt.Errorf("pa: register %s: %w", t.Name(), err)
+		}
+	}
+	return nil
+}
+
+// evalJudgeSystemPrompt asks the judge model to return JSON only.
+const evalJudgeSystemPrompt = "You are a rigorous evaluator. Given a deliverable and acceptance criteria, judge whether the deliverable satisfies them. Respond with JSON only: {\"verdict\": \"pass\"|\"fail\"|\"manual\", \"reason\": \"one-line justification\"}."
+
+// judgeOutputMax bounds the deliverable head sent to the judge (D-EVAL-3).
+const judgeOutputMax = 6000
+
+// evalJudge adapts the app's LLM to the eval seam's JudgeFunc (D-EVAL-3). It
+// sends a single non-streaming-style request (no tools ⇒ plain stream) and
+// parses the model's JSON verdict, tolerantly mapping unrecognized output to
+// manual.
+func (a *app) evalJudge() eval.JudgeFunc {
+	model := llmProviderModel(a.cfg, a.cfg.LLM.Provider)
+	return func(ctx context.Context, output string, llmCriteria []string) (eval.Verdict, string, error) {
+		head := runeHead(output, judgeOutputMax)
+		user := "Deliverable:\n" + head + "\n\nAcceptance criteria to judge:\n" + strings.Join(llmCriteria, "\n")
+		msgs := []llm.Message{
+			{Role: llm.RoleSystem, Content: []llm.ContentBlock{llm.Text(evalJudgeSystemPrompt)}},
+			{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text(user)}},
+		}
+		reader, err := a.llm.Stream(ctx, llm.ChatRequest{Model: model, Messages: msgs})
+		if err != nil {
+			return eval.VerdictManual, "", err
+		}
+		var b strings.Builder
+		for {
+			ev, err := reader.Next()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				return eval.VerdictManual, "", err
+			}
+			if ev.Kind == llm.StreamTextDelta {
+				b.WriteString(ev.Text)
+			}
+		}
+		var parsed struct {
+			Verdict string `json:"verdict"`
+			Reason  string `json:"reason"`
+		}
+		text := strings.TrimSpace(b.String())
+		if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+			// Tolerant fallback: scan for a verdict keyword.
+			switch {
+			case strings.Contains(text, `"fail"`):
+				parsed.Verdict = "fail"
+			case strings.Contains(text, `"pass"`):
+				parsed.Verdict = "pass"
+			default:
+				parsed.Verdict = "manual"
+			}
+		}
+		switch parsed.Verdict {
+		case "pass":
+			return eval.VerdictPass, parsed.Reason, nil
+		case "fail":
+			return eval.VerdictFail, parsed.Reason, nil
+		default:
+			return eval.VerdictManual, parsed.Reason, nil
+		}
+	}
+}
+
+// runeHead returns the first max runes of s (append "…" when cut).
+func runeHead(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
+}
+
+// evalManual adapts the app's interact engine to the eval seam's ManualFunc
+// (D-EVAL-7): an undecidable evaluation becomes an interact approval request
+// (approved→pass, rejected→fail). When interact is disabled the fallback
+// reports manual (undecided) rather than failing.
+func (a *app) evalManual() eval.ManualFunc {
+	return func(ctx context.Context, taskID, output string, manualCriteria []string) (eval.Verdict, string, error) {
+		if a.interacts == nil {
+			return eval.VerdictManual, "interact disabled: no human fallback", nil
+		}
+		promptText := "无法自动判定以下交付是否满足验收标准，请人工审批。\n"
+		if taskID != "" {
+			promptText += "任务：" + taskID + "\n"
+		}
+		promptText += "验收标准：\n" + strings.Join(manualCriteria, "\n") + "\n交付摘要：\n" + runeHead(output, 2000)
+		req, err := a.interacts.Request(ctx, promptText, "eval_manual", runeHead(output, 2000))
+		if err != nil {
+			return eval.VerdictManual, "", err
+		}
+		res, err := a.interacts.Await(ctx, req.ID)
+		if err != nil {
+			return eval.VerdictManual, "", err
+		}
+		switch res.Status {
+		case interact.StatusApproved:
+			return eval.VerdictPass, "approved by human", nil
+		case interact.StatusRejected:
+			return eval.VerdictFail, "rejected by human", nil
+		default:
+			return eval.VerdictManual, "no human decision", nil
+		}
+	}
+}
+
+// evalStatus prints the eval seam configuration and history summary.
+func (a *app) evalStatus() error {
+	if a.evalEng == nil {
+		fmt.Println("eval: disabled (eval.enabled=false)")
+		return nil
+	}
+	recs, err := a.evalEng.List(context.Background())
+	if err != nil {
+		return err
+	}
+	manual := true
+	if a.cfg.Eval.ManualFallback != nil {
+		manual = *a.cfg.Eval.ManualFallback
+	}
+	fmt.Printf("eval: enabled (records=%d, max_records=%d, manual_fallback=%v)\n",
+		len(recs), a.cfg.Eval.MaxRecords, manual)
+	return nil
+}
