@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	"personal-agent/internal/llm"
@@ -93,6 +94,7 @@ func (p *SpawnProvider) Start(ctx context.Context, req StartRequest) (*Run, erro
 	if req.Prompt == "" {
 		return nil, fmt.Errorf("%w: prompt is required", ErrInvalidRequest)
 	}
+	req.Prompt = withAcceptance(req.Prompt, req.AcceptanceCriteria)
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -332,4 +334,28 @@ func mapStopReason(finishReason string) string {
 	default:
 		return StopCompleted
 	}
+}
+
+// acceptanceSection is the eval self-check section appended to a child prompt
+// when acceptance criteria are given (ADR D-EVAL-4).
+const acceptanceSection = "\n\n## 验收标准（交付自检）\n你的交付必须满足以下验收标准，完成后逐条自检，并在最终回复中逐条说明每条的满足情况：\n"
+
+// withAcceptance appends the acceptance criteria section to prompt when
+// criteria are non-empty; otherwise it returns prompt unchanged.
+func withAcceptance(prompt string, criteria []string) string {
+	if len(criteria) == 0 {
+		return prompt
+	}
+	var sb strings.Builder
+	sb.WriteString(prompt)
+	sb.WriteString(acceptanceSection)
+	for _, c := range criteria {
+		if strings.TrimSpace(c) == "" {
+			continue
+		}
+		sb.WriteString("- ")
+		sb.WriteString(strings.TrimSpace(c))
+		sb.WriteByte('\n')
+	}
+	return sb.String()
 }

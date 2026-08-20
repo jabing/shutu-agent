@@ -196,6 +196,11 @@ func (SubagentSpawnTool) Schema() map[string]any {
 				"minimum":     1,
 				"description": "delegation depth cap (default from config.subagent.max_depth)",
 			},
+			"acceptance_criteria": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string", "minLength": 1},
+				"description": "optional acceptance criteria the deliverable must satisfy (eval); injected into the subagent prompt for self-check",
+			},
 		},
 		"required":             []string{"prompt"},
 		"additionalProperties": false,
@@ -204,10 +209,11 @@ func (SubagentSpawnTool) Schema() map[string]any {
 
 func (t SubagentSpawnTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {
-		Prompt       string `json:"prompt"`
-		Label        string `json:"label"`
-		OwnerSession string `json:"owner_session"`
-		MaxDepth     int    `json:"max_depth"`
+		Prompt             string   `json:"prompt"`
+		Label              string   `json:"label"`
+		OwnerSession       string   `json:"owner_session"`
+		MaxDepth           int      `json:"max_depth"`
+		AcceptanceCriteria []string `json:"acceptance_criteria"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("subagent_spawn: %w", err)
@@ -228,10 +234,11 @@ func (t SubagentSpawnTool) Execute(ctx context.Context, args json.RawMessage) (s
 		maxDepth = t.t.defaultMaxDepth
 	}
 	run, err := t.t.rt.Start(ctx, defaultProviderName, StartRequest{
-		Label:           label,
-		Prompt:          a.Prompt,
-		ParentSessionID: parent,
-		MaxDepth:        maxDepth,
+		Label:              label,
+		Prompt:             a.Prompt,
+		ParentSessionID:    parent,
+		MaxDepth:           maxDepth,
+		AcceptanceCriteria: a.AcceptanceCriteria,
 	})
 	if err != nil {
 		return "", fmt.Errorf("subagent_spawn: %w", err)

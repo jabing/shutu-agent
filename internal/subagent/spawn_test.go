@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -351,6 +352,128 @@ func TestSpawnCloseNoLeak(t *testing.T) {
 	}
 	if _, err := prov.Start(ctx, StartRequest{Prompt: "c", ParentSessionID: "p"}); !errors.Is(err, ErrProviderClosed) {
 		t.Fatalf("start after close err = %v, want ErrProviderClosed", err)
+	}
+}
+
+// userMessageText returns the text of the first RoleUser message of a model
+// request — the child's prompt as the model actually saw it (the loop builds
+// the request as [system, ...injected context, ...history], so the user prompt
+// is not at index 0).
+func userMessageText(req llm.ChatRequest) string {
+	for _, m := range req.Messages {
+		if m.Role == llm.RoleUser {
+			return m.Text()
+		}
+	}
+	return ""
+}
+
+// TestWithAcceptance verifies the pure withAcceptance helper: empty criteria
+// leave the prompt untouched; non-empty criteria append the
+// "验收标准（交付自检）" section with one "- <criterion>" line per criterion;
+// blank criteria are skipped; and the original prompt is preserved.
+func TestWithAcceptance(t *testing.T) {
+	if got := withAcceptance("do X", nil); got != "do X" {
+		t.Fatalf("withAcceptance(nil) = %q, want prompt unchanged", got)
+	}
+	if got := withAcceptance("do X", []string{}); got != "do X" {
+		t.Fatalf("withAcceptance(empty) = %q, want prompt unchanged", got)
+	}
+
+	prompt := "do X"
+	out := withAcceptance(prompt, []string{"contains:输出含报告", "llm:结论合理", "  "})
+	if !strings.HasPrefix(out, prompt) {
+		t.Fatalf("withAcceptance output = %q, want the original prompt preserved", out)
+	}
+	if !strings.Contains(out, "验收标准（交付自检）") {
+		t.Fatalf("withAcceptance output = %q, want the acceptance section header", out)
+	}
+	for _, c := range []string{"contains:输出含报告", "llm:结论合理"} {
+		if !strings.Contains(out, "- "+c) {
+			t.Fatalf("withAcceptance output = %q, want criterion line %q", out, "- "+c)
+		}
+	}
+	if n := strings.Count(out, "\n- "); n != 2 {
+		t.Fatalf("withAcceptance output = %q, want 2 criterion bullets, got %d", out, n)
+	}
+}
+
+// TestSpawnInjectsAcceptance verifies SpawnProvider injects the acceptance
+// criteria into the child's prompt (the model's first request carries the
+// "验收标准" section and every criterion) and the run completes normally.
+func TestSpawnInjectsAcceptance(t *testing.T) {
+	model := &scriptedLLM{steps: [][]llm.StreamEvent{{
+		{Kind: llm.StreamFinish, FinishReason: "stop"},
+	}}}
+	prov := NewSpawnProvider(Deps{
+		Log:    session.New(),
+		LLM:    model,
+		Tools:  tools.New(),
+		Prompt: prompt.New("You are a subagent."),
+		Model:  "deepseek-chat",
+	})
+	ctx := context.Background()
+
+	run, err := prov.Start(ctx, StartRequest{
+		Prompt:             "do X",
+		AcceptanceCriteria: []string{"contains:输出含报告", "llm:结论合理"},
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	res, err := run.Result(ctx)
+	if err != nil {
+		t.Fatalf("result: %v", err)
+	}
+	if res.StopReason != StopCompleted {
+		t.Fatalf("stopReason = %q, want %q", res.StopReason, StopCompleted)
+	}
+	if len(model.calls) != 1 {
+		t.Fatalf("child llm calls = %d, want 1", len(model.calls))
+	}
+	user := userMessageText(model.calls[0])
+	if !strings.Contains(user, "验收标准") || !strings.Contains(user, "contains:输出含报告") || !strings.Contains(user, "llm:结论合理") {
+		t.Fatalf("child user message = %q, want the acceptance section with both criteria", user)
+	}
+	if err := prov.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+}
+
+// TestSpawnNoCriteriaNoInjection verifies that without AcceptanceCriteria the
+// child's user message is exactly the original prompt — no acceptance section
+// is injected.
+func TestSpawnNoCriteriaNoInjection(t *testing.T) {
+	model := &scriptedLLM{steps: [][]llm.StreamEvent{{
+		{Kind: llm.StreamFinish, FinishReason: "stop"},
+	}}}
+	prov := NewSpawnProvider(Deps{
+		LLM:    model,
+		Tools:  tools.New(),
+		Prompt: prompt.New("x"),
+		Model:  "m",
+	})
+	ctx := context.Background()
+
+	run, err := prov.Start(ctx, StartRequest{Prompt: "do X", ParentSessionID: "p"})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := run.Result(ctx); err != nil {
+		t.Fatalf("result: %v", err)
+	}
+	if len(model.calls) != 1 {
+		t.Fatalf("child llm calls = %d, want 1", len(model.calls))
+	}
+	user := userMessageText(model.calls[0])
+	if user != "do X" {
+		t.Fatalf("child user message = %q, want the original prompt unchanged", user)
+	}
+	if strings.Contains(user, "验收标准") {
+		t.Fatalf("child user message = %q, want no acceptance section", user)
+	}
+	if err := prov.Close(); err != nil {
+		t.Fatalf("close: %v", err)
 	}
 }
 

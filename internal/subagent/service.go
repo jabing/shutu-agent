@@ -50,6 +50,10 @@ type StartRequest struct {
 	// Persona is an optional child agent persona (optional). Requires the
 	// Persona capability.
 	Persona string
+	// AcceptanceCriteria is the optional eval acceptance criteria list (ADR
+	// D-EVAL-4). The provider injects it into the child's prompt as a
+	// "验收标准（交付自检）" section so the child self-checks its deliverable.
+	AcceptanceCriteria []string
 }
 
 // Result is the terminal outcome of a subagent run. StopReason is one of

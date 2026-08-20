@@ -134,6 +134,46 @@ func TestSubagentSpawnReturnsChildID(t *testing.T) {
 	}
 }
 
+// TestSubagentSpawnAcceptanceCriteria verifies subagent_spawn's schema exposes
+// the acceptance_criteria array and Execute passes it through (Eval-2b): the
+// spawned child's first user message contains the injected acceptance section
+// with both criteria.
+func TestSubagentSpawnAcceptanceCriteria(t *testing.T) {
+	model := &scriptedLLM{steps: [][]llm.StreamEvent{{
+		{Kind: llm.StreamFinish, FinishReason: "stop"},
+	}}}
+	st := testBundle(t, model, 8, nil)
+	ctx := context.Background()
+
+	schema := st.Spawn().Schema()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("spawn schema properties = %T, want map[string]any", schema["properties"])
+	}
+	if _, ok := props["acceptance_criteria"]; !ok {
+		t.Fatalf("spawn schema must expose acceptance_criteria, got properties %v", props)
+	}
+
+	out, err := st.Spawn().Execute(ctx, json.RawMessage(
+		`{"prompt":"do X","acceptance_criteria":["contains:输出含报告","llm:结论合理"]}`))
+	if err != nil {
+		t.Fatalf("subagent_spawn with acceptance_criteria: %v", err)
+	}
+	if !strings.Contains(out, "started subagent spawn-1") {
+		t.Fatalf("subagent_spawn output = %q, want started subagent spawn-1", out)
+	}
+	// The child settles in the background; wait for it before inspecting the
+	// model request it made.
+	waitSettled(t, st, "spawn-1", 5*time.Second)
+	if len(model.calls) != 1 {
+		t.Fatalf("child llm calls = %d, want 1", len(model.calls))
+	}
+	user := userMessageText(model.calls[0])
+	if !strings.Contains(user, "验收标准") || !strings.Contains(user, "contains:输出含报告") || !strings.Contains(user, "llm:结论合理") {
+		t.Fatalf("child user message = %q, want the injected acceptance section", user)
+	}
+}
+
 // TestSubagentStatusReflectsResultAndEmitsEndOnce verifies subagent_status
 // reflects a settled child's Result (output + stop reason) and emits
 // subagent/end exactly once across repeated observations.
@@ -289,8 +329,8 @@ func TestSubagentToolsSchemaValidation(t *testing.T) {
 	st := testBundle(t, &scriptedLLM{}, 8, nil)
 	reg := tools.New()
 	reg.SetPolicy(tools.Policy{
-		Enabled:    []string{ToolSpawnName, ToolStatusName, ToolCancelName, ToolListName},
-		Timeout:    0,
+		Enabled:     []string{ToolSpawnName, ToolStatusName, ToolCancelName, ToolListName},
+		Timeout:     0,
 		OutputLimit: 0,
 	})
 	for _, tool := range []tools.Tool{st.Spawn(), st.Status(), st.Cancel(), st.List()} {
@@ -302,15 +342,15 @@ func TestSubagentToolsSchemaValidation(t *testing.T) {
 		name string
 		args string
 	}{
-		{"subagent_spawn", `{}`},                          // missing required prompt
-		{"subagent_spawn", `{"prompt":""}`},               // empty prompt
-		{"subagent_spawn", `{"prompt":"x","extra":1}`},    // additional properties rejected
+		{"subagent_spawn", `{}`},                           // missing required prompt
+		{"subagent_spawn", `{"prompt":""}`},                // empty prompt
+		{"subagent_spawn", `{"prompt":"x","extra":1}`},     // additional properties rejected
 		{"subagent_spawn", `{"prompt":"x","max_depth":0}`}, // max_depth must be >= 1
-		{"subagent_status", `{}`},                         // missing required id
-		{"subagent_status", `{"id":123}`},                 // id must be a string
-		{"subagent_cancel", `{}`},                         // missing required id
-		{"subagent_cancel", `{"id":false}`},               // wrong id type
-		{"subagent_list", `{"parent_session":123}`},       // wrong parent type
+		{"subagent_status", `{}`},                          // missing required id
+		{"subagent_status", `{"id":123}`},                  // id must be a string
+		{"subagent_cancel", `{}`},                          // missing required id
+		{"subagent_cancel", `{"id":false}`},                // wrong id type
+		{"subagent_list", `{"parent_session":123}`},        // wrong parent type
 	} {
 		if _, err := reg.Execute(context.Background(), tc.name, json.RawMessage(tc.args)); err == nil {
 			t.Errorf("%s with args %s must be rejected (D7)", tc.name, tc.args)
