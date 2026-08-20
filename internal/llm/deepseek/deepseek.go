@@ -85,10 +85,11 @@ func New(cfg Config) *Client {
 // wire message/tool shapes for the OpenAI-compatible request body.
 
 type wireMessage struct {
-	Role       string         `json:"role"`
-	Content    string         `json:"content,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
-	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
+	Role             string         `json:"role"`
+	Content          string         `json:"content,omitempty"`
+	ReasoningContent string         `json:"reasoning_content,omitempty"` // assistant reasoning (OpenAI-compatible field, M8)
+	ToolCallID       string         `json:"tool_call_id,omitempty"`
+	ToolCalls        []wireToolCall `json:"tool_calls,omitempty"`
 }
 
 type wireToolCall struct {
@@ -118,7 +119,15 @@ type chatBody struct {
 }
 
 func toWireMessage(m llm.Message) wireMessage {
-	w := wireMessage{Role: string(m.Role), Content: m.Content, ToolCallID: m.ToolCallID}
+	// M8: content is still a single text this milestone — take Text() (which
+	// concatenates the text blocks and excludes reasoning); the parts array is
+	// M8-3.
+	w := wireMessage{Role: string(m.Role), Content: m.Text(), ToolCallID: m.ToolCallID}
+	if m.Role == llm.RoleAssistant {
+		// Reasoning travels on the OpenAI-compatible reasoning_content field
+		// (dsh llm-deepseek same); only assistant messages carry it.
+		w.ReasoningContent = m.Reasoning()
+	}
 	for _, tc := range m.ToolCalls {
 		wtc := wireToolCall{ID: tc.ID, Type: "function"}
 		wtc.Function.Name = tc.Name

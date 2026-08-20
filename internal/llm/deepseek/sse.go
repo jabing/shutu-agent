@@ -60,23 +60,26 @@ func (d *sseDecoder) Next() (string, error) {
 type wireChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string         `json:"content"`
-			ToolCalls []wireToolCall `json:"tool_calls"`
+			Content          string         `json:"content"`
+			ReasoningContent string         `json:"reasoning_content"`
+			ToolCalls        []wireToolCall `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
 }
 
 // streamReader translates SSE payloads into llm.StreamEvents, accumulating
-// tool-call argument fragments by their wire index.
+// tool-call argument fragments by their wire index and the reasoning text by a
+// parallel builder.
 type streamReader struct {
 	dec  *sseDecoder
 	resp *http.Response
 	done bool
 
 	finishReason string
-	toolCalls    []llm.ToolCall // in first-seen wire order
-	toolIndex    map[int]int    // wire index -> position in toolCalls
+	reasoning    strings.Builder // accumulated reasoning_content deltas (M8)
+	toolCalls    []llm.ToolCall  // in first-seen wire order
+	toolIndex    map[int]int     // wire index -> position in toolCalls
 }
 
 func (r *streamReader) Next() (llm.StreamEvent, error) {
@@ -100,6 +103,7 @@ func (r *streamReader) Next() (llm.StreamEvent, error) {
 				Kind:         llm.StreamFinish,
 				FinishReason: r.finishReason,
 				ToolCalls:    r.toolCalls,
+				Reasoning:    r.reasoning.String(), // accumulated reasoning deltas (M8)
 			}, nil
 		}
 
@@ -113,6 +117,13 @@ func (r *streamReader) Next() (llm.StreamEvent, error) {
 			}
 			if choice.Delta.Content != "" {
 				return llm.StreamEvent{Kind: llm.StreamTextDelta, Text: choice.Delta.Content}, nil
+			}
+			// DeepSeek streams the assistant's reasoning in a parallel
+			// reasoning_content delta (M8): accumulate it and surface it as a
+			// reasoning event, parallel to the content-delta branch.
+			if choice.Delta.ReasoningContent != "" {
+				r.reasoning.WriteString(choice.Delta.ReasoningContent)
+				return llm.StreamEvent{Kind: llm.StreamReasoningDelta, Text: choice.Delta.ReasoningContent}, nil
 			}
 			for _, tc := range choice.Delta.ToolCalls {
 				r.accumulateToolCall(tc)

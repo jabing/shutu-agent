@@ -50,7 +50,7 @@ func TestStreamText(t *testing.T) {
 	reader, err := c.Stream(context.Background(), llm.ChatRequest{
 		Model: "deepseek-chat",
 		Messages: []llm.Message{
-			{Role: llm.RoleUser, Content: "hi"},
+			{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text("hi")}},
 		},
 	})
 	if err != nil {
@@ -144,9 +144,9 @@ func TestStreamSendsToolsAndToolMessage(t *testing.T) {
 
 	_, err := c.Stream(context.Background(), llm.ChatRequest{
 		Messages: []llm.Message{
-			{Role: llm.RoleSystem, Content: "sys"},
-			{Role: llm.RoleAssistant, Content: "", ToolCalls: []llm.ToolCall{{ID: "c1", Name: "get_time", Arguments: "{}"}}},
-			{Role: llm.RoleTool, ToolCallID: "c1", Content: "out"},
+			{Role: llm.RoleSystem, Content: []llm.ContentBlock{llm.Text("sys")}},
+			{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "get_time", Arguments: "{}"}}},
+			{Role: llm.RoleTool, ToolCallID: "c1", Content: []llm.ContentBlock{llm.Text("out")}},
 		},
 		Tools: []llm.ToolSchema{{Name: "get_time", Parameters: map[string]any{"type": "object"}}},
 	})
@@ -309,5 +309,166 @@ func TestStreamRetryAbortsOnCancellation(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("calls = %d, want 1 (retry aborted by cancellation)", calls)
+	}
+}
+
+// TestToWireMessageReasoning verifies the M8 wire contract: an assistant
+// message whose content carries a reasoning block serializes the joined
+// reasoning text on the OpenAI-compatible reasoning_content field, and
+// non-assistant messages never carry it (dispatch-m8 §3).
+func TestToWireMessageReasoning(t *testing.T) {
+	asst := llm.Message{
+		Role: llm.RoleAssistant,
+		Content: []llm.ContentBlock{
+			{Kind: llm.BlockReasoning, Text: "step by step, "},
+			{Kind: llm.BlockReasoning, Text: "then answer"},
+			llm.Text("Here is the answer."),
+		},
+	}
+	w := toWireMessage(asst)
+	if w.ReasoningContent != "step by step, then answer" {
+		t.Fatalf("reasoning_content = %q, want the joined reasoning text", w.ReasoningContent)
+	}
+	if w.Content != "Here is the answer." {
+		t.Fatalf("content = %q, want the text blocks only (no reasoning)", w.Content)
+	}
+
+	// A user message with a reasoning block must NOT carry reasoning_content.
+	usr := llm.Message{
+		Role:    llm.RoleUser,
+		Content: []llm.ContentBlock{{Kind: llm.BlockReasoning, Text: "x"}, llm.Text("hi")},
+	}
+	wu := toWireMessage(usr)
+	if wu.ReasoningContent != "" {
+		t.Fatalf("user message must not carry reasoning_content, got %q", wu.ReasoningContent)
+	}
+	if wu.Content != "hi" {
+		t.Fatalf("user content = %q, want hi", wu.Content)
+	}
+}
+
+// TestToWireMessageReasoningOnTheWire verifies reasoning_content actually lands
+// in the request body sent to the endpoint (httptest asserting the JSON body,
+// dispatch-m8 §6).
+func TestToWireMessageReasoningOnTheWire(t *testing.T) {
+	var gotBody map[string]any
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(sse(`{"choices":[{"delta":{},"finish_reason":"stop"}]}`, "[DONE]")))
+	})
+	_, err := c.Stream(context.Background(), llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: llm.RoleAssistant, Content: []llm.ContentBlock{
+				{Kind: llm.BlockReasoning, Text: "think hard"},
+				llm.Text("answer"),
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	msgs, _ := gotBody["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages = %v", gotBody["messages"])
+	}
+	first, _ := msgs[0].(map[string]any)
+	if first["reasoning_content"] != "think hard" {
+		t.Fatalf("wire message = %+v, want reasoning_content=think hard", first)
+	}
+	if first["content"] != "answer" {
+		t.Fatalf("wire message content = %+v, want answer", first)
+	}
+}
+
+// TestStreamReasoningDelta verifies the SSE reader surfaces reasoning_content
+// deltas as StreamReasoningDelta and accumulates them onto StreamFinish.Reasoning
+// (dispatch-m8 §3/§6).
+func TestStreamReasoningDelta(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(sse(
+			`{"choices":[{"delta":{"reasoning_content":"Let me"},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{"reasoning_content":" think"},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{"content":"Done."},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+			"[DONE]",
+		)))
+	})
+	reader, err := c.Stream(context.Background(), llm.ChatRequest{})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	var reasoning, text strings.Builder
+	var finish llm.StreamEvent
+	for {
+		ev, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("next: %v", err)
+		}
+		switch ev.Kind {
+		case llm.StreamReasoningDelta:
+			reasoning.WriteString(ev.Text)
+		case llm.StreamTextDelta:
+			text.WriteString(ev.Text)
+		case llm.StreamFinish:
+			finish = ev
+		}
+	}
+	if reasoning.String() != "Let me think" {
+		t.Fatalf("reasoning deltas = %q, want %q", reasoning.String(), "Let me think")
+	}
+	if text.String() != "Done." {
+		t.Fatalf("text deltas = %q, want Done.", text.String())
+	}
+	if finish.Reasoning != "Let me think" {
+		t.Fatalf("finish.Reasoning = %q, want the accumulated reasoning", finish.Reasoning)
+	}
+	if finish.FinishReason != "stop" {
+		t.Fatalf("finish reason = %q", finish.FinishReason)
+	}
+}
+
+// TestStreamNoReasoningRegression verifies a stream without any
+// reasoning_content behaves exactly as before: only text deltas and a finish
+// with empty Reasoning (M8 regression guard).
+func TestStreamNoReasoningRegression(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(sse(
+			`{"choices":[{"delta":{"content":"ok"},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+			"[DONE]",
+		)))
+	})
+	reader, err := c.Stream(context.Background(), llm.ChatRequest{})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	var text strings.Builder
+	var finish llm.StreamEvent
+	for {
+		ev, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("next: %v", err)
+		}
+		if ev.Kind == llm.StreamTextDelta {
+			text.WriteString(ev.Text)
+		}
+		if ev.Kind == llm.StreamFinish {
+			finish = ev
+		}
+	}
+	if text.String() != "ok" {
+		t.Fatalf("text = %q, want ok", text.String())
+	}
+	if finish.Reasoning != "" {
+		t.Fatalf("finish.Reasoning = %q, want empty without reasoning deltas", finish.Reasoning)
 	}
 }
