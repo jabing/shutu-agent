@@ -649,56 +649,171 @@ composerText.addEventListener("keydown", (e) => {
 sendBtn.addEventListener("click", sendMessage);
 
 // ---- topbar / config ----------------------------------------------------------
+// loadConfigLabels fills the topbar model/mode badges from the cached config.
+function loadConfigLabels() {
+  modelLabelEl.textContent = (config.model || "") + (config.llm_provider ? " · " + config.llm_provider : "");
+  modeBadgeEl.textContent = config.mode || "";
+  modeBadgeEl.classList.toggle("hidden", !config.mode);
+  modeBadgeEl.classList.remove("mode-minimal", "mode-code");
+  if (config.mode === "minimal") modeBadgeEl.classList.add("mode-minimal");
+  if (config.mode === "code") modeBadgeEl.classList.add("mode-code");
+}
 async function loadConfig() {
   try {
     const res = await api("/api/config");
     config = await res.json();
-    modelLabelEl.textContent = (config.model || "") + (config.llm_provider ? " · " + config.llm_provider : "");
-    if (config.mode) {
-      modeBadgeEl.textContent = config.mode;
-      modeBadgeEl.classList.remove("hidden", "mode-minimal", "mode-code");
-      if (config.mode === "minimal") modeBadgeEl.classList.add("mode-minimal");
-      if (config.mode === "code") modeBadgeEl.classList.add("mode-code");
-    }
+    loadConfigLabels();
   } catch (e) { if (e.message !== "unauthorized") console.error(e); }
 }
 
-// ---- settings page (read-only config view) ------------------------------------
-function settingsGroup(title, rows) {
-  const g = document.createElement("div");
-  g.className = "settings-group";
-  let t = `<h3>${esc(title)}</h3><table>`;
-  for (const [k, v] of rows) {
-    const vs = v === true ? "✓" : v === false ? "✗" : String(v ?? "");
-    t += `<tr><td>${esc(k)}</td><td class="val">${esc(vs)}</td></tr>`;
-  }
-  g.innerHTML = t + "</table>";
-  return g;
+// ---- settings page (P3: dsh SettingsRoot two-column panel, read-only) -------
+// Section registry: general / model / caps / tools. Every control is read-only
+// (ADR D-WEB2-D: no runtime editing — config changes need a restart).
+const SETTINGS_SECTIONS = [
+  { id: "general", label: "通用设置", icon: "⚙" },
+  { id: "model", label: "模型", icon: "◈" },
+  { id: "caps", label: "能力开关", icon: "⚡" },
+  { id: "tools", label: "工具", icon: "🧰" },
+];
+const CAPABILITY_NAMES = {
+  terminal: "终端", fs: "文件系统", fs_search: "全文检索", ralph: "Ralph 循环",
+  workflow: "工作流", kb: "知识库", jobs: "后台任务", subagent: "子代理",
+  web: "联网", eval: "评测", code: "代码执行", interact: "交互确认",
+  mcp: "MCP", skill: "技能", schedule: "定时", plan: "计划",
+  spill: "溢出", compaction: "压缩", multimodal: "多模态",
+};
+const MODEL_DISPLAY = { "deepseek-chat": "DeepSeek Chat", "deepseek-reasoner": "DeepSeek Reasoner" };
+const PROVIDER_DISPLAY = { deepseek: "DeepSeek" };
+
+let settingsSec = "general";
+let settingsConfig = null;
+
+function settingsSectionEl() { return $("settings-sec"); }
+
+function rowHTML(title, desc, control) {
+  return `<div class="row">
+    <div class="row-text"><div class="row-title">${esc(title)}</div>
+    ${desc ? `<div class="row-desc">${esc(desc)}</div>` : ""}</div>
+    ${control ? `<div class="row-control">${control}</div>` : ""}</div>`;
 }
+
+function renderSettingsNav() {
+  const nav = $("settings-nav");
+  nav.textContent = "";
+  for (const s of SETTINGS_SECTIONS) {
+    const btn = document.createElement("button");
+    btn.className = "nav-cell" + (s.id === settingsSec ? " active" : "");
+    btn.setAttribute("aria-current", s.id === settingsSec ? "true" : "false");
+    btn.innerHTML = `<span class="nav-ico">${s.icon}</span><span>${esc(s.label)}</span>`;
+    btn.addEventListener("click", () => { settingsSec = s.id; renderSettingsNav(); renderSettingsSec(); });
+    nav.appendChild(btn);
+  }
+}
+
+function renderGeneral(c) {
+  const dark = (localStorage.getItem(KEY_THEME) || "dark") === "dark";
+  const cubes = `
+    <div class="theme-cubes">
+      <button class="theme-cube${!dark ? " active" : ""}" data-theme="light">浅色</button>
+      <button class="theme-cube${dark ? " active" : ""}" data-theme="dark">深色</button>
+    </div>`;
+  const sec = settingsSectionEl();
+  sec.innerHTML = `<h2>通用设置</h2><p class="intro">修改 config.yaml 后重启生效（无运行时热改）。</p>` +
+    rowHTML("外观", "切换界面深浅主题（仅本机浏览器记忆）", cubes) +
+    rowHTML("会话模式", "修改 config.yaml 后重启生效", `<span class="row-value">${esc(c.mode || "standard")}</span>`) +
+    (c.web_server_addr ? rowHTML("Web 服务地址", "访问本工作台的地址", `<span class="row-value">${esc(c.web_server_addr)}</span>`) : "") +
+    rowHTML("配置文件", "修改后重启生效，无运行时热改（ADR D-WEB2-D）", `<span class="row-value">config.yaml</span>`);
+  sec.querySelectorAll(".theme-cube").forEach((b) => {
+    b.addEventListener("click", () => {
+      localStorage.setItem(KEY_THEME, b.dataset.theme);
+      applyTheme();
+      renderGeneral(c);
+    });
+  });
+}
+
+function renderModel(c) {
+  const provider = PROVIDER_DISPLAY[c.llm_provider] || c.llm_provider || "DeepSeek";
+  const model = MODEL_DISPLAY[c.model] || c.model || "";
+  const sec = settingsSectionEl();
+  sec.innerHTML = `
+    <h2>模型</h2>
+    <p class="intro">仅展示当前使用的模型与提供方。修改 config.yaml 后重启生效。</p>
+    <p class="notice">当前部署的设置文档为只读。</p>
+    <div class="row-card">
+      <div class="row-head">
+        <span class="row-identity"><span class="row-name">${esc(provider)}</span><span class="row-tag">只读</span></span>
+        <span class="row-actions"><button class="sec-btn" disabled>编辑</button></span>
+      </div>
+      <div class="row-fields">
+        <div class="field"><span class="f-label">模型 ID</span><span class="f-value">${esc(c.model || "")}</span></div>
+        <div class="field"><span class="f-label">显示名</span><span class="f-value">${esc(model)}</span></div>
+        <div class="field"><span class="f-label">API 地址</span><span class="f-value">${esc(c.base_url || "提供方默认")}</span></div>
+        <div class="field"><span class="f-label">会话模式</span><span class="f-value">${esc(c.mode || "standard")}</span></div>
+      </div>
+    </div>`;
+}
+
+function renderCaps(c) {
+  const rows = [];
+  for (const k of Object.keys(c)) {
+    if (!k.endsWith("_enabled") || typeof c[k] !== "boolean") continue;
+    const short = k.replace(/_enabled$/, "");
+    rows.push([CAPABILITY_NAMES[short] || short, k, c[k]]);
+  }
+  rows.sort((a, b) => a[0].localeCompare(b[0]));
+  const sec = settingsSectionEl();
+  sec.innerHTML = `<h2>能力开关</h2>
+    <p class="intro">各能力默认关闭（D10），启用需在 config.yaml 打开对应开关。</p>
+    <p class="notice">修改 config.yaml 后重启生效（无运行时热改）。</p>`;
+  for (const [name, key, on] of rows) {
+    const d = document.createElement("div");
+    d.innerHTML = rowHTML(name, `config 键：${esc(key)}`, `<span class="cap-badge ${on ? "on" : ""}">${on ? "开" : "关"}</span>`);
+    sec.appendChild(d.firstElementChild);
+  }
+}
+
+function renderTools(c) {
+  const list = Array.isArray(c.tools_enabled) ? c.tools_enabled : [];
+  const sec = settingsSectionEl();
+  let t = `<h2>工具白名单</h2>
+    <p class="intro">当前白名单放行的工具（只读列表）。</p>
+    <p class="notice">修改 config.yaml 后重启生效（无运行时热改）。</p>
+    <div class="tools-count">已启用 ${esc(String(c.tools_enabled_count ?? list.length))} 个工具</div>`;
+  if (list.length > 0) {
+    t += `<div class="tool-list">`;
+    for (const tool of list) t += `<div class="tool-row"><span class="tool-dot"></span>${esc(tool)}</div>`;
+    t += `</div>`;
+  } else {
+    t += `<div class="muted" style="margin-top:6px">白名单为空（仅内置只读工具可用）</div>`;
+  }
+  sec.innerHTML = t;
+}
+
+function renderSettingsSec() {
+  const c = settingsConfig;
+  const sec = settingsSectionEl();
+  sec.textContent = "";
+  $("settings-sec-title").textContent = SETTINGS_SECTIONS.find((s) => s.id === settingsSec)?.label || "";
+  if (!c) { sec.innerHTML = `<div class="muted">加载中…</div>`; return; }
+  if (settingsSec === "general") renderGeneral(c);
+  else if (settingsSec === "model") renderModel(c);
+  else if (settingsSec === "caps") renderCaps(c);
+  else if (settingsSec === "tools") renderTools(c);
+}
+
 async function renderSettings() {
-  const groups = $("settings-groups"), loading = $("settings-loading"), errEl = $("settings-error");
+  const loading = $("settings-loading"), errEl = $("settings-error");
   loading.classList.remove("hidden");
   errEl.classList.add("hidden");
-  groups.classList.add("hidden");
   try {
     const res = await api("/api/config");
-    const c = await res.json();
-    groups.textContent = "";
-    const basics = [["模型", c.model], ["Provider", c.llm_provider], ["模式", c.mode], ["Base URL", c.base_url]];
-    groups.appendChild(settingsGroup("基本", basics));
-    const caps = [];
-    for (const k of Object.keys(c)) {
-      if (k.endsWith("_enabled")) caps.push([k.replace(/_enabled$/, ""), c[k]]);
-    }
-    caps.sort((a, b) => a[0].localeCompare(b[0]));
-    groups.appendChild(settingsGroup("能力开关（默认关闭）", caps));
-    if (c.web_server_addr) groups.appendChild(settingsGroup("Web", [["地址", c.web_server_addr]]));
-    if (Array.isArray(c.tools_enabled)) {
-      groups.appendChild(settingsGroup(`工具白名单（${c.tools_enabled_count} 个）`,
-        c.tools_enabled.map((t) => [t, ""])));
-    }
+    settingsConfig = await res.json();
+    config = settingsConfig;
+    loadConfigLabels();
     loading.classList.add("hidden");
-    groups.classList.remove("hidden");
+    renderSettingsNav();
+    renderSettingsSec();
   } catch (e) {
     loading.classList.add("hidden");
     errEl.textContent = "加载设置失败：" + e.message;
@@ -903,6 +1018,7 @@ $("settings-link").addEventListener("click", () => location.hash = "#/settings")
 $("theme-toggle").addEventListener("click", toggleTheme);
 $("theme-toggle-settings").addEventListener("click", toggleTheme);
 $("settings-back").addEventListener("click", () => location.hash = "#/chat");
+$("settings-close").addEventListener("click", () => location.hash = "#/chat");
 $("back").addEventListener("click", () => location.hash = "#/chat");
 
 boot();

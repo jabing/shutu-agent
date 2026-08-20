@@ -98,9 +98,9 @@
     </div>
   </div>
 
-  <!-- Settings page (M10 W2, ADR D-WEB2-D): read-only sanitized config view
-       served by GET /api/config. No runtime editing — config changes take
-       effect after a restart. -->
+  <!-- Settings page (P3, dsh SettingsRoot): a centered two-column panel —
+       188px nav rail + content column — under the existing #/settings route.
+       Read-only config view (ADR D-WEB2-D): no runtime editing. -->
   <div id="settings" class="settings-page hidden">
     <header class="settings-top">
       <button id="settings-back" class="btn-ghost">← 返回聊天</button>
@@ -108,11 +108,25 @@
       <button id="theme-toggle-settings" class="btn-icon" title="切换主题">☀️</button>
     </header>
     <div class="settings-body">
-      <h1>设置</h1>
-      <p class="muted">只读配置视图。修改 <code>config.yaml</code> 后重启生效（无运行时热改，ADR D-WEB2-D）。</p>
-      <div id="settings-loading" class="muted">加载中…</div>
-      <div id="settings-error" class="err hidden"></div>
-      <div id="settings-groups" class="settings-groups hidden"></div>
+      <div class="settings-panel">
+        <nav class="settings-nav" aria-label="设置">
+          <div class="nav-title">设置</div>
+          <div class="nav-list" id="settings-nav"></div>
+        </nav>
+        <div class="settings-content">
+          <header class="settings-header">
+            <div class="settings-head-actions">
+              <span id="settings-sec-title" class="settings-sec-title">通用设置</span>
+            </div>
+            <button id="settings-close" class="btn-icon" title="关闭">✕</button>
+          </header>
+          <div class="settings-options">
+            <div id="settings-loading" class="muted">加载中…</div>
+            <div id="settings-error" class="err hidden"></div>
+            <div id="settings-sec" class="settings-section"></div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
