@@ -9,6 +9,11 @@
 
 Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话日志 + LLM 适配 + 工具注册表 + 提示词组装 + 循环），后期以"能力接缝"方式接入个人知识库（RAG）。参考实现：`../deepseek-harness`（重点读 `docs/architecture.md`、`docs/subsystems/core.md`、`docs/subsystems/session.md`）。
 
+**两条参照原则（用户定，2026-08-20）**：
+1. **Agent 功能**（循环/会话/LLM/工具/各能力族）参考 **dsh-harness** → `../deepseek-harness`；
+2. **KB 全量**（知识库）参考 **dsh-knowledge** → `../dsh-knowledge`。
+二者源码均已在本项目根目录同级子目录中，无需另行下载。
+
 ## 2. 设计基线（防漂移摘要，细节见 design.md）
 
 - **D1** 会话 = 追加式事件日志，历史是派生值，永不另存。
@@ -66,7 +71,7 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 ### 候选里程碑（2026-08-20，执行顺序：Agent 部分优先 → 内容层 → 呈现层）
 
 > **用户定序（2026-08-20）**：先把 Agent 部分（M7 → M8 → M9）完成，再做 KB 全量（内容层），最后 M10 Web 门户（呈现层，其管理台依赖 KB 全量）。
-> 依赖关系：M8 打包 多 provider + reasoning 回传 + 多模态（同改 `llm.Message` 消息模型与 wire 层）；M9 持久 PTY 经 jobs（M5a）owner-fenced 承载；M10 用 Go 标准库 `net/http` 自建（零新依赖），借鉴 dsh-knowledge web 层功能面；M10b 管理台以 KB 全量为展示前提。
+> 依赖关系：M8 打包 多 provider + reasoning 回传 + 多模态（同改 `llm.Message` 消息模型与 wire 层）；M9 持久 PTY 经 jobs（M5a）owner-fenced 承载；M10 用 Go 标准库 `net/http` 自建（零新依赖），借鉴 dsh-knowledge web 层功能面；M10b 管理台以 KB 全量为展示前提。参照源：Agent 功能 → `../deepseek-harness`，KB 全量 → `../dsh-knowledge`（**KB 全量启动前先 git 更新后者**，纪律 9）。
 
 | 阶段 | 候选 | 交付物 | 验收标准（达标才算完成） | 状态 |
 |---|---|---|---|---|
@@ -88,6 +93,7 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 6. **API Key 只走环境变量**，绝不写入代码、配置或日志。
 7. **双向同步**：design.md 与本文状态/决策变更必须同步更新。
 8. **一里程碑一 PR/提交**：按验收标准检查后才算完成，不达标不进入下一里程碑。
+9. **参照源先更新**：里程碑开始前先更新对应参照源码——Agent 功能类拉 `../deepseek-harness`（`git -C ../deepseek-harness -c http.sslBackend=openssl pull --ff-only origin master`）；KB 类拉 `../dsh-knowledge`（`git -C ../dsh-knowledge pull`）。**KB 全量启动前必做**（2026-08-20 已确认 dsh-knowledge 与 origin/main 同步，HEAD `3c32663`）。
 
 ## 6. 决策记录（ADR）
 
