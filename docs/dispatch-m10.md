@@ -7,6 +7,7 @@
 - 零新依赖、CGO-free；`net/http` + `crypto/subtle` + `crypto/sha256` + `embed`（全标准库）；只动 internal/webserver、internal/config、cmd/pa、config.yaml；不改 loop（D4）。
 - 默认关 D10：`web_server.enabled=false` 不启动监听、不注册任何路由；token 空且 enabled 时启动报错（fail-closed 防裸奔）。
 - 只读 API（D-WEB-4）：web 不写会话；事件 API 只传 `{seq,type,time,summary}`，不落完整 Data（防泄露 + 防超大载荷）。
+- 认证模型（D-WEB-2）：**静态 shell（`/` 与 `/static/*`）公开**——登录页/前端资源不含数据，必须能在无 token 时加载以呈现登录表单（实测踩坑：若全路由认证，浏览器直开 `http://127.0.0.1:8080` 被 401 JSON 挡住、鸡生蛋，见 `6c18446` 修复）；**全部 `/api/*` 路由走 bearer 认证中间件**，数据只在 API 层流出。
 - 提交 1 个：`M10a: webServer 基础设施（统一门户 + bearer 认证 + 会话/事件浏览 API + vanilla JS 前端）`
 
 ## 已知现状（实施时通读）
