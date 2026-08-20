@@ -103,3 +103,46 @@ func (a *app) runTurn(ctx context.Context, text string, interactive bool) error 
 
 ## 报告（简短）
 提交 hash + go test 结果 + 偏离说明（hub 丢事件策略、SSE 重连实现、前端布局、注入点实现）。不要贴代码。
+
+---
+
+# M10 升级 W2 派发：设置页 + 脱敏 config API（ADR D-WEB2-D）
+
+> W1 已完成（`5455efa`：发消息 + SSE 流式 + 会话管理 + dsh 式前端重构）。本段在其上追加：`GET /api/config`（脱敏配置视图）+ 前端 `#/settings` 页（配置展示 + 提示重启生效）。主题切换 W1 已做。
+
+## 纪律
+- W1 提交（`5455efa`）上工作，工作树干净开始（config.yaml 除外——保持 M 不动不提交）；零新依赖、CGO-free、gofmt；只动 internal/webserver、cmd/pa；不改 loop。
+- **永不返回 token/key**（ADR D-WEB2-D）：`GET /api/config` 输出中 `web_server.token` 等敏感字段一律 `"***"` 或省略；key 本就在 env 不在此 config。
+- API 走既有 requireAuth；nil 注入 → 501。
+
+## 变更清单
+
+### 1. cmd/pa/webserver.go — SetConfigProvider 注入
+- `registerWebServer` 增加 `srv.SetConfigProvider(a.webConfig)`。
+- 新方法 `webConfig() map[string]any`：从 `a.cfg` 构造**脱敏**扁平视图：
+  - `model`、`base_url`、`llm_provider`、`mode`；
+  - 各能力 cap：`terminal/fs/fs_search/ralph/workflow/kb/jobs/subagent/web/eval/code/interact/mcp/skill/schedule/plan/spill/compaction/multimodal` 的 enabled bool；
+  - `web_server_addr`；
+  - `tools_enabled_count`（len(cfg.Tools.Enabled)）+ `tools_enabled`（列表，最多前 30 个 + "…"）；
+  - **不含** `web_server.token`（或置 `"***"`）、任何 key。
+- 字段名 snake_case。
+
+### 2. internal/webserver/webserver.go — GET /api/config
+- Server 加 `cfgFn func() map[string]any`（nil 默认）+ `SetConfigProvider(fn)`。
+- 新路由 `GET /api/config`（requireAuth）：`cfgFn` nil → 501；否则返回 `cfgFn()` 的 JSON（map 直接 `writeJSON`）。
+
+### 3. internal/webserver/static/app.js + index.html — #/settings 页
+- `#/settings` 从占位改为真实渲染：`fetch('/api/config')` → 分组展示（模型/provider/mode / 能力开关 / web_server / 工具白名单计数）；**只读**，附提示「修改 config.yaml 后重启生效」。
+- 顶栏「设置」入口链接到 `#/settings`；保留主题切换（W1 已有）。
+- `#/kb` 仍占位。
+
+### 4. 测试
+- `internal/webserver/webserver_test.go`：`TestConfigAPI`——注入 fake cfgFn（含 `web_server.token:"secret"` 键）→ GET 200 且 token 值被 `***` 或缺失（**断言脱敏**）；无 token → 401；nil cfgFn → 501。
+- `cmd/pa`：`TestWebConfigRedacts`——构造 cfg（WebServer.Token 非空 + 若干 cap）→ `webConfig()` 返回 map：`web_server.token` 键不存在或值为 `"***"`；cap/mode/model 正确；`registerWebServer` enabled 后 `a.webserver` 的 cfgFn 非 nil（Handlers() getter）。
+- 既有 W1/webserver 用例保持通过。
+
+## 验证
+`go build ./...` + `go vet ./internal/webserver/ ./cmd/pa/` + `go test -count=1 -timeout 90s ./internal/webserver/ ./cmd/pa/ -run 'Config' -v` 全 PASS 后提交（`W2: 设置页 + 脱敏 config API（GET /api/config）`），再全量 `go test -count=1 -timeout 90s ./...` 全绿。env 同 W1。
+
+## 报告（简短）
+提交 hash + go test 结果 + 偏离说明。不要贴代码。
