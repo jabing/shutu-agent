@@ -1,10 +1,18 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"personal-agent/internal/config"
+	"personal-agent/internal/llm"
 )
 
 // TestRegisterLLMDefaultDeepseekRegression verifies the M8-2 default-provider
@@ -355,5 +363,132 @@ func TestLLMStatusMultimodalDisabledDefault(t *testing.T) {
 	}
 	if !strings.Contains(out, "modalities: text") {
 		t.Errorf("output missing modalities text line (fallback default): %q", out)
+	}
+}
+
+// TestRegisterLLMDefaultDeepseekSupportsImagesFalse verifies the M8-3b wiring
+// (dispatch-m8-3b §5/§7): with the default model_input_modalities=text the
+// deepseek provider gets SupportsImages=false, so a request carrying an image
+// fails closed at serialize time ("model does not support image input") — the
+// default deepseek regression for the fail-closed contract.
+func TestRegisterLLMDefaultDeepseekSupportsImagesFalse(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	a := &app{
+		cfg: config.Config{
+			Model: "deepseek-chat",
+			LLM:   config.LLMConfig{Provider: "deepseek"},
+		},
+	}
+	if err := a.registerLLM(); err != nil {
+		t.Fatalf("registerLLM: %v", err)
+	}
+	p, err := a.llmReg.Get("deepseek")
+	if err != nil {
+		t.Fatalf("Get deepseek: %v", err)
+	}
+	// The fail-closed check runs before any network call or file read, so the
+	// ImageRef needs only a media type (Path is never touched).
+	_, err = p.Stream(context.Background(), llm.ChatRequest{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{
+			{Kind: llm.BlockImage, Image: llm.ImageRef{MediaType: "image/png"}},
+		}}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "model does not support image input") {
+		t.Fatalf("err = %v, want the fail-closed image error (modalities=text ⇒ SupportsImages=false)", err)
+	}
+}
+
+// TestRegisterLLMSupportsImagesTrueWhenModalitiesImage verifies the positive
+// wiring: with model_input_modalities=text,image the provider is wired with
+// SupportsImages=true — the request proceeds past the fail-closed check and
+// instead fails on the (missing) image file read, proving the check passed.
+func TestRegisterLLMSupportsImagesTrueWhenModalitiesImage(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	a := &app{
+		cfg: config.Config{
+			Model: "deepseek-chat",
+			LLM:   config.LLMConfig{Provider: "deepseek", ModelInputModalities: "text,image"},
+		},
+	}
+	if err := a.registerLLM(); err != nil {
+		t.Fatalf("registerLLM: %v", err)
+	}
+	p, err := a.llmReg.Get("deepseek")
+	if err != nil {
+		t.Fatalf("Get deepseek: %v", err)
+	}
+	_, err = p.Stream(context.Background(), llm.ChatRequest{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{
+			{Kind: llm.BlockImage, Image: llm.ImageRef{MediaType: "image/png", Path: filepath.Join(t.TempDir(), "missing.png")}},
+		}}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "read image") {
+		t.Fatalf("err = %v, want a read-image error (SupportsImages wired true, check passed)", err)
+	}
+}
+
+// TestRegisterLLMWiresMaxRequestImageBytes verifies MaxRequestImageBytes flows
+// from config through registerLLM into the provider: an image whose bytes
+// exceed the configured request budget is offloaded to the placeholder before
+// serialization (dispatch-m8-3b §5: 默认 20MiB 由 New 兜底, but an explicit small
+// budget must be honored).
+func TestRegisterLLMWiresMaxRequestImageBytes(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+	a := &app{
+		cfg: config.Config{
+			Model:   "deepseek-chat",
+			BaseURL: srv.URL,
+			LLM: config.LLMConfig{
+				Provider:             "deepseek",
+				ModelInputModalities: "text,image",
+				Multimodal: config.MultimodalConfig{
+					Enabled:            true,
+					MaxImageBytes:      1 << 20,
+					MaxRequestImageBytes: 5, // tiny budget so the 100-byte image offloads
+				},
+			},
+		},
+	}
+	if err := a.registerLLM(); err != nil {
+		t.Fatalf("registerLLM: %v", err)
+	}
+	p, err := a.llmReg.Get("deepseek")
+	if err != nil {
+		t.Fatalf("Get deepseek: %v", err)
+	}
+	reader, err := p.Stream(context.Background(), llm.ChatRequest{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{
+			llm.Text("d"),
+			{Kind: llm.BlockImage, Image: llm.ImageRef{MediaType: "image/png", Bytes: 100, Path: "does-not-matter"}},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	for {
+		_, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("next: %v", err)
+		}
+	}
+	msgs, _ := gotBody["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages = %v", gotBody["messages"])
+	}
+	first := msgs[0].(map[string]any)
+	if first["content"] != "d"+llm.OffloadedImageText {
+		t.Fatalf("content = %v, want the offloaded text (MaxRequestImageBytes wired from config)", first["content"])
 	}
 }

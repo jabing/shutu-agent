@@ -40,10 +40,12 @@ func (a *app) registerLLM() error {
 	// legacy top-level model/base_url (the deepseek default configuration,
 	// dispatch-m8-2 §5) and DEEPSEEK_API_KEY from the environment.
 	if err := reg.Register(deepseek.New(deepseek.Config{
-		APIKey:     os.Getenv("DEEPSEEK_API_KEY"),
-		BaseURL:    a.cfg.BaseURL,
-		Model:      a.cfg.Model,
-		MaxRetries: 2,
+		APIKey:               os.Getenv("DEEPSEEK_API_KEY"),
+		BaseURL:              a.cfg.BaseURL,
+		Model:                a.cfg.Model,
+		MaxRetries:           2,
+		SupportsImages:       strings.Contains(a.cfg.LLM.ModelInputModalities, "image"),
+		MaxRequestImageBytes: a.cfg.LLM.Multimodal.MaxRequestImageBytes, // 默认 20MiB 由 New 兜底
 	})); err != nil {
 		return fmt.Errorf("pa: register deepseek provider: %w", err)
 	}
@@ -53,9 +55,11 @@ func (a *app) registerLLM() error {
 	// OpenAI-compatible client — zero new wire code (dispatch-m8-2 §4).
 	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
 		if err := reg.Register(openai.New(openai.Config{
-			APIKey:  key,
-			BaseURL: a.cfg.LLM.OpenAI.BaseURL,
-			Model:   a.cfg.LLM.OpenAI.Model,
+			APIKey:               key,
+			BaseURL:              a.cfg.LLM.OpenAI.BaseURL,
+			Model:                a.cfg.LLM.OpenAI.Model,
+			SupportsImages:       strings.Contains(a.cfg.LLM.ModelInputModalities, "image"),
+			MaxRequestImageBytes: a.cfg.LLM.Multimodal.MaxRequestImageBytes, // 默认 20MiB 由 New 兜底
 		})); err != nil {
 			return fmt.Errorf("pa: register openai provider: %w", err)
 		}
@@ -67,9 +71,11 @@ func (a *app) registerLLM() error {
 	// claude-sonnet-4-5, dispatch-m8-2b §3).
 	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
 		if err := reg.Register(anthropic.New(anthropic.Config{
-			APIKey:  key,
-			BaseURL: a.cfg.LLM.Anthropic.BaseURL,
-			Model:   a.cfg.LLM.Anthropic.Model,
+			APIKey:               key,
+			BaseURL:              a.cfg.LLM.Anthropic.BaseURL,
+			Model:                a.cfg.LLM.Anthropic.Model,
+			SupportsImages:       strings.Contains(a.cfg.LLM.ModelInputModalities, "image"),
+			MaxRequestImageBytes: a.cfg.LLM.Multimodal.MaxRequestImageBytes, // 默认 20MiB 由 New 兜底
 		})); err != nil {
 			return fmt.Errorf("pa: register anthropic provider: %w", err)
 		}
