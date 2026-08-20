@@ -44,15 +44,14 @@ dsh web 的核心功能面：实时对话（发消息 + 流式 assistant 输出 
 - web 提供**前端主题**（深/浅色 CSS 变量切换，localStorage 记忆）——这是静态前端能力，非运行时插件。
 - 不承诺 dsh 的插件面板、主题商店等。
 
-### D-WEB2-F 前端结构升级（vanilla JS 保持，零新依赖）
-- 单页应用扩展：路由 `#/chat/{id}`（对话工作台：消息流 + 输入框 + SSE 实时）+ 现有 `#/sessions`（列表）、`#/dashboard`、`#/settings`、`#/kb`（空壳）。
-- `#/chat` 是默认入口（dsh 式工作台）：会话列表侧栏 + 对话主区 + 输入框（Enter 发送）。工具卡片折叠。
-- SSE 用 `EventSource`（原生 API，fetch 无法发 header——**问题**：SSE 首请求需要 Bearer token，`EventSource` 不能设 Authorization header）。
-
-  **认证接线决策（D-WEB2-B 续）**：浏览器 `EventSource` 无法带自定义 header。方案：
-  a. **token 放 query param**（`?token=...`）——SSE 端点允许 `Authorization` 或 `?token=` 二选一（token 经 HTTPS/localhost 传 query 有泄露面，但本地个人门户可接受；SSE 端点本身只推事件，风险受控）。
-  b. **fetch 流式读取**（`fetch` 带 header + `response.body.getReader()` 读 SSE 流）——原生 fetch 可带 header，手动解析 SSE 帧，替代 EventSource。
-  **决策：b（fetch + ReadableStream 解析）**——不把 token 放 URL，保持「token 只在 Authorization header」，复用现有认证中间件（SSE 端点与普通 API 同一 requireAuth）。前端实现一个小型 SSE 解析器（~30 行）消费 `text/event-stream`。
+### D-WEB2-F 前端整体重构为 dsh 式聊天工作台（唯一主界面，取代只读浏览 UI）
+- **用户拍板（2026-08-20）**：「现在的只读 web ui 不需要，新的 web 需要像 dsh web 完全一样」——前端不再保留独立的只读「会话列表 / 事件流浏览 / dashboard」主页面；重构为 dsh 式**聊天工作台**为唯一主界面：
+  - **左侧会话栏**：会话列表（新建 / 恢复 / 切换，复用 D-WEB2-C API）；
+  - **主区聊天**：user/assistant 消息气泡 + 流式追加（SSE chunk 逐字进当前气泡）+ **工具调用卡片**（tool/result、tool/error 折叠块，name + 有界 output）；
+  - **顶部/侧栏**：模型 / provider 显示、`#/settings` 设置入口、深/浅主题切换（D-WEB2-F 前端主题）。
+  - 独立的只读浏览页（M10a 的会话列表页 / 事件流页 / M10c 的 dashboard 统计页）**不作为主页面**；其后端 API（sessions / events / stats）**保留**，供聊天工作台内部使用（会话栏、统计可并入侧栏/设置辅助）。
+- vanilla JS 保持，零新依赖、无构建。
+- **SSE 认证接线（D-WEB2-B 续）**：浏览器 `EventSource` 不能设置 `Authorization` header（且 token 入 URL 有泄露面）→ **决策：前端用 `fetch` + `response.body.getReader()` 手动解析 SSE 帧（~30 行）**——token 只经 Authorization header，SSE 端点与普通 API 共用同一 `requireAuth` 中间件。
 
 ## 理由
 
