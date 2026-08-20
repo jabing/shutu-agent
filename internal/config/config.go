@@ -130,6 +130,16 @@ const (
 	DefaultModelInputModalities           = "text"
 	DefaultMultimodalMaxImageBytes        = 10 * 1024 * 1024 // 10 MiB
 	DefaultMultimodalMaxRequestImageBytes = 20 * 1024 * 1024 // 20 MiB
+
+	// M9 terminal defaults (dispatch-m9-2 §2 / ADR 2026-08-20-m9-terminal.md):
+	// the persistent-shell terminal is off by default (D10); the scrollback
+	// caps, read pacing and the single-active-owner concurrency limit follow
+	// the design defaults below.
+	DefaultTerminalScrollbackMaxBytes = 65536
+	DefaultTerminalScrollbackLines    = 2000
+	DefaultTerminalReadIdleMS         = 500
+	DefaultTerminalReadTimeoutMS      = 30000
+	DefaultTerminalMaxConcurrent      = 1
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
@@ -159,6 +169,7 @@ type Config struct {
 	Fs         FsConfig         `yaml:"fs"`          // safe-file-operation policy (M6f)
 	Web        WebConfig        `yaml:"web"`         // web search/fetch policy (M7)
 	LLM        LLMConfig        `yaml:"llm"`         // LLM provider selection (M8-2)
+	Terminal   TerminalConfig   `yaml:"terminal"`    // persistent-shell terminal (M9)
 }
 
 // LLMConfig is the LLM provider-selection policy (dispatch-m8-2 §5 / ADR
@@ -186,6 +197,24 @@ type LLMConfig struct {
 	// default (D10): when disabled the composition root creates no attachment
 	// store, /attach is unavailable, and image blocks are never serialized.
 	Multimodal MultimodalConfig `yaml:"multimodal"`
+}
+
+// TerminalConfig is the persistent-shell terminal policy (dispatch-m9-2 §2 /
+// ADR 2026-08-20-m9-terminal.md). The capability is default off (D10): when
+// Enabled is false the composition root registers no terminal tools and no
+// /term command. The session subprocess inherits a scrubbed environment
+// (credential-bearing variables are dropped, 纪律 6) — see
+// internal/terminal/scrubbedEnv.
+type TerminalConfig struct {
+	Enabled               bool     `yaml:"enabled"`                 // default false (D10)
+	Shell                 string   `yaml:"shell"`                   // default "" → platform default (cmd.exe / /bin/sh)
+	Args                  []string `yaml:"args"`                    // extra shell args
+	Workdir               string   `yaml:"workdir"`                 // default "" → inherit agent cwd
+	ScrollbackMaxBytes    int      `yaml:"scrollback_max_bytes"`    // default 65536
+	ScrollbackLines       int      `yaml:"scrollback_lines"`        // default 2000
+	ReadIdleMS            int      `yaml:"read_idle_ms"`            // default 500
+	ReadTimeoutMS         int      `yaml:"read_timeout_ms"`         // default 30000
+	MaxConcurrentSessions int      `yaml:"max_concurrent_sessions"` // default 1 (single active owner, D5)
 }
 
 // MultimodalConfig is the image-attachment policy (dispatch-m8-3 §3 / ADR
@@ -944,6 +973,31 @@ func applyDefaults(cfg *Config) {
 	if cfg.LLM.Multimodal.MaxRequestImageBytes <= 0 {
 		cfg.LLM.Multimodal.MaxRequestImageBytes = DefaultMultimodalMaxRequestImageBytes
 	}
+	if cfg.Terminal.ScrollbackMaxBytes <= 0 {
+		cfg.Terminal.ScrollbackMaxBytes = DefaultTerminalScrollbackMaxBytes
+	}
+	if cfg.Terminal.ScrollbackLines <= 0 {
+		cfg.Terminal.ScrollbackLines = DefaultTerminalScrollbackLines
+	}
+	if cfg.Terminal.ReadIdleMS <= 0 {
+		cfg.Terminal.ReadIdleMS = DefaultTerminalReadIdleMS
+	}
+	if cfg.Terminal.ReadTimeoutMS <= 0 {
+		cfg.Terminal.ReadTimeoutMS = DefaultTerminalReadTimeoutMS
+	}
+	if cfg.Terminal.MaxConcurrentSessions <= 0 {
+		cfg.Terminal.MaxConcurrentSessions = DefaultTerminalMaxConcurrent
+	}
+	// Enabling terminal whitelists its five consumer tools as well, so the
+	// single terminal.enabled switch turns the whole capability on (provider +
+	// tools + /term); default off (D10, dispatch-m9-2 §2 — mirrors run_command).
+	if cfg.Terminal.Enabled {
+		for _, name := range terminalToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
 }
 
 // kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /
@@ -1019,6 +1073,12 @@ var fsToolNames = []string{"fs_read", "fs_write", "fs_list"}
 // makes the "web.enabled ⇒ 工具自动白名单" rule a single, tested fact shared by
 // applyDefaults and the composition root.
 var webToolNames = []string{"web_search", "web_fetch"}
+
+// terminalToolNames are the persistent-terminal consumer tools
+// (dispatch-m9-2 §4). They are registered and whitelisted only when terminal
+// is enabled; keeping the names here makes the "terminal.enabled ⇒ 工具自动白名单"
+// rule a single, tested fact shared by applyDefaults and the composition root.
+var terminalToolNames = []string{"terminal_start", "terminal_write", "terminal_read", "terminal_signal", "terminal_stop"}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {

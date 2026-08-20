@@ -402,4 +402,17 @@ web:
     # web_search server tool max_uses per request; 0/absent ⇒ 5.
     max_uses: 5
 
+# terminal: persistent-shell terminal (M9). Default off (D10); when enabled,
+# the session subprocess runs with a scrubbed environment (agent credentials
+# are never inherited).
+#   enabled: false            # master switch; false → no terminal tools, no /term
+#   shell: ""                 # platform default (cmd.exe on Windows)
+#   args: []
+#   workdir: ""               # inherit agent cwd
+#   scrollback_max_bytes: 65536
+#   scrollback_lines: 2000
+#   read_idle_ms: 500
+#   read_timeout_ms: 30000
+#   max_concurrent_sessions: 1
+
 

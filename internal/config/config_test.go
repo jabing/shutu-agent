@@ -1716,3 +1716,58 @@ func TestLoadMultimodalMaxRequestImageBytes(t *testing.T) {
 			cfg3.LLM.Multimodal.MaxRequestImageBytes, DefaultMultimodalMaxRequestImageBytes)
 	}
 }
+
+// M9: a zero-value TerminalConfig falls back to the design defaults
+// (scrollback caps, read pacing, single-active-owner concurrency), and
+// terminal stays off by default (D10, bool 零值即关).
+func TestTerminalDefaults(t *testing.T) {
+	var cfg Config
+	applyDefaults(&cfg)
+	if cfg.Terminal.Enabled {
+		t.Error("terminal must be disabled by default (D10)")
+	}
+	if cfg.Terminal.ScrollbackMaxBytes != DefaultTerminalScrollbackMaxBytes {
+		t.Errorf("terminal.scrollback_max_bytes = %d, want default %d",
+			cfg.Terminal.ScrollbackMaxBytes, DefaultTerminalScrollbackMaxBytes)
+	}
+	if cfg.Terminal.ScrollbackLines != DefaultTerminalScrollbackLines {
+		t.Errorf("terminal.scrollback_lines = %d, want default %d",
+			cfg.Terminal.ScrollbackLines, DefaultTerminalScrollbackLines)
+	}
+	if cfg.Terminal.ReadIdleMS != DefaultTerminalReadIdleMS {
+		t.Errorf("terminal.read_idle_ms = %d, want default %d",
+			cfg.Terminal.ReadIdleMS, DefaultTerminalReadIdleMS)
+	}
+	if cfg.Terminal.ReadTimeoutMS != DefaultTerminalReadTimeoutMS {
+		t.Errorf("terminal.read_timeout_ms = %d, want default %d",
+			cfg.Terminal.ReadTimeoutMS, DefaultTerminalReadTimeoutMS)
+	}
+	if cfg.Terminal.MaxConcurrentSessions != DefaultTerminalMaxConcurrent {
+		t.Errorf("terminal.max_concurrent_sessions = %d, want default %d",
+			cfg.Terminal.MaxConcurrentSessions, DefaultTerminalMaxConcurrent)
+	}
+}
+
+// M9: terminal.enabled is the single switch that whitelists the five
+// terminal_* consumer tools; with terminal disabled none of them is
+// whitelisted (D10, dispatch-m9-2 §2).
+func TestTerminalEnabledWhitelists(t *testing.T) {
+	// Default (terminal disabled): no terminal tool in the whitelist.
+	var disabled Config
+	applyDefaults(&disabled)
+	for _, name := range terminalToolNames {
+		if contains(disabled.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when terminal disabled", disabled.Tools.Enabled, name)
+		}
+	}
+
+	// Enabled: all five terminal_* tools enter the whitelist.
+	var enabled Config
+	enabled.Terminal.Enabled = true
+	applyDefaults(&enabled)
+	for _, name := range terminalToolNames {
+		if !contains(enabled.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after terminal.enabled", enabled.Tools.Enabled, name)
+		}
+	}
+}
