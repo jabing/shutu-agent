@@ -9,6 +9,12 @@ model: deepseek-chat
 # (https://api.deepseek.com).
 base_url: ""
 
+# Agent 模式预设 (ADR 2026-08-20-mode-presets.md): standard (标准, 默认: 全部
+# 能力按各自 enabled 开关) | minimal (极简: 固定 persona + 持久 shell + 文件
+# 编辑, 其余能力忽略) | code (PTC: 标准全部 + 程序化操作 Code Mode 段, 用
+# code_run 组合多步). 重启生效; 未知值启动报错.
+mode: standard
+
 # LLM provider selection (M8-2, design.md §6 / ADR 2026-08-20-m8-message-model.md).
 # The top-level model/base_url above remain the DeepSeek default configuration
 # (compatible with existing config.yaml — not migrated). API keys NEVER appear

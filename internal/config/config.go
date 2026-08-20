@@ -147,11 +147,31 @@ const (
 	// capability itself is off by default (D10, bool 零值即关).
 	DefaultEvalManualFallback = true
 	DefaultEvalMaxRecords     = 100
+
+	// Mode presets (ADR 2026-08-20-mode-presets.md D-MODE-1): the top-level
+	// mode selects the agent's capability preset — minimal (极简: 固定 persona
+	// + 持久 shell + 文件编辑), standard (标准: 全部已实现能力, 默认), code
+	// (PTC: 标准 + 程序化操作 Code Mode 提示词段). An unknown value fails
+	// closed at Load (like the LLM provider). 默认 standard ⇒ 现有默认行为零
+	// 变化 (D10).
+	DefaultMode  = "standard"
+	ModeMinimal  = "minimal"
+	ModeStandard = "standard"
+	ModeCode     = "code"
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
 // It intentionally contains only the read-only tools (D10: 白名单先行).
 var defaultEnabledTools = []string{"get_time", "read_file"}
+
+// minimalEnabledTools is the minimal preset's exact execution whitelist (ADR
+// 2026-08-20-mode-presets.md D-MODE-2): M1 基础只读 + 持久 shell (terminal_*)
+// + 文件编辑 (fs_*). 工具名须与各包常量一致 (terminal.go/fs.go).
+var minimalEnabledTools = []string{
+	"get_time", "read_file",
+	"terminal_start", "terminal_write", "terminal_read", "terminal_signal", "terminal_stop",
+	"fs_read", "fs_write", "fs_list",
+}
 
 // Config is the file-backed runtime configuration. Any field may be omitted in
 // config.yaml; Load fills defaults for empty values, so callers never branch
@@ -178,6 +198,11 @@ type Config struct {
 	LLM        LLMConfig        `yaml:"llm"`         // LLM provider selection (M8-2)
 	Terminal   TerminalConfig   `yaml:"terminal"`    // persistent-shell terminal (M9)
 	Eval       EvalConfig       `yaml:"eval"`        // task-evaluation seam (eval)
+
+	// Mode selects the agent capability preset (D-MODE-1): minimal | standard
+	// | code; default standard. minimal is preset-first (D-MODE-6): 能力开关
+	// 与白名单被覆盖, 用户显式开启的其余能力在 minimal 下被忽略.
+	Mode string `yaml:"mode"`
 }
 
 // LLMConfig is the LLM provider-selection policy (dispatch-m8-2 §5 / ADR
@@ -691,6 +716,13 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("config: parse %s: %w", path, err)
 	}
 	applyDefaults(&cfg)
+	// Mode fails closed on unknown values, like the LLM provider route
+	// (D-MODE-1): never silently fall back.
+	switch cfg.Mode {
+	case ModeMinimal, ModeStandard, ModeCode:
+	default:
+		return Config{}, fmt.Errorf("config: invalid mode %q (want minimal|standard|code)", cfg.Mode)
+	}
 	// BaseURL intentionally keeps an empty value to mean "provider default".
 	return cfg, nil
 }
@@ -698,6 +730,9 @@ func Load(path string) (Config, error) {
 // applyDefaults fills every field that is empty or absent so callers never
 // branch on field presence. It runs on both the missing-file and parsed paths.
 func applyDefaults(cfg *Config) {
+	if cfg.Mode == "" {
+		cfg.Mode = DefaultMode
+	}
 	if cfg.Model == "" {
 		cfg.Model = DefaultModel
 	}
@@ -1048,6 +1083,31 @@ func applyDefaults(cfg *Config) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
 			}
 		}
+	}
+	// D-MODE-2 (ADR 2026-08-20-mode-presets.md): minimal 模式是预设优先 ——
+	// 只保留持久 shell + 文件编辑 + M1 基础只读；其余能力 cap 全关、白名单
+	// 整体重置为 minimal 集合。register* 的 D10 门读这些 Enabled, 因此注册面
+	// 与白名单面自动收敛。standard/code 不触碰 (现状). 必须放在所有既有
+	// append 之后, 否则后续 append 会把用户开启的其余工具加回白名单.
+	if cfg.Mode == ModeMinimal {
+		cfg.Terminal.Enabled = true
+		cfg.Fs.Enabled = true
+		cfg.KB.Enabled = false
+		cfg.Jobs.Enabled = false
+		cfg.Subagent.Enabled = false
+		cfg.Compaction.Enabled = false
+		cfg.Skill.Enabled = false
+		cfg.Schedule.Enabled = false
+		cfg.Plan.Enabled = false
+		cfg.Spill.Enabled = false
+		cfg.Interact.Enabled = false
+		cfg.Code.Enabled = false
+		cfg.Mcp.Enabled = false
+		cfg.Web.Enabled = false
+		cfg.Eval.Enabled = false
+		cfg.LLM.Multimodal.Enabled = false
+		cfg.Tools.RunCommand.Enabled = false
+		cfg.Tools.Enabled = append([]string(nil), minimalEnabledTools...)
 	}
 }
 

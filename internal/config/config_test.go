@@ -1836,3 +1836,196 @@ func TestEvalManualFallbackExplicitFalse(t *testing.T) {
 		t.Error("eval.manual_fallback = true, want false (explicitly disabled)")
 	}
 }
+
+// D-MODE-1: a zero-value Config (or a Load of a missing file) defaults the
+// mode to "standard" — the existing default behavior is unchanged (D10).
+func TestModeDefault(t *testing.T) {
+	var cfg Config
+	applyDefaults(&cfg)
+	if cfg.Mode != DefaultMode {
+		t.Errorf("mode = %q, want default %q", cfg.Mode, DefaultMode)
+	}
+
+	cfg2, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Mode != DefaultMode {
+		t.Errorf("mode (missing file) = %q, want default %q", cfg2.Mode, DefaultMode)
+	}
+}
+
+// D-MODE-2: mode: minimal is preset-first — only the persistent shell and
+// file editing survive (Terminal.Enabled / Fs.Enabled true), every other
+// capability cap is forced false, and the execution whitelist is reset to
+// exactly the minimal set (M1 只读 + terminal_* + fs_*).
+func TestModeMinimalWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("mode: minimal\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Terminal.Enabled {
+		t.Error("minimal: terminal must be enabled")
+	}
+	if !cfg.Fs.Enabled {
+		t.Error("minimal: fs must be enabled")
+	}
+	for name, enabled := range modeCapStates(cfg) {
+		if name == "terminal" || name == "fs" {
+			continue // these two are the minimal preset's survivors
+		}
+		if enabled {
+			t.Errorf("minimal: %s must be disabled (preset-first, D-MODE-2)", name)
+		}
+	}
+	if cfg.Tools.RunCommand.Enabled {
+		t.Error("minimal: tools.run_command must be disabled")
+	}
+	if !reflect.DeepEqual(cfg.Tools.Enabled, minimalEnabledTools) {
+		t.Errorf("minimal whitelist = %v, want exactly %v", cfg.Tools.Enabled, minimalEnabledTools)
+	}
+}
+
+// D-MODE-6: minimal is preset-first — user-explicitly-enabled capabilities
+// (kb, web) and an explicit tools whitelist are ignored and forced to the
+// minimal set.
+func TestModeMinimalPresetFirst(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := "mode: minimal\nkb:\n  enabled: true\nweb:\n  enabled: true\ntools:\n  enabled: [web_search]\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.KB.Enabled {
+		t.Error("minimal must override an explicit kb.enabled: true (preset-first, D-MODE-6)")
+	}
+	if cfg.Web.Enabled {
+		t.Error("minimal must override an explicit web.enabled: true (preset-first, D-MODE-6)")
+	}
+	if !cfg.Terminal.Enabled || !cfg.Fs.Enabled {
+		t.Error("minimal must keep terminal and fs enabled despite the explicit overrides")
+	}
+	if !reflect.DeepEqual(cfg.Tools.Enabled, minimalEnabledTools) {
+		t.Errorf("minimal whitelist = %v, want exactly %v (explicit tools.enabled overridden)",
+			cfg.Tools.Enabled, minimalEnabledTools)
+	}
+}
+
+// D-MODE-1: mode: standard touches nothing — an explicit kb.enabled: true
+// survives and every remaining cap equals a config with no mode set (default
+// standard, D10).
+func TestModeStandardUnchanged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("mode: standard\nkb:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.KB.Enabled {
+		t.Error("standard must keep an explicit kb.enabled: true")
+	}
+	cfgDefault, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load default: %v", err)
+	}
+	if !reflect.DeepEqual(modeCapStates(cfg), modeCapStates(cfgDefault)) {
+		t.Errorf("standard changed cap states vs no-mode: got %v, want %v",
+			modeCapStates(cfg), modeCapStates(cfgDefault))
+	}
+}
+
+// D-MODE-1/4: mode: code touches no capability cap — explicit kb.enabled and
+// terminal.enabled survive exactly as in standard (code only adds the Code
+// Mode prompt segment in the composition root).
+func TestModeCodeKeepsCaps(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("mode: code\nkb:\n  enabled: true\nterminal:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.KB.Enabled {
+		t.Error("code must keep kb.enabled: true (like standard)")
+	}
+	if !cfg.Terminal.Enabled {
+		t.Error("code must keep terminal.enabled: true (like standard)")
+	}
+	pathStd := filepath.Join(t.TempDir(), "config-std.yaml")
+	if err := os.WriteFile(pathStd, []byte("kb:\n  enabled: true\nterminal:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfgStd, err := Load(pathStd)
+	if err != nil {
+		t.Fatalf("Load standard: %v", err)
+	}
+	if !reflect.DeepEqual(modeCapStates(cfg), modeCapStates(cfgStd)) {
+		t.Errorf("code changed cap states vs standard: got %v, want %v",
+			modeCapStates(cfg), modeCapStates(cfgStd))
+	}
+}
+
+// D-MODE-1: an unknown mode value fails closed at Load — never silently fall
+// back (like the LLM provider route).
+func TestModeInvalidFailsClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("mode: turbo\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error for an unknown mode")
+	} else if !strings.Contains(err.Error(), "invalid mode") {
+		t.Errorf("error = %v, want it to contain \"invalid mode\"", err)
+	}
+}
+
+// D-MODE-2: the minimal whitelist carries the exact persistent-shell and
+// file-editing tool names (they must match the terminal/fs package constants).
+func TestModeMinimalTerminalToolsRegistered(t *testing.T) {
+	var cfg Config
+	cfg.Mode = ModeMinimal
+	applyDefaults(&cfg)
+	for _, name := range terminalToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("minimal whitelist %v lacks terminal tool %q", cfg.Tools.Enabled, name)
+		}
+	}
+	for _, name := range fsToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("minimal whitelist %v lacks fs tool %q", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// modeCapStates returns every capability master switch except kb (kb is
+// asserted per-test, e.g. it differs between an explicit kb.enabled and the
+// default), used to compare cap states across modes.
+func modeCapStates(cfg Config) map[string]bool {
+	return map[string]bool{
+		"terminal":       cfg.Terminal.Enabled,
+		"fs":             cfg.Fs.Enabled,
+		"jobs":           cfg.Jobs.Enabled,
+		"subagent":       cfg.Subagent.Enabled,
+		"web":            cfg.Web.Enabled,
+		"eval":           cfg.Eval.Enabled,
+		"code":           cfg.Code.Enabled,
+		"interact":       cfg.Interact.Enabled,
+		"compaction":     cfg.Compaction.Enabled,
+		"skill":          cfg.Skill.Enabled,
+		"schedule":       cfg.Schedule.Enabled,
+		"plan":           cfg.Plan.Enabled,
+		"spill":          cfg.Spill.Enabled,
+		"mcp":            cfg.Mcp.Enabled,
+		"llm.multimodal": cfg.LLM.Multimodal.Enabled,
+	}
+}
