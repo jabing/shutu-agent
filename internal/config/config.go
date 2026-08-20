@@ -86,6 +86,26 @@ const (
 	// meaning the provider default (<project>/.sandbox).
 	DefaultCodeTimeout   = 30 * time.Second
 	DefaultCodeMaxOutput = 64 * 1024
+
+	// M7-2 web defaults (dispatch-m7-2 §5 / ADR 2026-08-20-m7-web-search.md):
+	// the search result/query caps, the search and fetch timeouts, the fetch
+	// output byte/char/url/redirect caps, the User-Agent, and the DeepSeek
+	// search-provider parameters. web.enabled=false is the default (D10); when
+	// enabled these are the values the composition root passes to the web seam.
+	DefaultWebSearchMaxResults      = 8
+	DefaultWebSearchMaxQueries      = 4
+	DefaultWebSearchTimeoutMs       = 30000
+	DefaultWebFetchTimeoutMs        = 30000
+	DefaultWebFetchMaxOutputChars   = 200000
+	DefaultWebFetchMaxResponseBytes = 2097152 // 2 MiB
+	DefaultWebFetchMaxURLBytes      = 2048
+	DefaultWebFetchMaxRedirects     = 5
+	DefaultWebFetchUserAgent        = "personal-agent/0.1 (M7)"
+	DefaultWebDeepSeekBaseURL       = "https://api.deepseek.com/anthropic/v1"
+	DefaultWebDeepSeekModel         = "deepseek-v4-flash"
+	DefaultWebDeepSeekAPIVersion    = "2023-06-01"
+	DefaultWebDeepSeekMaxTokens     = 4096
+	DefaultWebDeepSeekMaxUses       = 5
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
@@ -113,6 +133,7 @@ type Config struct {
 	Code       CodeConfig       `yaml:"code"`        // code-sandbox policy (M6e)
 	Mcp        McpConfig        `yaml:"mcp"`         // MCP tool-ecosystem policy (M6f)
 	Fs         FsConfig         `yaml:"fs"`          // safe-file-operation policy (M6f)
+	Web        WebConfig        `yaml:"web"`         // web search/fetch policy (M7)
 }
 
 // JobsConfig is the background-job policy (dispatch-m5a-2 §3 / ADR
@@ -337,6 +358,60 @@ type FsConfig struct {
 	// the default <project> (the process working directory), resolved by the
 	// FileService constructor.
 	Root string `yaml:"root"`
+}
+
+// WebConfig 是联网能力策略（ADR 2026-08-20-m7-web-search.md / dispatch-m7-2 §5）。
+// 默认关（D10）：disabled 时组合根不创建 Engine、不注册/白名单 web_* 工具。
+// web.enabled 同时开搜索与抓取——不设独立的 search_enabled/fetch_enabled 开关
+// （dispatch-m7-2 §6 决策：按 dsh {search:true, fetch:true} 语义简化为总开关）。
+type WebConfig struct {
+	// Enabled gates the whole capability: when false, the composition root
+	// creates no Engine, registers no web_* tool, and whitelists nothing (D10).
+	Enabled bool `yaml:"enabled"`
+
+	// SearchMaxResults is the source cap for a single search and for the
+	// merged multi-query result; <= 0 means the default 8.
+	SearchMaxResults int `yaml:"search_max_results"`
+	// SearchMaxQueries is the query-count cap for one web_search call (the
+	// schema maxItems); <= 0 means the default 4.
+	SearchMaxQueries int `yaml:"search_max_queries"`
+	// SearchTimeoutMs is the outer budget for one web_search call (all queries
+	// share it); <= 0 means the default 30000.
+	SearchTimeoutMs int `yaml:"search_timeout_ms"`
+	// DeepSeek carries the DeepSeek search-provider parameters (API key stays
+	// in the environment — DEEPSEEK_API_KEY only, design.md §6).
+	DeepSeek DeepSeekWebConfig `yaml:"deepseek"`
+
+	// FetchTimeoutMs is the outer budget for one web_fetch call; <= 0 means
+	// the default 30000.
+	FetchTimeoutMs int `yaml:"fetch_timeout_ms"`
+	// FetchMaxOutputChars caps the model-facing web_fetch body in chars
+	// (truncated with a notice); <= 0 means the default 200000.
+	FetchMaxOutputChars int `yaml:"fetch_max_output_chars"`
+	// FetchMaxResponseBytes caps the fetched response body in bytes; <= 0
+	// means the default 2097152 (2 MiB).
+	FetchMaxResponseBytes int `yaml:"fetch_max_response_bytes"`
+	// FetchMaxURLBytes caps the request URL length; <= 0 means the default 2048.
+	FetchMaxURLBytes int `yaml:"fetch_max_url_bytes"`
+	// FetchMaxRedirects caps same-origin redirect hops; <= 0 means the default 5.
+	FetchMaxRedirects int `yaml:"fetch_max_redirects"`
+	// FetchUserAgent is the User-Agent header; empty means the default.
+	FetchUserAgent string `yaml:"fetch_user_agent"`
+}
+
+// DeepSeekWebConfig 是 DeepSeek 搜索 provider 的参数（M7-1/M7-2；API key 只在
+// 环境变量 DEEPSEEK_API_KEY）。默认值见 DefaultWebDeepSeek* 常量。
+type DeepSeekWebConfig struct {
+	// BaseURL 是 Anthropic 兼容 Messages API 基址（/messages 附加）。
+	BaseURL string `yaml:"base_url"` // 默认 https://api.deepseek.com/anthropic/v1
+	// Model 是搜索请求的模型。
+	Model string `yaml:"model"` // 默认 deepseek-v4-flash
+	// APIVersion 是 anthropic-version 头。
+	APIVersion string `yaml:"api_version"` // 默认 2023-06-01
+	// MaxTokens 是搜索请求的 max_tokens。
+	MaxTokens int `yaml:"max_tokens"` // 默认 4096
+	// MaxUses 是 web_search server tool 单请求最大使用次数。
+	MaxUses int `yaml:"max_uses"` // 默认 5
 }
 
 // KBConfig is the knowledge-base policy (dispatch-m4a §3 / dispatch-m4b §5).
@@ -688,6 +763,64 @@ func applyDefaults(cfg *Config) {
 			}
 		}
 	}
+	// M7-2 web defaults: off by default (D10); the search/query caps, timeouts,
+	// fetch bounds and DeepSeek provider parameters fall back to the defaults.
+	// Enabling web whitelists its two consumer tools web_search and web_fetch,
+	// so the one web.enabled switch turns the whole capability (Engine +
+	// providers + tools) on (mirrors kb/jobs/subagent/skill/schedule/plan/
+	// spill/interact/code/mcp/fs). web.enabled is the single switch for both
+	// search and fetch (no search_enabled/fetch_enabled split, dispatch-m7-2
+	// §6). Non-positive bounds are clamped to the defaults (校验非负: a negative
+	// configured value can never survive to the wiring).
+	if cfg.Web.Enabled {
+		for _, name := range webToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
+	if cfg.Web.SearchMaxResults <= 0 {
+		cfg.Web.SearchMaxResults = DefaultWebSearchMaxResults
+	}
+	if cfg.Web.SearchMaxQueries <= 0 {
+		cfg.Web.SearchMaxQueries = DefaultWebSearchMaxQueries
+	}
+	if cfg.Web.SearchTimeoutMs <= 0 {
+		cfg.Web.SearchTimeoutMs = DefaultWebSearchTimeoutMs
+	}
+	if cfg.Web.FetchTimeoutMs <= 0 {
+		cfg.Web.FetchTimeoutMs = DefaultWebFetchTimeoutMs
+	}
+	if cfg.Web.FetchMaxOutputChars <= 0 {
+		cfg.Web.FetchMaxOutputChars = DefaultWebFetchMaxOutputChars
+	}
+	if cfg.Web.FetchMaxResponseBytes <= 0 {
+		cfg.Web.FetchMaxResponseBytes = DefaultWebFetchMaxResponseBytes
+	}
+	if cfg.Web.FetchMaxURLBytes <= 0 {
+		cfg.Web.FetchMaxURLBytes = DefaultWebFetchMaxURLBytes
+	}
+	if cfg.Web.FetchMaxRedirects <= 0 {
+		cfg.Web.FetchMaxRedirects = DefaultWebFetchMaxRedirects
+	}
+	if cfg.Web.FetchUserAgent == "" {
+		cfg.Web.FetchUserAgent = DefaultWebFetchUserAgent
+	}
+	if cfg.Web.DeepSeek.BaseURL == "" {
+		cfg.Web.DeepSeek.BaseURL = DefaultWebDeepSeekBaseURL
+	}
+	if cfg.Web.DeepSeek.Model == "" {
+		cfg.Web.DeepSeek.Model = DefaultWebDeepSeekModel
+	}
+	if cfg.Web.DeepSeek.APIVersion == "" {
+		cfg.Web.DeepSeek.APIVersion = DefaultWebDeepSeekAPIVersion
+	}
+	if cfg.Web.DeepSeek.MaxTokens <= 0 {
+		cfg.Web.DeepSeek.MaxTokens = DefaultWebDeepSeekMaxTokens
+	}
+	if cfg.Web.DeepSeek.MaxUses <= 0 {
+		cfg.Web.DeepSeek.MaxUses = DefaultWebDeepSeekMaxUses
+	}
 }
 
 // kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /
@@ -757,6 +890,12 @@ var mcpToolNames = []string{"mcp_list", "mcp_call"}
 // names here makes the "fs.enabled ⇒ 工具自动白名单" rule a single, tested fact
 // shared by applyDefaults and the composition root.
 var fsToolNames = []string{"fs_read", "fs_write", "fs_list"}
+
+// webToolNames are the web consumer tools (dispatch-m7-2 §5). They are
+// registered and whitelisted only when web is enabled; keeping the names here
+// makes the "web.enabled ⇒ 工具自动白名单" rule a single, tested fact shared by
+// applyDefaults and the composition root.
+var webToolNames = []string{"web_search", "web_fetch"}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {

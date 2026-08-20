@@ -1320,3 +1320,163 @@ func TestLoadFsEnabledAppendsToolsToWhitelist(t *testing.T) {
 		}
 	}
 }
+
+// M7-2: an absent web section means the capability is off by default (D10)
+// with every field at its default, and no web_* tool is whitelisted while
+// disabled (dispatch-m7-2 §5).
+func TestLoadWebDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Web.Enabled {
+		t.Error("web must be disabled by default (D10)")
+	}
+	if cfg.Web.SearchMaxResults != DefaultWebSearchMaxResults {
+		t.Errorf("web.search_max_results = %d, want %d", cfg.Web.SearchMaxResults, DefaultWebSearchMaxResults)
+	}
+	if cfg.Web.SearchMaxQueries != DefaultWebSearchMaxQueries {
+		t.Errorf("web.search_max_queries = %d, want %d", cfg.Web.SearchMaxQueries, DefaultWebSearchMaxQueries)
+	}
+	if cfg.Web.SearchTimeoutMs != DefaultWebSearchTimeoutMs {
+		t.Errorf("web.search_timeout_ms = %d, want %d", cfg.Web.SearchTimeoutMs, DefaultWebSearchTimeoutMs)
+	}
+	if cfg.Web.FetchTimeoutMs != DefaultWebFetchTimeoutMs {
+		t.Errorf("web.fetch_timeout_ms = %d, want %d", cfg.Web.FetchTimeoutMs, DefaultWebFetchTimeoutMs)
+	}
+	if cfg.Web.FetchMaxOutputChars != DefaultWebFetchMaxOutputChars {
+		t.Errorf("web.fetch_max_output_chars = %d, want %d", cfg.Web.FetchMaxOutputChars, DefaultWebFetchMaxOutputChars)
+	}
+	if cfg.Web.FetchMaxResponseBytes != DefaultWebFetchMaxResponseBytes {
+		t.Errorf("web.fetch_max_response_bytes = %d, want %d", cfg.Web.FetchMaxResponseBytes, DefaultWebFetchMaxResponseBytes)
+	}
+	if cfg.Web.FetchMaxURLBytes != DefaultWebFetchMaxURLBytes {
+		t.Errorf("web.fetch_max_url_bytes = %d, want %d", cfg.Web.FetchMaxURLBytes, DefaultWebFetchMaxURLBytes)
+	}
+	if cfg.Web.FetchMaxRedirects != DefaultWebFetchMaxRedirects {
+		t.Errorf("web.fetch_max_redirects = %d, want %d", cfg.Web.FetchMaxRedirects, DefaultWebFetchMaxRedirects)
+	}
+	if cfg.Web.FetchUserAgent != DefaultWebFetchUserAgent {
+		t.Errorf("web.fetch_user_agent = %q, want %q", cfg.Web.FetchUserAgent, DefaultWebFetchUserAgent)
+	}
+	if cfg.Web.DeepSeek.BaseURL != DefaultWebDeepSeekBaseURL ||
+		cfg.Web.DeepSeek.Model != DefaultWebDeepSeekModel ||
+		cfg.Web.DeepSeek.APIVersion != DefaultWebDeepSeekAPIVersion ||
+		cfg.Web.DeepSeek.MaxTokens != DefaultWebDeepSeekMaxTokens ||
+		cfg.Web.DeepSeek.MaxUses != DefaultWebDeepSeekMaxUses {
+		t.Errorf("web.deepseek defaults not applied: %+v", cfg.Web.DeepSeek)
+	}
+	for _, name := range webToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when web disabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// M7-2: an explicit web section is honored (enabled and every field), while an
+// explicit enabled:false leaves the default whitelist untouched (D10,
+// dispatch-m7-2 §5).
+func TestLoadWebParsesSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := `web:
+  enabled: true
+  search_max_results: 12
+  search_max_queries: 6
+  search_timeout_ms: 60000
+  fetch_timeout_ms: 15000
+  fetch_max_output_chars: 50000
+  fetch_max_response_bytes: 1048576
+  fetch_max_url_bytes: 1024
+  fetch_max_redirects: 3
+  fetch_user_agent: custom-agent/2.0
+  deepseek:
+    base_url: https://custom.example/anthropic
+    model: custom-model
+    api_version: 2024-01-01
+    max_tokens: 2048
+    max_uses: 10
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Web.Enabled {
+		t.Error("web.enabled should be true")
+	}
+	if cfg.Web.SearchMaxResults != 12 || cfg.Web.SearchMaxQueries != 6 || cfg.Web.SearchTimeoutMs != 60000 {
+		t.Errorf("search fields = %d/%d/%d", cfg.Web.SearchMaxResults, cfg.Web.SearchMaxQueries, cfg.Web.SearchTimeoutMs)
+	}
+	if cfg.Web.FetchTimeoutMs != 15000 || cfg.Web.FetchMaxOutputChars != 50000 ||
+		cfg.Web.FetchMaxResponseBytes != 1048576 || cfg.Web.FetchMaxURLBytes != 1024 ||
+		cfg.Web.FetchMaxRedirects != 3 || cfg.Web.FetchUserAgent != "custom-agent/2.0" {
+		t.Errorf("fetch fields = %+v", cfg.Web)
+	}
+	if cfg.Web.DeepSeek.BaseURL != "https://custom.example/anthropic" ||
+		cfg.Web.DeepSeek.Model != "custom-model" ||
+		cfg.Web.DeepSeek.APIVersion != "2024-01-01" ||
+		cfg.Web.DeepSeek.MaxTokens != 2048 || cfg.Web.DeepSeek.MaxUses != 10 {
+		t.Errorf("deepseek fields = %+v", cfg.Web.DeepSeek)
+	}
+
+	// Explicit enabled:false leaves the default whitelist untouched.
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("web:\n  enabled: false\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Web.Enabled {
+		t.Error("web.enabled = true, want false (explicitly disabled)")
+	}
+	for _, name := range webToolNames {
+		if contains(cfg2.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when web explicitly disabled", cfg2.Tools.Enabled, name)
+		}
+	}
+}
+
+// M7-2: web.enabled: true is the single switch that turns the whole capability
+// on — the two web_* tools must also become whitelisted (dispatch-m7-2 §5,
+// mirrors kb/jobs/subagent/skill/schedule/plan/spill/interact/code/mcp/fs).
+func TestLoadWebEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("web:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range webToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after web.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// M7-2: a non-positive search/query cap falls back to the default (校验非负:
+// a negative configured value can never survive to the wiring).
+func TestLoadWebNonPositiveCapsFallBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("web:\n  enabled: true\n  search_max_results: 0\n  search_max_queries: -1\n  fetch_max_redirects: -2\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Web.SearchMaxResults != DefaultWebSearchMaxResults {
+		t.Errorf("search_max_results 0 = %d, want default %d", cfg.Web.SearchMaxResults, DefaultWebSearchMaxResults)
+	}
+	if cfg.Web.SearchMaxQueries != DefaultWebSearchMaxQueries {
+		t.Errorf("search_max_queries -1 = %d, want default %d", cfg.Web.SearchMaxQueries, DefaultWebSearchMaxQueries)
+	}
+	if cfg.Web.FetchMaxRedirects != DefaultWebFetchMaxRedirects {
+		t.Errorf("fetch_max_redirects -2 = %d, want default %d", cfg.Web.FetchMaxRedirects, DefaultWebFetchMaxRedirects)
+	}
+}
