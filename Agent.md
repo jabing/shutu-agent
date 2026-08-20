@@ -30,7 +30,9 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 
 **2026-08-19（续）**：与 dsh 差距评估——M5 后除知识库/Web 接口外，个人 Agent 的实质能力缺口为：定时调度、任务规划、长期记忆、人工审批（任务类）+ 代码沙箱、工具生态/fs 封装（代码类）。用户拍板"需要补全"→ 定稿 **M6 能力补全六段**（ADR `2026-08-19-m6-agent-full.md`）：M6a 定时调度 → M6b 任务规划 → M6c 长期记忆 → M6d 人工审批 → M6e 代码沙箱 → M6f 工具生态。全部接缝挂薄核心（D4）、默认关（D10）、零新依赖（M6f MCP 自实现 JSON-RPC over stdio）。**M6 六段全部完成并通过验收**（M6a `85cd9a3`…`3fb43fd`；M6b `e006a9e`…`512896f`；M6c `b087b22`…`717ed92`；M6d `6d32daa`…`0118169`；M6e `a66d33e`…`cb39660`；M6f `764261c`…`f20ae3b`）。
 
-**2026-08-20 冒烟**：真实端到端冒烟（pa.exe 全链路，用户拍板"①"）。A. 无 API key 启动正确报错退出（env-only 约束生效）；发现 `data/pa.db` 留存 M4 时期的真实运行会话（4 轮对话 + `kb/extract`/`kb/recall`/`kb/add`/`tool/result`，D1 落库曾实测）。B. 真实对话（DeepSeek 流式）成功——/help 完整命令表 + 中文回答，会话 332→375 事件落库、重启恢复（resumed session）验证通过。C. 临时 config 启用 fs：模型真实调用 `fs_write` 创建 `smoke-c.txt` + `fs_read` 读回，`fs/write`/`fs/read`/`tool/result` 事件全部落库（工具注册→白名单→D3 事件→D7 校验→执行→落库整链路实测）。冒烟产物已清理（`.smoke/`、`pa-smoke.exe`、`smoke-c.txt`），工作树干净。**下一步候选**：知识库最小集补全（/kb-ingest 文档摄入 + 条目 List/Delete/Markdown 导出）→ 全量 dsh-knowledge。
+**2026-08-20 冒烟**：真实端到端冒烟（pa.exe 全链路，用户拍板"①"）。A. 无 API key 启动正确报错退出（env-only 约束生效）；发现 `data/pa.db` 留存 M4 时期的真实运行会话（4 轮对话 + `kb/extract`/`kb/recall`/`kb/add`/`tool/result`，D1 落库曾实测）。B. 真实对话（DeepSeek 流式）成功——/help 完整命令表 + 中文回答，会话 332→375 事件落库、重启恢复（resumed session）验证通过。C. 临时 config 启用 fs：模型真实调用 `fs_write` 创建 `smoke-c.txt` + `fs_read` 读回，`fs/write`/`fs/read`/`tool/result` 事件全部落库（工具注册→白名单→D3 事件→D7 校验→执行→落库整链路实测）。冒烟产物已清理（`.smoke/`、`pa-smoke.exe`、`smoke-c.txt`），工作树干净。
+
+**2026-08-20 rc.8 评估**：检查 deepseek-harness 上游更新（本地克隆 rc.7→rc.8，`dsh-v0.1.0-rc.8`，浅克隆 `141eb6f`）。逐项评估后**无必须跟进项**：① SQLite chunk-row 压缩（93b4b98，250 万逻辑事件→6.6 万物理行、体积降 89%）与本项目逐 chunk 落库的行放大同源，但个人规模量级差太大、跟进需 Zstandard 第三方依赖，暂缓；② DeepSeek reasoning 回传（583894f，无工具轮次也回传 reasoning_content 供网关哈希）本项目无网关且不消费推理，仅记为"启用 thinking 模型的前提"。用户拍板：**web 搜索列入路线图**（见 §4 候选小节），后端走 **DeepSeek 官方搜索**（dsh `packages/web/web-search-deepseek/`：Anthropic 兼容 Messages API `POST /anthropic/v1/messages` + 原生 `web_search_20250305` server tool，复用 `DEEPSEEK_API_KEY` 零新密钥，服务器端搜索返回结构化 `web_search_tool_result`，代价=每次搜索一次完整模型调用）。
 
 ## 4. 路线图
 
@@ -56,6 +58,14 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 | **M6d 人工审批** | `interact` 接口（审批请求/响应）+ 敏感工具门 + `interact/*` 事件 + config | 敏感操作执行前经人工确认（CLI y/n，fail-closed）；默认关闭 | ✅ 2026-08-19 验收通过（M6d-1 `6d32daa`+`d277ba2`；M6d-2 `8a3ad1b`+`6cd032a`+`0b01683`+`fb578e3`+`0118169`） |
 | **M6e 代码沙箱** | `code` 接口（沙箱 Provider）+ 本地子进程隔离实现 + `code_run` 工具 + `code/*` 事件 + config | 模型生成代码在受控沙箱执行（超时/配额/默认无网络）；补强 M3 `run_command`；默认关闭 | ✅ 2026-08-19 验收通过（M6e-1 `a66d33e`+`24d7f1c`；M6e-2 `be9ecf2`+`e850820`+`cf2590f`+`cb39660`） |
 | **M6f 工具生态** | `mcp` 接口（MCP 客户端，JSON-RPC 自实现优先）+ `fs`/workspace 统一封装 + 工具 + `mcp/*` 事件 + config | 外部工具/服务经 MCP 接入；文件操作统一封装；默认关闭 | ✅ 2026-08-19 验收通过（M6f-1 `764261c`+`4e474f2`；M6f-2 `29ea541`+`ef92769`+`0e025fc`+`a5a9494`；M6f-3 `8526f59`+`c3a74a0`+`9e09d9e`+`f20ae3b`） |
+
+### 候选里程碑（未定序，2026-08-20）
+
+| 候选 | 交付物 | 验收标准（达标才算完成） | 状态 |
+|---|---|---|---|
+| **KB 最小集补全** | `/kb-ingest` 文档摄入（含 web 页面）+ 条目 List/Delete/Markdown 导出；CLI 命令 + 事件 + config | 文档可摄入并被检索；条目可查看/删除/导出；默认关闭 | ⬜ 候选 |
+| **M7 web 搜索** | `web` 接缝三件套（web service + WebSearchProvider 注册表 + `web_search`/`web_fetch` 工具）+ `web/*` 事件 + config；**DeepSeek 官方搜索 provider**（照搬 dsh `web-search-deepseek`：Anthropic 兼容 Messages API `POST /anthropic/v1/messages` + `web_search_20250305` server tool，复用 `DEEPSEEK_API_KEY`，解析结构化 `web_search_tool_result`）；多查询一步到位（seam 单查询契约 + 消费者侧扇出/去重/round-robin 合并，借鉴 rc.8） | 真实搜索返回结构化结果与来源；`web/*` 事件落库（D3）；按 D7 校验；默认关闭（D10）；零新依赖 | ⬜ 候选 |
+
 
 ## 5. 开发纪律（每轮工作前过一遍）
 
@@ -136,3 +146,4 @@ go run ./cmd/pa       # 启动 REPL（M1 后可用，需 DEEPSEEK_API_KEY）
 | `interact`（M6d） | `../deepseek-harness/packages/interaction/` | 审批请求/响应交互 |
 | `code`（M6e） | `../deepseek-harness/packages/{code-runtime,e2b}/` | 沙箱 provider 接口、代码执行 |
 | `mcp`/`fs`（M6f） | `../deepseek-harness/packages/{mcp,fs,workspace}/` | MCP 客户端、文件/工作区封装 |
+| `web`（M7 候选） | `../deepseek-harness/packages/web/{web,web-search-deepseek,web-fetch-http,tool-web}/` | web 接缝三件套、DeepSeek 搜索 provider（Anthropic 兼容 Messages API + `web_search_20250305`）、fetch-http provider、`web_search`/`web_fetch` 工具与多查询扇出 |
