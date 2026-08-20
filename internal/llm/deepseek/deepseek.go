@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -25,6 +26,10 @@ const (
 	// it, capped at maxBackoff.
 	defaultBackoffBase = 500 * time.Millisecond
 	maxBackoff         = 8 * time.Second
+
+	// providerID is the stable provider id of the deepseek adapter (M8-2,
+	// dispatch-m8-2 §3).
+	providerID = "deepseek"
 )
 
 // Config configures the DeepSeek adapter. APIKey must come from the
@@ -80,6 +85,25 @@ func New(cfg Config) *Client {
 		maxRetries: cfg.MaxRetries,
 		backoff:    backoff,
 	}
+}
+
+// ID returns the stable provider id "deepseek" (M8-2, dispatch-m8-2 §3).
+func (c *Client) ID() string { return providerID }
+
+// Available reports whether the client is usable: a cheap local check that
+// never performs a network call — apiKey present and baseURL parseable (same
+// shape as web.DeepSeekSearchProvider.Available, dispatch-m8-2 §3). baseURL is
+// never empty after New (it defaults to api.deepseek.com), so this is purely
+// the key-present + URL-parseable check.
+func (c *Client) Available() bool {
+	if c.apiKey == "" {
+		return false
+	}
+	u, err := url.Parse(c.baseURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return false
+	}
+	return true
 }
 
 // wire message/tool shapes for the OpenAI-compatible request body.
