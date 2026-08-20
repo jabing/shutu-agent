@@ -8,6 +8,7 @@ package webserver
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -40,6 +41,23 @@ func doReq(t *testing.T, h http.Handler, method, path, token string) *httptest.R
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// doReqBody issues a request carrying a JSON body (used by the message API).
+func doReqBody(t *testing.T, h http.Handler, method, path, token, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	var rd io.Reader
+	if body != "" {
+		rd = strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, path, rd)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -269,6 +287,178 @@ func TestKBAdminStub(t *testing.T) {
 		if rec.Code != http.StatusNotImplemented {
 			t.Fatalf("GET %s → %d, want 501", p, rec.Code)
 		}
+	}
+}
+
+// TestMessageRequiresAuth verifies the M10 W1 message API sits behind the same
+// bearer middleware as the rest (dispatch-m10-web2 §5).
+func TestMessageRequiresAuth(t *testing.T) {
+	srv, _ := newTestServer(t, "tok")
+	rec := doReqBody(t, srv.Handler(), "POST", "/api/sessions/s-1/message", "", `{"text":"hi"}`)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("message without token → %d, want 401", rec.Code)
+	}
+	if rec := doReqBody(t, srv.Handler(), "POST", "/api/sessions/s-1/message", "wrong", `{"text":"hi"}`); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("message with wrong token → %d, want 401", rec.Code)
+	}
+}
+
+// TestMessageHandlerInvoked verifies the injected message handler: a POST with
+// a non-empty text invokes msgFn with the right (sessionID, text) and answers
+// 200 {"ok":true}; empty text answers 400 without invoking the handler; an
+// unwired handler answers 501.
+func TestMessageHandlerInvoked(t *testing.T) {
+	srv, _ := newTestServer(t, "tok")
+	var gotID, gotText string
+	srv.SetMessageHandler(func(ctx context.Context, sessionID, text string) error {
+		gotID, gotText = sessionID, text
+		return nil
+	})
+
+	rec := doReqBody(t, srv.Handler(), "POST", "/api/sessions/s-1/message", "tok", `{"text":"hello"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("message → %d, want 200", rec.Code)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["ok"] != true {
+		t.Fatalf("body = %v, want ok:true", out)
+	}
+	if gotID != "s-1" || gotText != "hello" {
+		t.Fatalf("handler got (%q, %q), want (s-1, hello)", gotID, gotText)
+	}
+
+	// Empty text → 400 and the handler is not invoked.
+	gotID, gotText = "", ""
+	if rec := doReqBody(t, srv.Handler(), "POST", "/api/sessions/s-1/message", "tok", `{"text":"  "}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty text → %d, want 400", rec.Code)
+	}
+	if gotID != "" || gotText != "" {
+		t.Fatalf("handler must not be invoked for empty text, got (%q, %q)", gotID, gotText)
+	}
+
+	// Unwired handler → 501.
+	srv2, _ := newTestServer(t, "tok")
+	if rec := doReqBody(t, srv2.Handler(), "POST", "/api/sessions/s-1/message", "tok", `{"text":"hi"}`); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("message with nil handler → %d, want 501", rec.Code)
+	}
+}
+
+// TestSessionNewResume verifies the injected session manager: POST /api/sessions
+// forwards ("new", "") and returns the new id; POST /api/sessions/{id}/resume
+// forwards ("resume", id); an unwired manager answers 501.
+func TestSessionNewResume(t *testing.T) {
+	srv, _ := newTestServer(t, "tok")
+	var gotAction, gotID string
+	srv.SetSessionManager(func(ctx context.Context, action, id string) (string, error) {
+		gotAction, gotID = action, id
+		return "s-new", nil
+	})
+
+	rec := doReq(t, srv.Handler(), "POST", "/api/sessions", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create → %d, want 200", rec.Code)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["id"] != "s-new" {
+		t.Fatalf("create body = %v, want id s-new", out)
+	}
+	if gotAction != "new" || gotID != "" {
+		t.Fatalf("create action = (%q, %q), want (new, )", gotAction, gotID)
+	}
+
+	rec = doReq(t, srv.Handler(), "POST", "/api/sessions/s-9/resume", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resume → %d, want 200", rec.Code)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["id"] != "s-new" {
+		t.Fatalf("resume body = %v, want id s-new", out)
+	}
+	if gotAction != "resume" || gotID != "s-9" {
+		t.Fatalf("resume action = (%q, %q), want (resume, s-9)", gotAction, gotID)
+	}
+
+	// Unwired manager → 501 for both.
+	srv2, _ := newTestServer(t, "tok")
+	if rec := doReq(t, srv2.Handler(), "POST", "/api/sessions", "tok"); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("create with nil manager → %d, want 501", rec.Code)
+	}
+	if rec := doReq(t, srv2.Handler(), "POST", "/api/sessions/s-1/resume", "tok"); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("resume with nil manager → %d, want 501", rec.Code)
+	}
+}
+
+// TestEventsStreamSSE verifies the SSE stream: with a seeded session and an
+// injected fake event source the response is text/event-stream and the body
+// carries the snapshot frames plus a synchronously pushed live frame and the
+// retry hint; an unwired event source answers 501. The handler is run in a
+// goroutine and the request context cancelled once the fake push lands, since a
+// real SSE handler only returns on client disconnect.
+func TestEventsStreamSSE(t *testing.T) {
+	srv, st := newTestServer(t, "tok")
+	seedSession(t, st, "s-1", []session.Event{
+		{Seq: 1, Type: "user/message", At: time.Now(), Version: 1, Data: mustData(t, map[string]any{"Text": "hi"})},
+		{Seq: 2, Type: "assistant/message", At: time.Now(), Version: 1, Data: mustData(t, map[string]any{"Text": "hello"})},
+	})
+	pushed := make(chan struct{})
+	srv.SetEventSource(func(sessionID string, sink func(session.Event)) func() {
+		if sessionID != "s-1" {
+			t.Errorf("subscribe id = %q, want s-1", sessionID)
+		}
+		sink(session.Event{Seq: 3, Type: "assistant/chunk", At: time.Now(), Version: 1, Data: mustData(t, map[string]any{"Text": "!"})})
+		close(pushed)
+		return func() {}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest("GET", "/api/sessions/s-1/events/stream", nil)
+	req = req.WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		srv.Handler().ServeHTTP(rec, req)
+		close(done)
+	}()
+	select {
+	case <-pushed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for the fake event source push")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for the stream handler to exit")
+	}
+
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Fatalf("content-type = %q, want text/event-stream", ct)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"seq":1`) || !strings.Contains(body, `"seq":2`) {
+		t.Fatalf("stream body missing snapshot frames: %q", body)
+	}
+	if !strings.Contains(body, `data: {"seq":3`) {
+		t.Fatalf("stream body missing the pushed live frame: %q", body)
+	}
+	if !strings.Contains(body, "retry: 3000") {
+		t.Fatalf("stream body missing the retry hint: %q", body)
+	}
+
+	// Unwired event source → 501 (no stream).
+	srv2, _ := newTestServer(t, "tok")
+	if rec := doReq(t, srv2.Handler(), "GET", "/api/sessions/s-1/events/stream", "tok"); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("stream with nil source → %d, want 501", rec.Code)
 	}
 }
 

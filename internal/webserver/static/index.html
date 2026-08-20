@@ -3,11 +3,58 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Personal Agent Portal</title>
+  <title>Personal Agent</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div id="app"></div>
+  <!-- Login view (public shell): the token never leaves the browser's
+       Authorization header (ADR D-WEB2-B). -->
+  <div id="login" class="login hidden">
+    <form class="login-card" id="login-form">
+      <h1>Personal Agent</h1>
+      <p class="muted">输入 web_server.token 进入工作台（令牌只存本机浏览器）</p>
+      <p id="login-msg" class="err hidden"></p>
+      <input type="password" id="tok" placeholder="Bearer token" autocomplete="current-password">
+      <button type="submit">进入</button>
+    </form>
+  </div>
+
+  <!-- Chat workspace (the single main view, ADR D-WEB2-F): sidebar with the
+       session list + new button, main area with the chat stream + composer. -->
+  <div id="workspace" class="workspace hidden">
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <div class="brand">Personal Agent</div>
+        <button id="new-session" class="btn-new" title="新建会话">+ 新建</button>
+      </div>
+      <ul id="session-list" class="session-list"></ul>
+      <nav class="sidebar-foot">
+        <a href="#/settings">⚙ 设置</a>
+        <a href="#/kb">📚 知识库</a>
+      </nav>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <span id="cur-session" class="cur-session muted" title="当前会话"></span>
+        <span class="spacer"></span>
+        <span id="model-label" class="muted"></span>
+        <button id="theme-toggle" class="btn-icon" title="切换主题">☀️</button>
+      </header>
+      <div id="messages" class="messages"></div>
+      <div class="composer">
+        <textarea id="input" rows="1" placeholder="发送消息…（Enter 发送，Shift+Enter 换行）"></textarea>
+        <button id="send" class="btn">发送</button>
+      </div>
+    </main>
+  </div>
+
+  <!-- Placeholder pages (#/settings, #/kb). -->
+  <div id="placeholder" class="placeholder-page hidden">
+    <button id="back" class="btn-ghost">← 返回聊天</button>
+    <h1 id="ph-title"></h1>
+    <p id="ph-note" class="muted"></p>
+  </div>
+
   <script src="/static/app.js"></script>
 </body>
 </html>

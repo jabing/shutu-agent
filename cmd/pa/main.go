@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"personal-agent/internal/attachment"
@@ -107,6 +108,10 @@ func main() {
 		store:  st,
 		reg:    reg,
 		prompt: promptBuilder,
+		// M10 W1: the real-time event hub (ADR D-WEB2-B) exists for the whole
+		// process lifetime so attachSink can broadcast every persisted event to
+		// the web's SSE subscribers whenever the webserver is enabled.
+		hub: NewEventHub(),
 	}
 	// M8-2: registerLLM builds the provider registry and injects the selected
 	// provider into a.llm — the single llm.LLM the loop, compaction, subagent
@@ -422,6 +427,15 @@ type app struct {
 	// nil when web_server disabled (D10).
 	webserver *webserver.Server
 
+	// turnMu serializes every turn (D5): the REPL and the web message API share
+	// one loop, so at most one Run executes at any moment (M10 W1, D-WEB2-A).
+	turnMu sync.Mutex
+	// hub is the M10 W1 real-time event broadcaster (ADR D-WEB2-B): attachSink
+	// publishes each persisted event of the current session, and the web's SSE
+	// streams subscribe per session id. Always created in main; attachSink also
+	// guards nil so tests constructing bare apps stay safe.
+	hub *eventHub
+
 	// evalEng is the task-evaluation engine (ADR 2026-08-20-eval-seam.md);
 	// nil when eval disabled (D10).
 	evalEng eval.Engine
@@ -510,11 +524,21 @@ func (a *app) resumeSession(ctx context.Context, id string) error {
 }
 
 // attachSink forwards every appended event to the durable store for the
-// current session (D8: append-on-write, replay at startup).
+// current session (D8: append-on-write, replay at startup) and — when the
+// real-time hub exists — broadcasts it to the session's SSE subscribers
+// (M10 W1, ADR D-WEB2-B). Publish is non-blocking and never fails, so the
+// store's error semantics are unchanged: a store error still rolls the event
+// back out of the log.
 func (a *app) attachSink(ctx context.Context) {
 	id := a.currentID
 	a.log.SetSink(func(ev session.Event) error {
-		return a.store.AppendEvents(ctx, id, []session.Event{ev})
+		if err := a.store.AppendEvents(ctx, id, []session.Event{ev}); err != nil {
+			return err
+		}
+		if a.hub != nil {
+			a.hub.Publish(id, ev)
+		}
+		return nil
 	})
 }
 
@@ -535,6 +559,23 @@ func (a *app) bindSpillOwner() {
 // per-turn recall orchestration in cmd/pa; the loop's turn/step structure is
 // unchanged (D4).
 func (a *app) newLoop() *loop.Loop {
+	return a.buildLoop(
+		func(delta string) { fmt.Print(delta) },
+		func(err error) { fmt.Fprintln(os.Stderr, "\n[stream error]", err) },
+	)
+}
+
+// newLoopWeb builds a Loop identical to newLoop except its stream hooks are
+// silent (interactive=false, M10 W1): the web frontend renders the stream from
+// the SSE event flow (each chunk is already persisted by the loop), so nothing
+// may be printed to the REPL's stdout/stderr during a web turn.
+func (a *app) newLoopWeb() *loop.Loop {
+	return a.buildLoop(func(string) {}, func(error) {})
+}
+
+// buildLoop assembles a Loop bound to the current session log. onText/onError
+// are the streaming hooks: the REPL prints them, the web path is silent.
+func (a *app) buildLoop(onText func(string), onError func(error)) *loop.Loop {
 	return loop.New(loop.Config{
 		LLM:    a.llm,
 		Log:    a.log,
@@ -547,11 +588,22 @@ func (a *app) newLoop() *loop.Loop {
 		// M4b recall hook, inside the loop's existing pre-step extension point
 		// (D4 — the turn/step structure is unchanged).
 		PreStep: a.preStepInjectors(),
-		OnText:  func(delta string) { fmt.Print(delta) },
-		OnError: func(err error) {
-			fmt.Fprintln(os.Stderr, "\n[stream error]", err)
-		},
+		OnText:  onText,
+		OnError: onError,
 	})
+}
+
+// runTurn executes one turn under the global serial lock (D5: REPL and web
+// share one loop; at most one Run at a time). interactive=false suppresses the
+// stdout stream (the web renders from the SSE event stream instead — chunk 已
+// 落库).
+func (a *app) runTurn(ctx context.Context, text string, interactive bool) error {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
+	if interactive {
+		return a.newLoop().Run(ctx, text)
+	}
+	return a.newLoopWeb().Run(ctx, text)
 }
 
 // repl drives turns from stdin, handling the session commands.
@@ -576,7 +628,7 @@ func (a *app) repl(ctx context.Context) {
 			}
 			continue
 		}
-		if err := a.newLoop().Run(ctx, line); err != nil {
+		if err := a.runTurn(ctx, line, true); err != nil {
 			fmt.Fprintln(os.Stderr, "\npa:", err)
 		} else {
 			// M4c: post-answer extraction writeback, orchestrated by the

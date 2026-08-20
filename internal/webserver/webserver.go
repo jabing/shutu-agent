@@ -13,6 +13,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -36,6 +37,13 @@ type Server struct {
 	tokenHash [32]byte // sha256 of the configured token; the plaintext never survives New
 	addr      string
 	srv       *http.Server
+
+	// M10 W1 interactive wiring (ADR D-WEB2-A/B/C): the optional handlers the
+	// composition root injects after New. All three are nil until a Setter is
+	// called; a nil handler makes its API answer 501.
+	msgFn  func(ctx context.Context, sessionID, text string) error
+	sessFn func(ctx context.Context, action, id string) (string, error)
+	evSrc  func(sessionID string, sink func(session.Event)) func()
 }
 
 // New validates the wiring and builds the portal handler. token is required
@@ -68,6 +76,12 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	mux.Handle("GET /api/kb/{rest...}", s.requireAuth(http.HandlerFunc(s.handleKBStub)))
 	mux.Handle("GET /api/sessions", s.requireAuth(http.HandlerFunc(s.handleSessions)))
 	mux.Handle("GET /api/sessions/{id}/events", s.requireAuth(http.HandlerFunc(s.handleEvents)))
+	// M10 W1 interactive API (ADR D-WEB2): session new/resume, message dispatch
+	// and the SSE event stream all sit behind the same bearer middleware.
+	mux.Handle("POST /api/sessions", s.requireAuth(http.HandlerFunc(s.handleSessionCreate)))
+	mux.Handle("POST /api/sessions/{id}/resume", s.requireAuth(http.HandlerFunc(s.handleSessionResume)))
+	mux.Handle("POST /api/sessions/{id}/message", s.requireAuth(http.HandlerFunc(s.handleMessage)))
+	mux.Handle("GET /api/sessions/{id}/events/stream", s.requireAuth(http.HandlerFunc(s.handleEventStream)))
 	s.srv = &http.Server{
 		Addr:              addr,
 		Handler:           mux,
@@ -99,6 +113,42 @@ func (s *Server) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return s.srv.Shutdown(ctx)
+}
+
+// SetMessageHandler wires the message dispatch API (POST
+// /api/sessions/{id}/message). Called by the composition root (cmd/pa) at
+// registration time; nil (the default) makes the API answer 501.
+func (s *Server) SetMessageHandler(fn func(ctx context.Context, sessionID, text string) error) {
+	s.msgFn = fn
+}
+
+// SetSessionManager wires the session new/resume API (POST /api/sessions and
+// POST /api/sessions/{id}/resume). Called by the composition root; nil makes
+// those APIs answer 501.
+func (s *Server) SetSessionManager(fn func(ctx context.Context, action, id string) (string, error)) {
+	s.sessFn = fn
+}
+
+// SetEventSource wires the real-time event stream (GET
+// /api/sessions/{id}/events/stream): the source subscribes a session and calls
+// sink for each new event; the returned func unsubscribes. Called by the
+// composition root; nil makes the stream answer 501.
+func (s *Server) SetEventSource(fn func(sessionID string, sink func(session.Event)) func()) {
+	s.evSrc = fn
+}
+
+// InteractiveHandlers is a snapshot of the currently injected interactive
+// wiring (M10 W1, ADR D-WEB2). The composition root reads it in its wiring
+// tests; nil fields mean the corresponding API answers 501.
+type InteractiveHandlers struct {
+	Message func(ctx context.Context, sessionID, text string) error
+	Session func(ctx context.Context, action, id string) (string, error)
+	Event   func(sessionID string, sink func(session.Event)) func()
+}
+
+// Handlers returns the current interactive wiring.
+func (s *Server) Handlers() InteractiveHandlers {
+	return InteractiveHandlers{Message: s.msgFn, Session: s.sessFn, Event: s.evSrc}
 }
 
 // requireAuth wraps an /api handler with the bearer-token check (D-WEB-2): the
@@ -258,6 +308,126 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		out = append(out, eventView{Seq: ev.Seq, Type: ev.Type, Time: ev.At, Summary: summarize(ev)})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleSessionCreate implements POST /api/sessions (M10 W1, ADR D-WEB2-C):
+// it asks the injected session manager to start a fresh session and returns
+// its id. An unwired manager answers 501.
+func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
+	if s.sessFn == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "session manager not wired"})
+		return
+	}
+	id, err := s.sessFn(r.Context(), "new", "")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id})
+}
+
+// handleSessionResume implements POST /api/sessions/{id}/resume: it asks the
+// injected session manager to resume the session and returns its id.
+func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
+	if s.sessFn == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "session manager not wired"})
+		return
+	}
+	id := r.PathValue("id")
+	newID, err := s.sessFn(r.Context(), "resume", id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": newID})
+}
+
+// handleMessage implements POST /api/sessions/{id}/message (M10 W1, ADR
+// D-WEB2-A): it dispatches one user message to the injected handler, which runs
+// the turn (the streaming process arrives on the SSE stream). The response 200
+// {"ok":true} means the Run has completed. An empty text answers 400; an
+// unwired handler answers 501.
+func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
+	if s.msgFn == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "message handler not wired"})
+		return
+	}
+	id := r.PathValue("id")
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
+		return
+	}
+	if strings.TrimSpace(body.Text) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "text is required"})
+		return
+	}
+	if err := s.msgFn(r.Context(), id, body.Text); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleEventStream implements GET /api/sessions/{id}/events/stream — the SSE
+// real-time event flow (M10 W1, ADR D-WEB2-B): it first replays the session's
+// stored events as frames (snapshot), then subscribes the injected event source
+// and forwards every new event as a frame. Each frame is
+// `id: <seq>\ndata: {seq,type,time,summary}\n\n` and is flushed immediately
+// (http.Flusher). The handler returns when the request context is cancelled
+// (client disconnect), unsubscribing the event source. It does not use
+// writeJSON once the stream has started.
+func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.evSrc == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "event source not wired"})
+		return
+	}
+	events, err := s.store.LoadSession(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "session not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "retry: 3000\n")
+	for _, ev := range events {
+		writeSSEEvent(w, ev)
+	}
+	fl.Flush()
+	unsub := s.evSrc(id, func(ev session.Event) {
+		writeSSEEvent(w, ev)
+		fl.Flush()
+	})
+	defer unsub()
+	<-r.Context().Done()
+}
+
+// writeSSEEvent writes one SSE frame for an event and returns. Writes to a
+// disconnected client fail silently (the handler exits on context cancellation).
+func writeSSEEvent(w http.ResponseWriter, ev session.Event) {
+	b, err := json.Marshal(eventView{Seq: ev.Seq, Type: ev.Type, Time: ev.At, Summary: summarize(ev)})
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(w, "id: %d\ndata: %s\n\n", ev.Seq, b)
 }
 
 // summarize extracts a bounded, safe one-line summary for an event by
