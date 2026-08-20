@@ -198,6 +198,7 @@ type Config struct {
 	LLM        LLMConfig        `yaml:"llm"`         // LLM provider selection (M8-2)
 	Terminal   TerminalConfig   `yaml:"terminal"`    // persistent-shell terminal (M9)
 	Eval       EvalConfig       `yaml:"eval"`        // task-evaluation seam (eval)
+	Ralph      RalphConfig      `yaml:"ralph"`       // fresh-agent loop (D-GAP-3)
 	FsSearch   FsSearchConfig   `yaml:"fs_search"`   // file-content-search policy (D-GAP-1)
 
 	// Mode selects the agent capability preset (D-MODE-1): minimal | standard
@@ -267,6 +268,15 @@ type EvalConfig struct {
 	// MaxRecords caps the evaluation history (oldest evicted); <= 0 means the
 	// default 100.
 	MaxRecords int `yaml:"max_records"` // default 100
+}
+
+// RalphConfig is the fresh-agent loop policy (ADR 2026-08-20-standard-gaps.md
+// D-GAP-3 / dispatch-gap-2 §5). The capability is default off (D10): when
+// Enabled is false the composition root registers no ralph tool. Enabling ralph
+// also requires subagent (the loop spawns children through the subagent
+// Runtime). minimal 模式同样关闭 (D-MODE-2).
+type RalphConfig struct {
+	Enabled bool `yaml:"enabled"` // default false (D10)
 }
 
 // MultimodalConfig is the image-attachment policy (dispatch-m8-3 §3 / ADR
@@ -1104,6 +1114,18 @@ func applyDefaults(cfg *Config) {
 			}
 		}
 	}
+	// GAP-2 ralph defaults: off by default (D10). Enabling ralph whitelists its
+	// single consumer tool ralph, so the one ralph.enabled switch turns the
+	// whole capability (engine + tool + event logging) on (mirrors kb/jobs/
+	// subagent/skill/schedule/plan/spill/interact/code/mcp/fs/web/terminal/eval/
+	// fs_search).
+	if cfg.Ralph.Enabled {
+		for _, name := range ralphToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
 	// D-MODE-2 (ADR 2026-08-20-mode-presets.md): minimal 模式是预设优先 ——
 	// 只保留持久 shell + 文件编辑 + M1 基础只读；其余能力 cap 全关、白名单
 	// 整体重置为 minimal 集合。register* 的 D10 门读这些 Enabled, 因此注册面
@@ -1113,6 +1135,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Terminal.Enabled = true
 		cfg.Fs.Enabled = true
 		cfg.FsSearch.Enabled = false // minimal 不含搜索 (D-MODE-2)
+		cfg.Ralph.Enabled = false    // minimal 不含 fresh-agent 循环 (D-MODE-2)
 		cfg.KB.Enabled = false
 		cfg.Jobs.Enabled = false
 		cfg.Subagent.Enabled = false
@@ -1205,6 +1228,12 @@ var fsToolNames = []string{"fs_read", "fs_write", "fs_list"}
 // keeping the name here makes the "fs_search.enabled ⇒ 工具自动白名单" rule a
 // single, tested fact shared by applyDefaults and the composition root.
 var fsSearchToolNames = []string{"fs_search"}
+
+// ralphToolNames are the fresh-agent-loop consumer tools (D-GAP-3). ralph is
+// registered and whitelisted only when ralph is enabled; keeping the name here
+// makes the "ralph.enabled ⇒ 工具自动白名单" rule a single, tested fact shared by
+// applyDefaults and the composition root.
+var ralphToolNames = []string{"ralph"}
 
 // webToolNames are the web consumer tools (dispatch-m7-2 §5). They are
 // registered and whitelisted only when web is enabled; keeping the names here

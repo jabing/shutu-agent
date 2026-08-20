@@ -1389,6 +1389,74 @@ func TestLoadFsSearchEnabledAppendsToolsToWhitelist(t *testing.T) {
 	}
 }
 
+// GAP-2: an absent ralph section means the capability is off by default (D10)
+// and the ralph tool is not whitelisted.
+func TestLoadRalphDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Ralph.Enabled {
+		t.Error("ralph must be disabled by default (D10)")
+	}
+	for _, name := range ralphToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when ralph disabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// GAP-2: an explicit ralph.enabled: true is honored, while an explicit
+// enabled:false leaves the default whitelist untouched (D10).
+func TestLoadRalphParsesSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("ralph:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Ralph.Enabled {
+		t.Error("ralph.enabled should be true")
+	}
+
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("ralph:\n  enabled: false\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.Ralph.Enabled {
+		t.Error("ralph.enabled = true, want false (explicitly disabled)")
+	}
+	for _, name := range ralphToolNames {
+		if contains(cfg2.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when ralph explicitly disabled", cfg2.Tools.Enabled, name)
+		}
+	}
+}
+
+// GAP-2: ralph.enabled: true is the single switch that turns the whole
+// capability on — the ralph tool must also become whitelisted.
+func TestLoadRalphEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("ralph:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range ralphToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after ralph.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
 // M7-2: an absent web section means the capability is off by default (D10)
 // with every field at its default, and no web_* tool is whitelisted while
 // disabled (dispatch-m7-2 §5).
@@ -1963,7 +2031,7 @@ func TestModeMinimalWhitelist(t *testing.T) {
 // minimal set.
 func TestModeMinimalPresetFirst(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	content := "mode: minimal\nkb:\n  enabled: true\nweb:\n  enabled: true\nfs_search:\n  enabled: true\ntools:\n  enabled: [web_search]\n"
+	content := "mode: minimal\nkb:\n  enabled: true\nweb:\n  enabled: true\nfs_search:\n  enabled: true\nralph:\n  enabled: true\ntools:\n  enabled: [web_search]\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -1979,6 +2047,9 @@ func TestModeMinimalPresetFirst(t *testing.T) {
 	}
 	if cfg.FsSearch.Enabled {
 		t.Error("minimal must override an explicit fs_search.enabled: true (D-MODE-2 不含搜索)")
+	}
+	if cfg.Ralph.Enabled {
+		t.Error("minimal must override an explicit ralph.enabled: true (D-MODE-2 不含 fresh-agent 循环)")
 	}
 	if !cfg.Terminal.Enabled || !cfg.Fs.Enabled {
 		t.Error("minimal must keep terminal and fs enabled despite the explicit overrides")
@@ -2086,6 +2157,7 @@ func modeCapStates(cfg Config) map[string]bool {
 		"terminal":       cfg.Terminal.Enabled,
 		"fs":             cfg.Fs.Enabled,
 		"fs_search":      cfg.FsSearch.Enabled,
+		"ralph":          cfg.Ralph.Enabled,
 		"jobs":           cfg.Jobs.Enabled,
 		"subagent":       cfg.Subagent.Enabled,
 		"web":            cfg.Web.Enabled,

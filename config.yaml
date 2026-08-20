@@ -453,4 +453,20 @@ eval:
   # Evaluation-history cap (oldest records are evicted); 0/absent ⇒ 100.
   max_records: 100
 
+# Fresh-agent loop capability (GAP-2; ADR 2026-08-20-standard-gaps.md D-GAP-3
+# / docs/dispatch-gap-2.md). Off by default (D10): when disabled the composition
+# root registers no ralph tool and whitelists nothing (默认关闭，不初始化). When
+# enabled, ralph runs a bounded multi-round fresh-agent loop over an immutable
+# objective: each round spawns a brand-new subagent (no session inheritance,
+# only a bounded structured report crosses rounds) sharing the workspace on disk
+# as long-term memory (D-GAP-3, 对齐 dsh tool-ralph). A worker reports DONE /
+# BLOCKED / round-limit; the final report reaches the model through the tool's
+# tool/result, and ralph/run is logged as a fact (D3). The tool runs on the
+# serial tool path (D5). Enabling ralph also requires subagent (the loop spawns
+# children through the subagent Runtime).
+ralph:
+  # Master switch. false ⇒ no ralph tool is registered and nothing is
+  # whitelisted (默认关 D10，不初始化).
+  enabled: false
+
 

@@ -61,6 +61,15 @@ const (
 	// a lean summary — never the deliverable output (D-EVAL-5).
 	EventEvalRun = "eval/run"
 
+	// GAP-2 ralph events (design.md §3 / ADR 2026-08-20-standard-gaps.md
+	// D-GAP-3 / dispatch-gap-2 §4): ralph/run lands when the ralph loop settles
+	// (done / blocked / round-limit). It is log-only (D3): the model sees the
+	// final report through the ralph tool's tool/result event, and DeriveHistory
+	// treats this type as opaque data, so adding it never changes the turn/step
+	// structure (D4). The payload is a lean summary — the objective and the
+	// outcome markers — never the worker outputs.
+	EventRalphRun = "ralph/run"
+
 	// M5b subagent events (design.md §3 / ADR 2026-08-18-m5-agent-core.md
 	// 决策 ② / dispatch-m5b-2 §1): subagent/start lands when a delegation
 	// registers successfully, subagent/end when a child settles (observed on
@@ -688,6 +697,24 @@ type evalRunData struct {
 // NewEvalRun builds the eval/run payload (D-EVAL-5).
 func NewEvalRun(id, taskID, verdict, reason, kind string, criteriaCount int) any {
 	return evalRunData{ID: id, TaskID: taskID, Verdict: verdict, Reason: reason, EvaluatorKind: kind, CriteriaCount: criteriaCount}
+}
+
+// ralphRunData is the ralph/run payload (D-GAP-3 / dispatch-gap-2 §4): the
+// immutable objective, the rounds actually spawned, and the terminal outcome
+// markers (done / blocked). The full worker outputs stay in the tool/result
+// event — this record is a lean log fact. DeriveHistory treats it as opaque
+// data.
+type ralphRunData struct {
+	Objective string `json:"objective"`
+	Rounds    int    `json:"rounds"`
+	Done      bool   `json:"done"`
+	Blocked   bool   `json:"blocked"`
+}
+
+// NewRalphRun builds the ralph/run payload recorded when the ralph loop
+// settles (dispatch-gap-2 §4 / D3).
+func NewRalphRun(objective string, rounds int, done, blocked bool) any {
+	return ralphRunData{Objective: objective, Rounds: rounds, Done: done, Blocked: blocked}
 }
 
 // summaryHead returns a bounded, whitespace-compacted head of s for a log

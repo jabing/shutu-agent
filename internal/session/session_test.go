@@ -1887,6 +1887,39 @@ func TestEvalRunEventAppendsAndStaysOpaque(t *testing.T) {
 	}
 }
 
+// GAP-2: ralph/run is an opaque log fact (D-GAP-3 / D3) — it appends with the
+// lean payload (objective + outcome markers, never the worker outputs) and
+// DeriveHistory ignores it, so the turn/step structure is unchanged (D4).
+func TestRalphRunEventAppendsAndStaysOpaque(t *testing.T) {
+	l := New()
+	if _, err := l.Append(EventUserMessage, NewUserMessage("run ralph over the objective")); err != nil {
+		t.Fatalf("append user: %v", err)
+	}
+	ev, err := l.Append(EventRalphRun, NewRalphRun("deliver the report", 3, true, false))
+	if err != nil {
+		t.Fatalf("append ralph/run: %v", err)
+	}
+	if ev.Type != EventRalphRun {
+		t.Fatalf("type = %q, want %q", ev.Type, EventRalphRun)
+	}
+	var d ralphRunData
+	if err := json.Unmarshal(ev.Data, &d); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if d.Objective != "deliver the report" || d.Rounds != 3 || !d.Done || d.Blocked {
+		t.Errorf("payload = %+v, want the lean ralph/run summary", d)
+	}
+	if len(ev.Data) != len(mustMarshal(t, d)) {
+		t.Errorf("payload length %d, want the exact marshaled summary (no worker outputs)", len(ev.Data))
+	}
+
+	// DeriveHistory treats ralph/run as opaque: only the user message derives.
+	msgs := l.DeriveHistory()
+	if len(msgs) != 1 || msgs[0].Role != llm.RoleUser {
+		t.Fatalf("derived %d messages, want 1 user message (ralph/run opaque)", len(msgs))
+	}
+}
+
 func mustMarshal(t *testing.T, v any) []byte {
 	t.Helper()
 	raw, err := json.Marshal(v)

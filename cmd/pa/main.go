@@ -157,6 +157,18 @@ func main() {
 	if app.subagents != nil {
 		defer app.subagents.Close()
 	}
+	// GAP-2: wire the ralph fresh-agent loop seam (ADR
+	// 2026-08-20-standard-gaps.md D-GAP-3, 对齐 dsh tool-ralph) — the ralph
+	// tool — when ralph.enabled (默认关 D10). config.applyDefaults already
+	// whitelisted ralph when ralph.enabled was true. registerRalph runs after
+	// registerSubagent because its spawn closure depends on a.subagents (the
+	// subagent Runtime); it holds no closable resources, so there is no deferred
+	// Close. Each round spawns a fresh child and blocks until it settles on the
+	// serial tool path (D5); the loop's turn/step structure is untouched (D4).
+	if err := app.registerRalph(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
 	// M5c-2b: wire the compaction seam — BasicEngine for the /compact command
 	// and the loop "compaction" pre-step injector — when compaction.enabled
 	// (默认关闭, D10). Compaction whitelists no consumer tools (it has none:
