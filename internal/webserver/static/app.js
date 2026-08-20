@@ -1,8 +1,8 @@
 // Personal Agent Portal — vanilla JS, no build step (M10a, ADR D-WEB-3).
 // Hash-routed SPA: #/sessions (list) → #/sessions/{id} (event stream),
-// #/dashboard and #/kb are placeholder pages (filled by M10c / M10b).
-// The bearer token lives in localStorage and rides every fetch; a 401 drops
-// back to the login view.
+// #/dashboard (M10c: /api/stats rollup with native-DOM bars) and #/kb
+// (placeholder page, filled by M10b). The bearer token lives in localStorage
+// and rides every fetch; a 401 drops back to the login view.
 
 const KEY = "pa_token";
 const app = document.getElementById("app");
@@ -30,6 +30,7 @@ function esc(s) {
 function fmtTime(t) {
   if (!t) return "";
   const d = new Date(t);
+  if (isNaN(d.getTime())) return ""; // e.g. the Go zero time
   return d.toLocaleString("zh-CN", { hour12: false });
 }
 
@@ -122,6 +123,48 @@ async function renderEvents(id) {
     </div>`;
 }
 
+// renderDashboard shows the /api/stats rollup (M10c, D-WEB-5): headline
+// counts, last activity, and the event-type distribution as native DOM bars —
+// no chart library.
+async function renderDashboard() {
+  let body = "";
+  try {
+    const st = await api("/api/stats");
+    if (!st) return;
+    const counts = st.event_type_counts || {};
+    const total = st.events_total || 0;
+    const last = (st.last_active && st.events_total > 0) ? fmtTime(st.last_active) : "—";
+    const bars = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, n]) => {
+        const pct = total ? Math.round((n / total) * 100) : 0;
+        return `
+          <div class="bar-row">
+            <span class="tag">${esc(type)}</span>
+            <div class="bar-track"><div class="bar" style="width:${pct}%"></div></div>
+            <span class="muted bar-n">${n} · ${pct}%</span>
+          </div>`;
+      }).join("");
+    body = `
+      <div class="stat-grid">
+        <div class="stat"><b>${st.sessions_total}</b><span>会话总数</span></div>
+        <div class="stat"><b>${st.events_total}</b><span>事件总数</span></div>
+        <div class="stat"><b>${st.tool_calls}</b><span>工具调用</span></div>
+      </div>
+      <p class="muted">最近活动：<b>${esc(last)}</b></p>
+      <h3 class="muted">事件类型分布</h3>
+      ${bars || `<p class="muted">暂无事件</p>`}`;
+  } catch (e) {
+    body = `<p class="err">${esc(String(e.message || e))}</p>`;
+  }
+  app.innerHTML = `
+    ${nav()}
+    <div class="panel">
+      <h2>工作台</h2>
+      ${body}
+    </div>`;
+}
+
 function renderPlaceholder(title, note) {
   app.innerHTML = `
     ${nav()}
@@ -139,7 +182,7 @@ async function render() {
     if (parts[2]) await renderEvents(parts[2]);
     else await renderSessions();
   } else if (route === "dashboard") {
-    renderPlaceholder("工作台", "统计可视化将在 M10c 提供。");
+    await renderDashboard();
   } else if (route === "kb") {
     renderPlaceholder("知识库", "KB 管理台待 KB 全量后挂（M10b 空壳）。");
   } else {

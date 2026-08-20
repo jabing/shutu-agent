@@ -1,7 +1,8 @@
-// webserver_test.go — the M10a portal tests (docs/dispatch-m10.md §3): New
-// validation, bearer auth, sessions/events JSON API, static hosting, and the
-// bounded event summary. The store is a real SQLite backend on a temp dir (the
-// same backend the REPL uses), seeded through CreateSession + AppendEvents.
+// webserver_test.go — the M10 portal tests (docs/dispatch-m10.md §3): New
+// validation, bearer auth, sessions/events JSON API, static hosting, the
+// bounded event summary, and the /api/stats dashboard rollup (M10c §3). The
+// store is a real SQLite backend on a temp dir (the same backend the REPL
+// uses), seeded through CreateSession + AppendEvents.
 package webserver
 
 import (
@@ -187,6 +188,70 @@ func TestHealth(t *testing.T) {
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body["ok"] != true {
 		t.Fatalf("health body = %v, want ok:true", body)
+	}
+}
+
+func TestStats(t *testing.T) {
+	srv, st := newTestServer(t, "tok")
+	base := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	seedSession(t, st, "s-1", []session.Event{
+		{Seq: 1, Type: "user/message", At: base, Version: 1, Data: mustData(t, map[string]any{"Text": "hi"})},
+		{Seq: 2, Type: "tool/result", At: base.Add(time.Minute), Version: 1, Data: mustData(t, map[string]any{"Name": "get_time", "Output": "now"})},
+		{Seq: 3, Type: "tool/result", At: base.Add(2 * time.Minute), Version: 1, Data: mustData(t, map[string]any{"Name": "web_search", "Output": "ok"})},
+	})
+	seedSession(t, st, "s-2", []session.Event{
+		{Seq: 1, Type: "assistant/message", At: base.Add(30 * time.Minute), Version: 1, Data: mustData(t, map[string]any{"Text": "hi there"})},
+		{Seq: 2, Type: "tool/error", At: base.Add(31 * time.Minute), Version: 1, Data: mustData(t, map[string]any{"Name": "fs_read", "Err": "denied"})},
+		{Seq: 3, Type: "user/message", At: base.Add(32 * time.Minute), Version: 1, Data: mustData(t, map[string]any{"Text": "again"})},
+	})
+	// Auth: /api/stats without a token → 401 (same middleware as the rest).
+	if rec := doReq(t, srv.Handler(), "GET", "/api/stats", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("stats without token → %d, want 401", rec.Code)
+	}
+	rec := doReq(t, srv.Handler(), "GET", "/api/stats", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stats → %d, want 200", rec.Code)
+	}
+	var stv statsView
+	if err := json.Unmarshal(rec.Body.Bytes(), &stv); err != nil {
+		t.Fatalf("decode stats: %v", err)
+	}
+	if stv.SessionsTotal != 2 || stv.EventsTotal != 6 || stv.ToolCalls != 2 {
+		t.Fatalf("stats totals = s%d e%d t%d, want s2 e6 t2", stv.SessionsTotal, stv.EventsTotal, stv.ToolCalls)
+	}
+	want := map[string]int{"user/message": 2, "assistant/message": 1, "tool/result": 2, "tool/error": 1}
+	if len(stv.EventTypeCounts) != len(want) {
+		t.Fatalf("event_type_counts = %v, want %v", stv.EventTypeCounts, want)
+	}
+	for k, v := range want {
+		if stv.EventTypeCounts[k] != v {
+			t.Fatalf("event_type_counts[%q] = %d, want %d", k, stv.EventTypeCounts[k], v)
+		}
+	}
+	wantActive := base.Add(32 * time.Minute)
+	if !stv.LastActive.Equal(wantActive) {
+		t.Fatalf("last_active = %v, want %v", stv.LastActive, wantActive)
+	}
+}
+
+func TestStatsEmpty(t *testing.T) {
+	srv, _ := newTestServer(t, "tok")
+	rec := doReq(t, srv.Handler(), "GET", "/api/stats", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stats → %d, want 200", rec.Code)
+	}
+	var stv statsView
+	if err := json.Unmarshal(rec.Body.Bytes(), &stv); err != nil {
+		t.Fatalf("decode stats: %v", err)
+	}
+	if stv.SessionsTotal != 0 || stv.EventsTotal != 0 || stv.ToolCalls != 0 {
+		t.Fatalf("empty stats = s%d e%d t%d, want all 0", stv.SessionsTotal, stv.EventsTotal, stv.ToolCalls)
+	}
+	if len(stv.EventTypeCounts) != 0 {
+		t.Fatalf("event_type_counts = %v, want empty", stv.EventTypeCounts)
+	}
+	if !stv.LastActive.IsZero() {
+		t.Fatalf("last_active = %v, want zero", stv.LastActive)
 	}
 }
 

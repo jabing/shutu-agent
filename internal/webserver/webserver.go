@@ -1,9 +1,9 @@
 // webserver.go — the M10 unified web portal (ADR 2026-08-20-m10-web-portal.md
 // D-WEB-1~7): a single net/http server carrying the dsh-style session/event
-// browsing entry (M10a), later the dashboard (M10c) and KB admin (M10b). The
-// API is read-only (D-WEB-4): it never writes the session log. Every route sits
-// behind the bearer-token middleware; the frontend is vanilla JS embedded into
-// the binary (go:embed) — zero new dependencies.
+// browsing entry (M10a), the dashboard stats API (M10c) and later KB admin
+// (M10b). The API is read-only (D-WEB-4): it never writes the session log.
+// Every route sits behind the bearer-token middleware; the frontend is vanilla
+// JS embedded into the binary (go:embed) — zero new dependencies.
 package webserver
 
 import (
@@ -60,6 +60,7 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /static/{file...}", s.handleStatic)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /api/stats", s.handleStats)
 	mux.HandleFunc("GET /api/sessions", s.handleSessions)
 	mux.HandleFunc("GET /api/sessions/{id}/events", s.handleEvents)
 	s.srv = &http.Server{
@@ -174,6 +175,49 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		out = append(out, sessionView{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, EventCount: m.EventCount})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// statsView is the /api/stats aggregate (D-WEB-5: a read-only in-memory rollup
+// of the session log, never persisted). last_active is the newest event time,
+// zero when the store holds no events.
+type statsView struct {
+	SessionsTotal   int            `json:"sessions_total"`
+	EventsTotal     int            `json:"events_total"`
+	LastActive      time.Time      `json:"last_active"`
+	EventTypeCounts map[string]int `json:"event_type_counts"`
+	ToolCalls       int            `json:"tool_calls"`
+}
+
+// handleStats aggregates every session's events into the dashboard view. It is
+// deliberately O(all events): ListSessions then one LoadSession per session,
+// summing the type counts, tool/result calls and the newest event time. Fine
+// for a personal portal; a huge log would want paging/denormalization, which
+// M10 accepts not adding (dispatch-m10 §M10c, 诚实记录限制).
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	metas, err := s.store.ListSessions(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	st := statsView{SessionsTotal: len(metas), EventTypeCounts: map[string]int{}}
+	for _, m := range metas {
+		events, err := s.store.LoadSession(r.Context(), m.ID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		for _, ev := range events {
+			st.EventsTotal++
+			st.EventTypeCounts[ev.Type]++
+			if ev.Type == "tool/result" {
+				st.ToolCalls++
+			}
+			if ev.At.After(st.LastActive) {
+				st.LastActive = ev.At
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, st)
 }
 
 // eventView is one event's bounded public summary (D-WEB-4: data is never
