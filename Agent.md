@@ -32,7 +32,9 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 
 **2026-08-20 冒烟**：真实端到端冒烟（pa.exe 全链路，用户拍板"①"）。A. 无 API key 启动正确报错退出（env-only 约束生效）；发现 `data/pa.db` 留存 M4 时期的真实运行会话（4 轮对话 + `kb/extract`/`kb/recall`/`kb/add`/`tool/result`，D1 落库曾实测）。B. 真实对话（DeepSeek 流式）成功——/help 完整命令表 + 中文回答，会话 332→375 事件落库、重启恢复（resumed session）验证通过。C. 临时 config 启用 fs：模型真实调用 `fs_write` 创建 `smoke-c.txt` + `fs_read` 读回，`fs/write`/`fs/read`/`tool/result` 事件全部落库（工具注册→白名单→D3 事件→D7 校验→执行→落库整链路实测）。冒烟产物已清理（`.smoke/`、`pa-smoke.exe`、`smoke-c.txt`），工作树干净。
 
-**2026-08-20 rc.8 评估**：检查 deepseek-harness 上游更新（本地克隆 rc.7→rc.8，`dsh-v0.1.0-rc.8`，浅克隆 `141eb6f`）。逐项评估后**无必须跟进项**：① SQLite chunk-row 压缩（93b4b98，250 万逻辑事件→6.6 万物理行、体积降 89%）与本项目逐 chunk 落库的行放大同源，但个人规模量级差太大、跟进需 Zstandard 第三方依赖，暂缓；② DeepSeek reasoning 回传（583894f，无工具轮次也回传 reasoning_content 供网关哈希）本项目无网关且不消费推理，仅记为"启用 thinking 模型的前提"。用户拍板：**web 搜索列入路线图**（见 §4 候选小节），后端走 **DeepSeek 官方搜索**（dsh `packages/web/web-search-deepseek/`：Anthropic 兼容 Messages API `POST /anthropic/v1/messages` + 原生 `web_search_20250305` server tool，复用 `DEEPSEEK_API_KEY` 零新密钥，服务器端搜索返回结构化 `web_search_tool_result`，代价=每次搜索一次完整模型调用）。
+**2026-08-20 rc.8 评估**：检查 deepseek-harness 上游更新（本地克隆 rc.7→rc.8，`dsh-v0.1.0-rc.8`，浅克隆 `141eb6f`）。逐项评估后**无必须跟进项**：① SQLite chunk-row 压缩（93b4b98，250 万逻辑事件→6.6 万物理行、体积降 89%）与本项目逐 chunk 落库的行放大同源，但个人规模量级差太大（实测 pa.db 73KB、chunk 占 93% 行但每条 data 仅 16B；5-10 年估算 ~100MB–1GB）、跟进需 Zstandard 第三方依赖，暂缓（触发条件：单库 >数 GB 或可感知变慢；更轻替代：WAL+VACUUM → 会话归档 → 完整 message 落库+断流恢复，而非 chunk packing）；② DeepSeek reasoning 回传（583894f）单 provider 无网关时不必要，但**做多 provider 后成为必要**（并入 M8）。用户拍板：**web 搜索列入路线图**（见 §4 候选小节），后端走 **DeepSeek 官方搜索**（dsh `packages/web/web-search-deepseek/`：Anthropic 兼容 Messages API `POST /anthropic/v1/messages` + 原生 `web_search_20250305` server tool，复用 `DEEPSEEK_API_KEY` 零新密钥，服务器端搜索返回结构化 `web_search_tool_result`，代价=每次搜索一次完整模型调用）。
+
+**2026-08-20 路线图决策**：用户拍板四项列为候选（见 §4）：**pwsh persistent PTY**（dsh rc.8 新增 `tool-pwsh-persistent`，owner-scoped 持久 shell，cwd/env/函数跨调用保留）、**多 LLM provider**（必做）、**deepseek reasoning 回传**（依附多 provider：跨 provider 重编码会话时需要，`llm.Message` 需带 `reasoning_content` 落库并回传）、**多模态**（必要；dsh `7078918` 范式：落库只存 `ImageAttachmentRef`、data URL 仅请求时存在、20MiB 上限、模型能力按 exact-model `inputModalities` 声明）。**组织判断**：多 provider + reasoning 回传 + 多模态三件都改 `llm.Message` 消息模型与 wire 层，打包为 **M8 消息模型升级** 一次设计，避免改三次；persistent PTY 独立为 **M9**。
 
 ## 4. 路线图
 
@@ -61,10 +63,15 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 
 ### 候选里程碑（未定序，2026-08-20）
 
+> 依赖关系：M8 打包 多 provider + reasoning 回传 + 多模态（同改 `llm.Message` 消息模型与 wire 层）；M9 持久 PTY 经 jobs（M5a）owner-fenced 承载。
+
 | 候选 | 交付物 | 验收标准（达标才算完成） | 状态 |
 |---|---|---|---|
 | **KB 最小集补全** | `/kb-ingest` 文档摄入（含 web 页面）+ 条目 List/Delete/Markdown 导出；CLI 命令 + 事件 + config | 文档可摄入并被检索；条目可查看/删除/导出；默认关闭 | ⬜ 候选 |
 | **M7 web 搜索** | `web` 接缝三件套（web service + WebSearchProvider 注册表 + `web_search`/`web_fetch` 工具）+ `web/*` 事件 + config；**DeepSeek 官方搜索 provider**（照搬 dsh `web-search-deepseek`：Anthropic 兼容 Messages API `POST /anthropic/v1/messages` + `web_search_20250305` server tool，复用 `DEEPSEEK_API_KEY`，解析结构化 `web_search_tool_result`）；多查询一步到位（seam 单查询契约 + 消费者侧扇出/去重/round-robin 合并，借鉴 rc.8） | 真实搜索返回结构化结果与来源；`web/*` 事件落库（D3）；按 D7 校验；默认关闭（D10）；零新依赖 | ⬜ 候选 |
+| **M8 消息模型升级**（多 provider + reasoning 回传 + 多模态） | ① `llm.Message` 从 string Content 升级为 content parts（text / image ref / reasoning），assistant 消息支持 `reasoning_content` 落库（D3 新事件类型）并回传；② LLM provider 注册表 + config 选择（deepseek / OpenAI 兼容 / Anthropic Messages——与 M7 复用 Anthropic 兼容 HTTP 客户端）；③ 多模态：user 图片走文件路径→落库只存引用→请求时转 `image_url` data URL（dsh `7078918` 范式：20MiB 上限、最老替换占位符、PNG/JPEG/WebP/GIF、模型能力按 exact-model `inputModalities` 声明） | 可在 config 切换 provider 且会话历史跨 provider 重编码正确（reasoning 签名保留）；图片输入可被模型读取；`llm.Message` 相关 D3 事件类型新增且旧会话回放不受影响（D8）；默认关闭 | ⬜ 候选 |
+| **M9 persistent PTY** | `terminals` 注册表（owner-fenced，经 jobs 承载，D5 串行访问）+ 持久 `pwsh` 工具（cwd/`$env:`/函数/登录态跨调用保留）+ `terminal/*` 事件 + config | 多步操作共享 shell 状态；超时关闭重置；输出上限；默认关闭（D10） | ⬜ 候选 |
+
 
 
 ## 5. 开发纪律（每轮工作前过一遍）
@@ -133,7 +140,7 @@ go run ./cmd/pa       # 启动 REPL（M1 后可用，需 DEEPSEEK_API_KEY）
 | `session` | `core/session/` | 事件日志、历史派生（deriveMessages） |
 | `tools` | `core/tools/` | 工具注册表、参数校验、执行管道 |
 | `prompt` | `core/system-prompt/` | 提示词分节组装 |
-| `llm` | `llm/llm/` + `llm/llm-deepseek/` | 适配器接口、流式、DeepSeek 实现 |
+| `llm`（M8） | `llm/llm/` + `llm/llm-deepseek/` + `llm/llm-pi-ai/` + `llm/llm-retry/` | 适配器接口、流式、DeepSeek 实现、可配置路由 provider、重试包装；多模态 content parts（`7078918` 范式：落库只存 ImageAttachmentRef、请求时转 data URL） |
 | `store`（M2） | `session/session-persistence*` | 持久化与重放 |
 | `kb`（M4） | `../dsh-knowledge/src/`（domain/local-provider/retrieval/extraction/tools/recall）+ `web/`（seam 三件套模板） | 知识条目模型、FTS5 检索 + 中文二元组兜底、提取回写、能力接缝的包划分 |
 | `jobs`（M5a） | `../deepseek-harness/packages/jobs/{jobs,jobs-local,tool-jobs}/` | owner-fenced 后台任务注册表、生命周期契约、模型侧控制工具 |
@@ -147,3 +154,4 @@ go run ./cmd/pa       # 启动 REPL（M1 后可用，需 DEEPSEEK_API_KEY）
 | `code`（M6e） | `../deepseek-harness/packages/{code-runtime,e2b}/` | 沙箱 provider 接口、代码执行 |
 | `mcp`/`fs`（M6f） | `../deepseek-harness/packages/{mcp,fs,workspace}/` | MCP 客户端、文件/工作区封装 |
 | `web`（M7 候选） | `../deepseek-harness/packages/web/{web,web-search-deepseek,web-fetch-http,tool-web}/` | web 接缝三件套、DeepSeek 搜索 provider（Anthropic 兼容 Messages API + `web_search_20250305`）、fetch-http provider、`web_search`/`web_fetch` 工具与多查询扇出 |
+| `terminals`/persistent shell（M9 候选） | `../deepseek-harness/packages/shell/{tool-pwsh-persistent,tool-bash-persistent}/` + `packages/terminal/{terminal,terminal-bash,tool-terminal}/` | owner-scoped 持久 shell（`ctx.terminals`）、状态保留/超时重置/输出上限、Windows ConPTY 与回显/信号限制 |
