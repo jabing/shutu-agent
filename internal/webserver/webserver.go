@@ -56,18 +56,21 @@ func New(st store.Store, token, addr string) (*Server, error) {
 		tokenHash: sha256.Sum256([]byte(token)),
 		addr:      addr,
 	}
+	// The static shell (login view + frontend assets) is public so a fresh
+	// browser can load the page and present the token form (D-WEB-2): it holds
+	// no data. Every /api route sits behind the bearer middleware.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /static/{file...}", s.handleStatic)
-	mux.HandleFunc("GET /api/health", s.handleHealth)
-	mux.HandleFunc("GET /api/stats", s.handleStats)
-	mux.HandleFunc("GET /api/kb", s.handleKBStub)
-	mux.HandleFunc("GET /api/kb/{rest...}", s.handleKBStub)
-	mux.HandleFunc("GET /api/sessions", s.handleSessions)
-	mux.HandleFunc("GET /api/sessions/{id}/events", s.handleEvents)
+	mux.Handle("GET /api/health", s.requireAuth(http.HandlerFunc(s.handleHealth)))
+	mux.Handle("GET /api/stats", s.requireAuth(http.HandlerFunc(s.handleStats)))
+	mux.Handle("GET /api/kb", s.requireAuth(http.HandlerFunc(s.handleKBStub)))
+	mux.Handle("GET /api/kb/{rest...}", s.requireAuth(http.HandlerFunc(s.handleKBStub)))
+	mux.Handle("GET /api/sessions", s.requireAuth(http.HandlerFunc(s.handleSessions)))
+	mux.Handle("GET /api/sessions/{id}/events", s.requireAuth(http.HandlerFunc(s.handleEvents)))
 	s.srv = &http.Server{
 		Addr:              addr,
-		Handler:           s.requireAuth(mux),
+		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	return s, nil
@@ -98,10 +101,10 @@ func (s *Server) Close() error {
 	return s.srv.Shutdown(ctx)
 }
 
-// requireAuth wraps every route with the bearer-token check (D-WEB-2): the
+// requireAuth wraps an /api handler with the bearer-token check (D-WEB-2): the
 // presented token's SHA-256 must match the stored digest under a constant-time
-// compare. The static index/scripts are also gated so an unauthenticated
-// visitor cannot even load the shell (default local-only personal portal).
+// compare. Only the API routes are gated; the static shell stays public so the
+// login view can load (data never leaves the API).
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")

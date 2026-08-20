@@ -83,9 +83,10 @@ func TestAuthRequired(t *testing.T) {
 	if rec := doReq(t, h, "GET", "/api/sessions", "secret"); rec.Code != http.StatusOK {
 		t.Fatalf("right token → %d, want 200", rec.Code)
 	}
-	// The static shell is gated too (D-WEB-2: full-route auth).
-	if rec := doReq(t, h, "GET", "/", ""); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("static / without token → %d, want 401", rec.Code)
+	// The static shell is public so the login view can load (D-WEB-2): it
+	// holds no data; only the API routes are gated.
+	if rec := doReq(t, h, "GET", "/", ""); rec.Code != http.StatusOK {
+		t.Fatalf("static / without token → %d, want 200 (login shell must load)", rec.Code)
 	}
 }
 
