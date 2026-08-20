@@ -44,6 +44,13 @@ type Server struct {
 	msgFn  func(ctx context.Context, sessionID, text string) error
 	sessFn func(ctx context.Context, action, id string) (string, error)
 	evSrc  func(sessionID string, sink func(session.Event)) func()
+
+	// cfgFn is the M10 W2 config provider (ADR D-WEB2-D): it returns the
+	// sanitized configuration view for GET /api/config. The redaction itself is
+	// the composition root's job (cmd/pa's webConfig never exposes web_server.
+	// token or any key); the webserver only forwards the provider's map. nil
+	// (the default) makes the API answer 501.
+	cfgFn func() map[string]any
 }
 
 // New validates the wiring and builds the portal handler. token is required
@@ -82,6 +89,8 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	mux.Handle("POST /api/sessions/{id}/resume", s.requireAuth(http.HandlerFunc(s.handleSessionResume)))
 	mux.Handle("POST /api/sessions/{id}/message", s.requireAuth(http.HandlerFunc(s.handleMessage)))
 	mux.Handle("GET /api/sessions/{id}/events/stream", s.requireAuth(http.HandlerFunc(s.handleEventStream)))
+	// M10 W2 (ADR D-WEB2-D): the read-only sanitized config view.
+	mux.Handle("GET /api/config", s.requireAuth(http.HandlerFunc(s.handleConfig)))
 	s.srv = &http.Server{
 		Addr:              addr,
 		Handler:           mux,
@@ -137,6 +146,14 @@ func (s *Server) SetEventSource(fn func(sessionID string, sink func(session.Even
 	s.evSrc = fn
 }
 
+// SetConfigProvider wires the read-only config view (GET /api/config, M10 W2,
+// ADR D-WEB2-D). The provider returns a sanitized map — cmd/pa's webConfig
+// never includes web_server.token or any key — and the webserver forwards it
+// verbatim. Called by the composition root; nil makes the API answer 501.
+func (s *Server) SetConfigProvider(fn func() map[string]any) {
+	s.cfgFn = fn
+}
+
 // InteractiveHandlers is a snapshot of the currently injected interactive
 // wiring (M10 W1, ADR D-WEB2). The composition root reads it in its wiring
 // tests; nil fields mean the corresponding API answers 501.
@@ -144,11 +161,12 @@ type InteractiveHandlers struct {
 	Message func(ctx context.Context, sessionID, text string) error
 	Session func(ctx context.Context, action, id string) (string, error)
 	Event   func(sessionID string, sink func(session.Event)) func()
+	Config  func() map[string]any
 }
 
 // Handlers returns the current interactive wiring.
 func (s *Server) Handlers() InteractiveHandlers {
-	return InteractiveHandlers{Message: s.msgFn, Session: s.sessFn, Event: s.evSrc}
+	return InteractiveHandlers{Message: s.msgFn, Session: s.sessFn, Event: s.evSrc, Config: s.cfgFn}
 }
 
 // requireAuth wraps an /api handler with the bearer-token check (D-WEB-2): the
@@ -209,6 +227,19 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleConfig implements GET /api/config (M10 W2, ADR D-WEB2-D): it serves
+// the injected config provider's sanitized map verbatim. The provider (cmd/pa's
+// webConfig) is responsible for redaction — web_server.token and any keys are
+// never included — so the API boundary never carries a plaintext secret. An
+// unwired provider answers 501.
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if s.cfgFn == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "config provider not wired"})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.cfgFn())
 }
 
 // sessionView is the API's minimal owned session metadata (no store refs).

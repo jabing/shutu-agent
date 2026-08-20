@@ -38,6 +38,7 @@
         <span id="cur-session" class="cur-session muted" title="当前会话"></span>
         <span class="spacer"></span>
         <span id="model-label" class="muted"></span>
+        <a class="btn-icon top-link" href="#/settings" title="设置">⚙</a>
         <button id="theme-toggle" class="btn-icon" title="切换主题">☀️</button>
       </header>
       <div id="messages" class="messages"></div>
@@ -48,7 +49,25 @@
     </main>
   </div>
 
-  <!-- Placeholder pages (#/settings, #/kb). -->
+  <!-- Settings page (M10 W2, ADR D-WEB2-D): read-only sanitized config view
+       served by GET /api/config. No runtime editing — config changes take
+       effect after a restart. -->
+  <div id="settings" class="settings-page hidden">
+    <header class="settings-top">
+      <button id="settings-back" class="btn-ghost">← 返回聊天</button>
+      <span class="spacer"></span>
+      <button id="theme-toggle-settings" class="btn-icon" title="切换主题">☀️</button>
+    </header>
+    <div class="settings-body">
+      <h1>设置</h1>
+      <p class="muted">只读配置视图。修改 <code>config.yaml</code> 后重启生效（无运行时热改，ADR D-WEB2-D）。</p>
+      <div id="settings-loading" class="muted">加载中…</div>
+      <div id="settings-error" class="err hidden"></div>
+      <div id="settings-groups" class="settings-groups hidden"></div>
+    </div>
+  </div>
+
+  <!-- Placeholder pages (#/kb). -->
   <div id="placeholder" class="placeholder-page hidden">
     <button id="back" class="btn-ghost">← 返回聊天</button>
     <h1 id="ph-title"></h1>

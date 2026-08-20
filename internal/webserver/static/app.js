@@ -27,6 +27,12 @@ const themeBtn = document.getElementById("theme-toggle");
 const messagesEl = document.getElementById("messages");
 const inputEl = document.getElementById("input");
 const sendBtn = document.getElementById("send");
+const settingsPageEl = document.getElementById("settings");
+const settingsBackBtn = document.getElementById("settings-back");
+const settingsThemeBtn = document.getElementById("theme-toggle-settings");
+const settingsLoading = document.getElementById("settings-loading");
+const settingsError = document.getElementById("settings-error");
+const settingsGroups = document.getElementById("settings-groups");
 const placeholderEl = document.getElementById("placeholder");
 const phTitle = document.getElementById("ph-title");
 const phNote = document.getElementById("ph-note");
@@ -90,9 +96,112 @@ function showPlaceholder(title, note) {
   activeStreamID = "";
   loginEl.classList.add("hidden");
   workspaceEl.classList.add("hidden");
+  settingsPageEl.classList.add("hidden");
   phTitle.textContent = title;
   phNote.textContent = note;
   placeholderEl.classList.remove("hidden");
+}
+
+// ---- settings view (M10 W2, ADR D-WEB2-D) --------------------------------
+
+// CAP_LABELS maps the flat config keys from GET /api/config to the capability
+// names the settings page shows (the keys are produced by cmd/pa's webConfig).
+const CAP_LABELS = [
+  ["terminal_enabled", "terminal"],
+  ["fs_enabled", "fs"],
+  ["fs_search_enabled", "fs_search"],
+  ["ralph_enabled", "ralph"],
+  ["workflow_enabled", "workflow"],
+  ["kb_enabled", "kb"],
+  ["jobs_enabled", "jobs"],
+  ["subagent_enabled", "subagent"],
+  ["web_enabled", "web"],
+  ["eval_enabled", "eval"],
+  ["code_enabled", "code"],
+  ["interact_enabled", "interact"],
+  ["mcp_enabled", "mcp"],
+  ["skill_enabled", "skill"],
+  ["schedule_enabled", "schedule"],
+  ["plan_enabled", "plan"],
+  ["spill_enabled", "spill"],
+  ["compaction_enabled", "compaction"],
+  ["multimodal_enabled", "multimodal"],
+];
+
+function showSettings() {
+  stopSSE();
+  activeStreamID = "";
+  loginEl.classList.add("hidden");
+  workspaceEl.classList.add("hidden");
+  placeholderEl.classList.add("hidden");
+  settingsPageEl.classList.remove("hidden");
+  renderSettings();
+}
+
+// settingsCard builds one grouped <section> of key/value rows.
+function settingsCard(title, rows) {
+  const card = document.createElement("section");
+  card.className = "settings-group";
+  const h = document.createElement("h2");
+  h.textContent = title;
+  card.appendChild(h);
+  const dl = document.createElement("dl");
+  dl.className = "settings-rows";
+  for (const [k, v] of rows) {
+    const dt = document.createElement("dt");
+    dt.textContent = k;
+    const dd = document.createElement("dd");
+    dd.textContent = v == null || v === "" ? "—" : String(v);
+    dl.appendChild(dt);
+    dl.appendChild(dd);
+  }
+  card.appendChild(dl);
+  return card;
+}
+
+// renderSettings fetches the sanitized config and renders it read-only.
+async function renderSettings() {
+  settingsLoading.classList.remove("hidden");
+  settingsError.classList.add("hidden");
+  settingsGroups.classList.add("hidden");
+  settingsGroups.innerHTML = "";
+  let cfg;
+  try {
+    cfg = await api("/api/config");
+  } catch (e) {
+    settingsLoading.classList.add("hidden");
+    if (e.message === "unauthorized") return; // api() already dropped to login
+    settingsError.textContent = "无法加载配置：" + e.message;
+    settingsError.classList.remove("hidden");
+    return;
+  }
+  settingsLoading.classList.add("hidden");
+
+  const cards = [
+    settingsCard("模型 / Provider / 模式", [
+      ["model", cfg.model],
+      ["base_url", cfg.base_url || "（provider 默认）"],
+      ["llm_provider", cfg.llm_provider],
+      ["mode", cfg.mode],
+    ]),
+    settingsCard("能力开关", CAP_LABELS.map(([key, label]) => [label, cfg[key] ? "开" : "关"])),
+    settingsCard("Web 服务", [["web_server_addr", cfg.web_server_addr]]),
+    settingsCard("工具白名单", [
+      ["计数", String(cfg.tools_enabled_count ?? 0)],
+      ["列表", (cfg.tools_enabled || []).join("、")],
+    ]),
+  ];
+  for (const c of cards) settingsGroups.appendChild(c);
+  settingsGroups.classList.remove("hidden");
+}
+
+// loadModelLabel populates the topbar model/provider label from the config
+// view (M10 W2); failures leave the honest placeholder in place.
+async function loadModelLabel() {
+  try {
+    const cfg = await api("/api/config");
+    modelLabelEl.textContent = (cfg.llm_provider || "?") + " · " + (cfg.model || "?");
+  } catch (e) { /* keep the placeholder */ }
 }
 
 // ---- routing -------------------------------------------------------------
@@ -115,7 +224,7 @@ async function route() {
       await newSession();
     }
   } else if (view === "settings") {
-    showPlaceholder("设置", "配置页在 W2 提供只读脱敏展示。当前：修改 config.yaml 后重启生效。");
+    showSettings();
   } else if (view === "kb") {
     showPlaceholder("知识库", "KB 管理台待 KB 全量后挂。");
   } else {
@@ -177,9 +286,10 @@ async function openChat(id) {
   localStorage.setItem(KEY_CURRENT, id);
   showWorkspace();
   curSessionEl.textContent = "会话 " + id;
-  // The model/provider label is populated by W2's config API; until then it
-  // honestly shows a placeholder.
+  // The model/provider label comes from W2's config API (M10 W2); until the
+  // fetch resolves it honestly shows a placeholder.
   modelLabelEl.textContent = "model —";
+  loadModelLabel();
   try {
     await loadSessions();
   } catch (e) {
@@ -385,13 +495,17 @@ function applyTheme() {
   const t = localStorage.getItem(KEY_THEME) || "dark";
   document.documentElement.dataset.theme = t;
   themeBtn.textContent = t === "dark" ? "☀️" : "🌙";
+  settingsThemeBtn.textContent = t === "dark" ? "☀️" : "🌙";
 }
 
-themeBtn.addEventListener("click", () => {
+function toggleTheme() {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   localStorage.setItem(KEY_THEME, next);
   applyTheme();
-});
+}
+
+themeBtn.addEventListener("click", toggleTheme);
+settingsThemeBtn.addEventListener("click", toggleTheme);
 
 // ---- wiring --------------------------------------------------------------
 
@@ -422,6 +536,7 @@ inputEl.addEventListener("keydown", (e) => {
 inputEl.addEventListener("input", autoGrow);
 sendBtn.addEventListener("click", sendMessage);
 backBtn.addEventListener("click", () => { location.hash = "#/chat"; });
+settingsBackBtn.addEventListener("click", () => { location.hash = "#/chat"; });
 window.addEventListener("hashchange", () => { if (token()) route(); });
 
 async function render() {

@@ -119,6 +119,9 @@ func (a *app) registerWebServer() error {
 	srv.SetEventSource(func(sessionID string, sink func(session.Event)) func() {
 		return a.hub.SubscribeInto(sessionID, sink)
 	})
+	// M10 W2 (ADR D-WEB2-D): inject the sanitized config view. webConfig never
+	// exposes web_server.token or any key — the webserver only forwards it.
+	srv.SetConfigProvider(a.webConfig)
 	a.webserver = srv
 	go func() {
 		if err := srv.Serve(); err != nil {
@@ -161,5 +164,56 @@ func (a *app) webSessionManager(ctx context.Context, action, id string) (string,
 		return a.currentID, nil
 	default:
 		return "", fmt.Errorf("unknown session action %q", action)
+	}
+}
+
+// maxWebToolsList caps the tool-whitelist entries served by webConfig (M10 W2):
+// the settings page shows the count plus a bounded sample, so a huge whitelist
+// never floods the payload (the "…" tail marks a truncation).
+const maxWebToolsList = 30
+
+// webConfig returns the sanitized, flat configuration view served by
+// GET /api/config (M10 W2, ADR D-WEB2-D): model/provider/mode, each capability
+// gate's enabled flag, the web-server address and the tool whitelist (count +
+// bounded list). Secrets never leave — web_server.token is omitted entirely
+// (keys live in the environment, never in this config), so a compromised
+// settings page cannot leak credentials. Field names are snake_case.
+func (a *app) webConfig() map[string]any {
+	enabled := a.cfg.Tools.Enabled
+	tools := enabled
+	if len(enabled) > maxWebToolsList {
+		tools = append([]string(nil), enabled[:maxWebToolsList]...)
+		tools = append(tools, "…")
+	}
+	return map[string]any{
+		"model":        a.cfg.Model,
+		"base_url":     a.cfg.BaseURL,
+		"llm_provider": a.cfg.LLM.Provider,
+		"mode":         a.cfg.Mode,
+
+		// Capability gates (D10: each seam is default off).
+		"terminal_enabled":   a.cfg.Terminal.Enabled,
+		"fs_enabled":         a.cfg.Fs.Enabled,
+		"fs_search_enabled":  a.cfg.FsSearch.Enabled,
+		"ralph_enabled":      a.cfg.Ralph.Enabled,
+		"workflow_enabled":   a.cfg.Workflow.Enabled,
+		"kb_enabled":         a.cfg.KB.Enabled,
+		"jobs_enabled":       a.cfg.Jobs.Enabled,
+		"subagent_enabled":   a.cfg.Subagent.Enabled,
+		"web_enabled":        a.cfg.Web.Enabled,
+		"eval_enabled":       a.cfg.Eval.Enabled,
+		"code_enabled":       a.cfg.Code.Enabled,
+		"interact_enabled":   a.cfg.Interact.Enabled,
+		"mcp_enabled":        a.cfg.Mcp.Enabled,
+		"skill_enabled":      a.cfg.Skill.Enabled,
+		"schedule_enabled":   a.cfg.Schedule.Enabled,
+		"plan_enabled":       a.cfg.Plan.Enabled,
+		"spill_enabled":      a.cfg.Spill.Enabled,
+		"compaction_enabled": a.cfg.Compaction.Enabled,
+		"multimodal_enabled": a.cfg.LLM.Multimodal.Enabled,
+
+		"web_server_addr":     a.cfg.WebServer.Addr,
+		"tools_enabled_count": len(enabled),
+		"tools_enabled":       tools,
 	}
 }

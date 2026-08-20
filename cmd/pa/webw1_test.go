@@ -7,9 +7,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -217,5 +219,97 @@ func TestRegisterWebServerInjectsHandlers(t *testing.T) {
 	h := a.webserver.Handlers()
 	if h.Message == nil || h.Session == nil || h.Event == nil {
 		t.Fatalf("injected handlers = %+v, want all three non-nil", h)
+	}
+}
+
+// TestWebConfigRedacts verifies webConfig (M10 W2, ADR D-WEB2-D): the sanitized
+// view never leaks the web_server token plaintext, the model/provider/mode and
+// the capability gates are correct, the tool whitelist carries its count plus a
+// bounded list, and registerWebServer wires the provider into the webserver
+// (Handlers().Config non-nil).
+func TestWebConfigRedacts(t *testing.T) {
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &app{
+		cfg: config.Config{
+			Model:   "deepseek-chat",
+			BaseURL: "https://api.example.com/v1",
+			Mode:    "standard",
+			LLM: config.LLMConfig{
+				Provider:   "openai",
+				Multimodal: config.MultimodalConfig{Enabled: true},
+			},
+			Tools:      config.ToolsConfig{Enabled: []string{"get_time", "read_file", "web_search"}},
+			Web:        config.WebConfig{Enabled: true},
+			KB:         config.KBConfig{Enabled: true},
+			Compaction: config.CompactionConfig{Enabled: true},
+			Eval:       config.EvalConfig{Enabled: false},
+			WebServer:  config.WebServerConfig{Enabled: true, Addr: "127.0.0.1:0", Token: "super-secret"},
+		},
+		store: st,
+	}
+	if err := a.registerWebServer(); err != nil {
+		t.Fatalf("registerWebServer: %v", err)
+	}
+	defer a.webserver.Close()
+
+	v := a.webConfig()
+
+	// Redaction: the token key is absent (webConfig omits it) or masked; the
+	// plaintext never appears anywhere in the serialized view.
+	if tok, ok := v["web_server.token"]; ok && tok != "***" {
+		t.Fatalf("web_server.token = %v, want absent or \"***\"", tok)
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "super-secret") {
+		t.Fatal("webConfig leaks the token plaintext")
+	}
+
+	// Model / provider / mode / base_url.
+	if v["model"] != "deepseek-chat" || v["llm_provider"] != "openai" || v["mode"] != "standard" {
+		t.Fatalf("model/provider/mode = %v/%v/%v, want deepseek-chat/openai/standard",
+			v["model"], v["llm_provider"], v["mode"])
+	}
+	if v["base_url"] != "https://api.example.com/v1" {
+		t.Fatalf("base_url = %v, want https://api.example.com/v1", v["base_url"])
+	}
+
+	// Capability gates.
+	for key, want := range map[string]bool{
+		"web_enabled": true, "kb_enabled": true, "compaction_enabled": true,
+		"multimodal_enabled": true, "eval_enabled": false, "jobs_enabled": false,
+	} {
+		if got, _ := v[key].(bool); got != want {
+			t.Fatalf("%s = %v, want %v", key, v[key], want)
+		}
+	}
+
+	// Web server address.
+	if v["web_server_addr"] != "127.0.0.1:0" {
+		t.Fatalf("web_server_addr = %v, want 127.0.0.1:0", v["web_server_addr"])
+	}
+
+	// Tool whitelist: count + bounded list.
+	if v["tools_enabled_count"] != 3 {
+		t.Fatalf("tools_enabled_count = %v, want 3", v["tools_enabled_count"])
+	}
+	tl, ok := v["tools_enabled"].([]string)
+	if !ok || len(tl) != 3 || tl[0] != "get_time" {
+		t.Fatalf("tools_enabled = %#v, want the whitelist list", v["tools_enabled"])
+	}
+
+	// The config provider is wired into the webserver.
+	h := a.webserver.Handlers()
+	if h.Config == nil {
+		t.Fatal("registerWebServer must wire SetConfigProvider(a.webConfig)")
+	}
+	if got := h.Config(); got["model"] != "deepseek-chat" {
+		t.Fatalf("wired cfgFn returned model %v, want deepseek-chat", got["model"])
 	}
 }

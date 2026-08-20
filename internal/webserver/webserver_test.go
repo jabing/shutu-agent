@@ -462,6 +462,64 @@ func TestEventsStreamSSE(t *testing.T) {
 	}
 }
 
+// TestConfigAPI verifies GET /api/config (M10 W2, ADR D-WEB2-D): the route sits
+// behind auth, invokes the injected config provider and serves its sanitized
+// map verbatim (the redaction itself is cmd/pa's webConfig — the token key is
+// served only as "***", never a plaintext); an unwired provider answers 501.
+func TestConfigAPI(t *testing.T) {
+	srv, _ := newTestServer(t, "tok")
+	called := false
+	// The fake mirrors cmd/pa's webConfig: web_server.token is redacted to
+	// "***" (never the plaintext), so the boundary carries no secret.
+	srv.SetConfigProvider(func() map[string]any {
+		called = true
+		return map[string]any{
+			"model":            "deepseek-chat",
+			"llm_provider":     "deepseek",
+			"mode":             "standard",
+			"web_server_addr":  "127.0.0.1:8080",
+			"web_server.token": "***",
+			"web_enabled":      true,
+			"tools_enabled":    []string{"get_time", "read_file"},
+		}
+	})
+
+	// Auth gate.
+	if rec := doReq(t, srv.Handler(), "GET", "/api/config", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("config without token → %d, want 401", rec.Code)
+	}
+
+	rec := doReq(t, srv.Handler(), "GET", "/api/config", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("config → %d, want 200", rec.Code)
+	}
+	if !called {
+		t.Fatal("cfgFn must be invoked")
+	}
+	body := rec.Body.String()
+	// Redaction shape at the boundary: the token key is masked and the
+	// plaintext never appears (a buggy provider that served it would fail here).
+	if !strings.Contains(body, `"web_server.token":"***"`) {
+		t.Fatalf("config body must carry the redacted token marker: %s", body)
+	}
+	if strings.Contains(body, "secret") {
+		t.Fatalf("config body leaks a plaintext token: %s", body)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["model"] != "deepseek-chat" || out["web_enabled"] != true {
+		t.Fatalf("config = %v, want model deepseek-chat and web_enabled true", out)
+	}
+
+	// Unwired provider → 501.
+	srv2, _ := newTestServer(t, "tok")
+	if rec := doReq(t, srv2.Handler(), "GET", "/api/config", "tok"); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("config with nil provider → %d, want 501", rec.Code)
+	}
+}
+
 func mustData(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(v)
