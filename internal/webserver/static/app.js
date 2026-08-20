@@ -537,10 +537,13 @@ inputEl.addEventListener("input", autoGrow);
 sendBtn.addEventListener("click", sendMessage);
 backBtn.addEventListener("click", () => { location.hash = "#/chat"; });
 settingsBackBtn.addEventListener("click", () => { location.hash = "#/chat"; });
-window.addEventListener("hashchange", () => { if (token()) route(); });
+window.addEventListener("hashchange", () => route());
 
 async function render() {
-  if (!token()) { showLogin(""); return; }
+  // D-WEB2-G: the portal serves open to the local machine (dsh-style) when no
+  // token is configured — always route in. If the backend does enforce a token
+  // (web_server.token set), api()/SSE surface a 401 and showLogin prompts for
+  // it; loginForm.submit stores it and re-routes.
   await route();
 }
 

@@ -47,16 +47,35 @@ func TestRegisterWebServerDisabledRegistersNothing(t *testing.T) {
 	}
 }
 
-// TestRegisterWebServerEmptyTokenFailsClosed verifies D-WEB-7: enabled with an
-// empty token refuses to start (no bare server).
-func TestRegisterWebServerEmptyTokenFailsClosed(t *testing.T) {
+// TestRegisterWebServerEmptyTokenServesOpen verifies the D-WEB-2 change (user
+// decision 2026-08-20): enabled with an empty token starts and serves open to
+// the local machine (dsh-style, no login) — the old fail-closed stance is gone.
+func TestRegisterWebServerEmptyTokenServesOpen(t *testing.T) {
 	a, st := makeWebServerApp(t, true, "")
 	defer st.Close()
-	if err := a.registerWebServer(); err == nil {
-		t.Fatal("web_server enabled with empty token must fail closed")
+	ctx := context.Background()
+	if err := st.CreateSession(ctx, "s-1", time.Now()); err != nil {
+		t.Fatal(err)
 	}
-	if a.webserver != nil {
-		t.Fatal("webserver must stay nil after failed registration")
+	if err := a.registerWebServer(); err != nil {
+		t.Fatalf("registerWebServer: %v", err)
+	}
+	if a.webserver == nil {
+		t.Fatal("webserver must be set when web_server.enabled=true (empty token = open)")
+	}
+	defer a.webserver.Close()
+
+	ts := httptest.NewServer(a.webserver.Handler())
+	defer ts.Close()
+	// No token configured → an anonymous request is served.
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/health", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/health: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("health without token (no token configured) -> %d, want 200", resp.StatusCode)
 	}
 }
 

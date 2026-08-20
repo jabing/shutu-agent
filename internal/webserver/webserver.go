@@ -32,11 +32,15 @@ var staticFS embed.FS
 // exposes (防超大载荷 / 防泄露完整日志正文, D-WEB-4).
 const maxSummary = 200
 
-// Server is the M10 web portal: a bearer-authenticated net/http server over
-// the read-only session store.
+// Server is the M10 web portal: a net/http server over the read-only session
+// store. Authentication is optional (D-WEB-2 change, user decision 2026-08-20):
+// when token == "" every API route is open to the local machine (the
+// 127.0.0.1 bind is the trust boundary, like dsh web); when a token is set the
+// bearer middleware guards every /api route.
 type Server struct {
 	store     store.Store
 	tokenHash [32]byte // sha256 of the configured token; the plaintext never survives New
+	authOn    bool     // token != "" → bearer check enforced
 	addr      string
 	srv       *http.Server
 
@@ -55,15 +59,13 @@ type Server struct {
 	cfgFn func() map[string]any
 }
 
-// New validates the wiring and builds the portal handler. token is required
-// (fail-closed: an empty token refuses to start rather than serving bare) and
-// only its SHA-256 digest is retained. addr defaults to "127.0.0.1:8080".
+// New validates the wiring and builds the portal handler. token is optional:
+// empty opens the portal to the local machine (dsh-style, no login); a token
+// turns on bearer auth and only its SHA-256 digest is retained. addr defaults
+// to "127.0.0.1:8080".
 func New(st store.Store, token, addr string) (*Server, error) {
 	if st == nil {
 		return nil, errors.New("webserver: store is required")
-	}
-	if token == "" {
-		return nil, errors.New("webserver: token required (set web_server.token)")
 	}
 	if addr == "" {
 		addr = "127.0.0.1:8080"
@@ -71,6 +73,7 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	s := &Server{
 		store:     st,
 		tokenHash: sha256.Sum256([]byte(token)),
+		authOn:    token != "",
 		addr:      addr,
 	}
 	// The static shell (login view + frontend assets) is public so a fresh
@@ -212,6 +215,10 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 				}
 			}
 		}()
+		if !s.authOn {
+			next.ServeHTTP(sw, r)
+			return
+		}
 		auth := r.Header.Get("Authorization")
 		const prefix = "Bearer "
 		if !strings.HasPrefix(auth, prefix) {

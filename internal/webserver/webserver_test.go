@@ -75,7 +75,7 @@ func seedSession(t *testing.T, st *store.SQLiteStore, id string, events []sessio
 	}
 }
 
-func TestNewRequiresToken(t *testing.T) {
+func TestNewValidation(t *testing.T) {
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -84,8 +84,10 @@ func TestNewRequiresToken(t *testing.T) {
 	if _, err := New(nil, "tok", ""); err == nil {
 		t.Fatal("New with nil store must fail")
 	}
-	if _, err := New(st, "", ""); err == nil || !strings.Contains(err.Error(), "token required") {
-		t.Fatalf("New with empty token err = %v, want token-required", err)
+	// Empty token is now valid: the portal serves open to the local machine
+	// (D-WEB-2 change, user decision 2026-08-20) — no longer fail-closed.
+	if _, err := New(st, "", ""); err != nil {
+		t.Fatalf("New with empty token err = %v, want open portal", err)
 	}
 }
 
@@ -105,6 +107,19 @@ func TestAuthRequired(t *testing.T) {
 	// holds no data; only the API routes are gated.
 	if rec := doReq(t, h, "GET", "/", ""); rec.Code != http.StatusOK {
 		t.Fatalf("static / without token → %d, want 200 (login shell must load)", rec.Code)
+	}
+}
+
+// TestNoAuthOpen verifies the D-WEB-2 change: with no token configured the API
+// serves open (dsh-style local machine trust) — no login, no bearer required.
+func TestNoAuthOpen(t *testing.T) {
+	srv, _ := newTestServer(t, "")
+	h := srv.Handler()
+	if rec := doReq(t, h, "GET", "/api/sessions", ""); rec.Code != http.StatusOK {
+		t.Fatalf("no token configured, anonymous API → %d, want 200 (open portal)", rec.Code)
+	}
+	if rec := doReq(t, h, "GET", "/api/health", ""); rec.Code != http.StatusOK {
+		t.Fatalf("no token configured, anonymous health → %d, want 200", rec.Code)
 	}
 }
 
