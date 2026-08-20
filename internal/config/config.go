@@ -198,6 +198,7 @@ type Config struct {
 	LLM        LLMConfig        `yaml:"llm"`         // LLM provider selection (M8-2)
 	Terminal   TerminalConfig   `yaml:"terminal"`    // persistent-shell terminal (M9)
 	Eval       EvalConfig       `yaml:"eval"`        // task-evaluation seam (eval)
+	FsSearch   FsSearchConfig   `yaml:"fs_search"`   // file-content-search policy (D-GAP-1)
 
 	// Mode selects the agent capability preset (D-MODE-1): minimal | standard
 	// | code; default standard. minimal is preset-first (D-MODE-6): 能力开关
@@ -529,6 +530,13 @@ type FsConfig struct {
 	// the default <project> (the process working directory), resolved by the
 	// FileService constructor.
 	Root string `yaml:"root"`
+}
+
+// FsSearchConfig is the file-content-search policy (D-GAP-1). The capability
+// is default off (D10): when Enabled is false the composition root registers
+// no fs_search tool. minimal 模式同样关闭 (D-MODE-2).
+type FsSearchConfig struct {
+	Enabled bool `yaml:"enabled"` // default false (D10)
 }
 
 // WebConfig 是联网能力策略（ADR 2026-08-20-m7-web-search.md / dispatch-m7-2 §5）。
@@ -1084,6 +1092,18 @@ func applyDefaults(cfg *Config) {
 			}
 		}
 	}
+	// D-GAP-1 fs-search defaults: off by default (D10). Enabling fs_search
+	// whitelists its single consumer tool fs_search, so the one fs_search.
+	// enabled switch turns the whole capability (search engine + tool) on
+	// (mirrors kb/jobs/subagent/skill/schedule/plan/spill/interact/code/mcp/
+	// fs/web/terminal/eval).
+	if cfg.FsSearch.Enabled {
+		for _, name := range fsSearchToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
 	// D-MODE-2 (ADR 2026-08-20-mode-presets.md): minimal 模式是预设优先 ——
 	// 只保留持久 shell + 文件编辑 + M1 基础只读；其余能力 cap 全关、白名单
 	// 整体重置为 minimal 集合。register* 的 D10 门读这些 Enabled, 因此注册面
@@ -1092,6 +1112,7 @@ func applyDefaults(cfg *Config) {
 	if cfg.Mode == ModeMinimal {
 		cfg.Terminal.Enabled = true
 		cfg.Fs.Enabled = true
+		cfg.FsSearch.Enabled = false // minimal 不含搜索 (D-MODE-2)
 		cfg.KB.Enabled = false
 		cfg.Jobs.Enabled = false
 		cfg.Subagent.Enabled = false
@@ -1178,6 +1199,12 @@ var mcpToolNames = []string{"mcp_list", "mcp_call"}
 // names here makes the "fs.enabled ⇒ 工具自动白名单" rule a single, tested fact
 // shared by applyDefaults and the composition root.
 var fsToolNames = []string{"fs_read", "fs_write", "fs_list"}
+
+// fsSearchToolNames are the file-content-search consumer tools (D-GAP-1).
+// fs_search is registered and whitelisted only when fs_search is enabled;
+// keeping the name here makes the "fs_search.enabled ⇒ 工具自动白名单" rule a
+// single, tested fact shared by applyDefaults and the composition root.
+var fsSearchToolNames = []string{"fs_search"}
 
 // webToolNames are the web consumer tools (dispatch-m7-2 §5). They are
 // registered and whitelisted only when web is enabled; keeping the names here

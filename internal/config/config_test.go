@@ -1321,6 +1321,74 @@ func TestLoadFsEnabledAppendsToolsToWhitelist(t *testing.T) {
 	}
 }
 
+// D-GAP-1: an absent fs_search section means the capability is off by default
+// (D10) and the fs_search tool is not whitelisted.
+func TestLoadFsSearchDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.FsSearch.Enabled {
+		t.Error("fs_search must be disabled by default (D10)")
+	}
+	for _, name := range fsSearchToolNames {
+		if contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when fs_search disabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
+// D-GAP-1: an explicit fs_search.enabled: true is honored, while an explicit
+// enabled:false leaves the default whitelist untouched (D10).
+func TestLoadFsSearchParsesSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("fs_search:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.FsSearch.Enabled {
+		t.Error("fs_search.enabled should be true")
+	}
+
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("fs_search:\n  enabled: false\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.FsSearch.Enabled {
+		t.Error("fs_search.enabled = true, want false (explicitly disabled)")
+	}
+	for _, name := range fsSearchToolNames {
+		if contains(cfg2.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when fs_search explicitly disabled", cfg2.Tools.Enabled, name)
+		}
+	}
+}
+
+// D-GAP-1: fs_search.enabled: true is the single switch that turns the whole
+// capability on — the fs_search tool must also become whitelisted.
+func TestLoadFsSearchEnabledAppendsToolsToWhitelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("fs_search:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, name := range fsSearchToolNames {
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after fs_search.enabled", cfg.Tools.Enabled, name)
+		}
+	}
+}
+
 // M7-2: an absent web section means the capability is off by default (D10)
 // with every field at its default, and no web_* tool is whitelisted while
 // disabled (dispatch-m7-2 §5).
@@ -1895,7 +1963,7 @@ func TestModeMinimalWhitelist(t *testing.T) {
 // minimal set.
 func TestModeMinimalPresetFirst(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	content := "mode: minimal\nkb:\n  enabled: true\nweb:\n  enabled: true\ntools:\n  enabled: [web_search]\n"
+	content := "mode: minimal\nkb:\n  enabled: true\nweb:\n  enabled: true\nfs_search:\n  enabled: true\ntools:\n  enabled: [web_search]\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -1908,6 +1976,9 @@ func TestModeMinimalPresetFirst(t *testing.T) {
 	}
 	if cfg.Web.Enabled {
 		t.Error("minimal must override an explicit web.enabled: true (preset-first, D-MODE-6)")
+	}
+	if cfg.FsSearch.Enabled {
+		t.Error("minimal must override an explicit fs_search.enabled: true (D-MODE-2 不含搜索)")
 	}
 	if !cfg.Terminal.Enabled || !cfg.Fs.Enabled {
 		t.Error("minimal must keep terminal and fs enabled despite the explicit overrides")
@@ -2014,6 +2085,7 @@ func modeCapStates(cfg Config) map[string]bool {
 	return map[string]bool{
 		"terminal":       cfg.Terminal.Enabled,
 		"fs":             cfg.Fs.Enabled,
+		"fs_search":      cfg.FsSearch.Enabled,
 		"jobs":           cfg.Jobs.Enabled,
 		"subagent":       cfg.Subagent.Enabled,
 		"web":            cfg.Web.Enabled,

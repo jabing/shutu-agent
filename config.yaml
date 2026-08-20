@@ -355,6 +355,20 @@ fs:
   # resolved to its absolute form at startup.
   root: ""
 
+# File-content-search capability (D-GAP-1; ADR 2026-08-20-standard-gaps.md
+# D-GAP-1). Off by default (D10): when disabled the composition root registers
+# no fs_search tool and whitelists nothing (默认关闭，不初始化). When enabled,
+# fs_search recursively scans a directory tree for a substring (or a regular
+# expression when regex: true) and returns matching file:line results — a
+# read-only, bounded capability: VCS/dependency directories (.git, node_modules,
+# ...) and binary files are skipped, files over 1 MiB are skipped, and the scan
+# is capped (max_results default 50). The tool runs on the serial tool path
+# (D5).
+fs_search:
+  # Master switch. false ⇒ no fs_search tool is registered and nothing is
+  # whitelisted (默认关闭 D10，不初始化).
+  enabled: false
+
 # Web search/fetch capability (M7; design.md §10 D2 / ADR
 # 2026-08-20-m7-web-search.md / dispatch-m7-2). Off by default (D10): when
 # disabled the composition root creates no Engine, registers no web_* tool and

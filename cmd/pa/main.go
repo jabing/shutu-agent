@@ -275,6 +275,16 @@ func main() {
 	if app.fs != nil {
 		defer app.fs.Close()
 	}
+	// D-GAP-1: wire the file-content-search seam — the fs_search tool — when
+	// fs_search.enabled (默认关 D10). config.applyDefaults already whitelisted
+	// fs_search when fs_search.enabled was true. The tool is read-only and
+	// holds no resources, so there is no deferred Close; the default search
+	// root is the agent working directory (os.Getwd, like internal/code and
+	// internal/skill). It executes on the serial tool path (D5).
+	if err := app.registerFsSearch(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
 	// M7-2: wire the web seam — Engine + DeepSeek search provider (env key
 	// only) + HTTP fetch provider + the two web_* tools — when web.enabled
 	// (默认关闭, D10). config.applyDefaults already whitelisted web_search/
