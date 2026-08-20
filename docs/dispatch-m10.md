@@ -98,3 +98,46 @@ package webserver
 
 ## 报告（简短）
 提交 hash + go test 结果 + 偏离说明（summarize 覆盖类型、认证取舍、前端结构）。不要贴代码。
+
+---
+
+# M10c 派发：dashboard 工作台（/api/stats 聚合 + dashboard 页面）
+
+> M10a 已完成（`9592406`）。本段在**已提交的 M10a 之上**追加 dashboard：`/api/stats`（只读聚合）+ 前端 `#/dashboard` 页面。M10b（KB 管理台空壳）在后续段。
+
+## 纪律
+- 在 M10a 提交（`9592406`）上工作，工作树干净开始；零新依赖、CGO-free、gofmt；只动 internal/webserver、cmd/pa、internal/config（如需）；不改 loop（D4）。
+- `/api/stats` 与既有 API 同级**全走认证中间件**（复用 requireAuth）。
+- 统计为**只读内存聚合**（D-WEB-5）：从 `store.ListSessions` + 按需 `store.LoadSession` 计算，无新增存储。
+
+## 变更清单
+
+### 1. internal/webserver/webserver.go — 新增 stats 处理
+- 新路由：`GET /api/stats`（走认证）。
+- `statsView` 结构（JSON）：
+  - `sessions_total int`
+  - `events_total int`
+  - `last_active time.Time`（最近事件时间；无会话 → zero）
+  - `event_type_counts map[string]int`（跨全部会话的事件类型计数）
+  - `tool_calls int`（`tool/result` 事件总数）
+- 实现：`ListSessions` → 每个 session `LoadSession` → 遍历事件累加（event_type_counts、tool_calls、events_total、last_active=max At）。事件多时可能重，但个人门户可接受；实现内加注释说明是 O(全部事件) 只读聚合。
+- 注意：ListSessions 返回所有会话，逐个 LoadSession 全量事件——大量会话/事件时慢。本期接受（个人门户规模），不加分页（诚实记录限制）。
+
+### 2. internal/webserver/static/app.js — dashboard 页面
+- `#/dashboard` 从占位改为真实渲染：fetch `/api/stats` → 显示会话总数、事件总数、工具调用数、最近活动时间 + 事件类型分布（类型→计数，简单列表或原生 DOM 柱状条，不引图表库）。
+- 保持 hash 导航；`#/kb` 仍是占位（M10b）。
+- 样式用 style.css 已有类，可加少量新类（如 `.bar`、`.bar-row`）。
+
+### 3. internal/webserver/webserver_test.go — 新增测试
+- `TestStats`：造 2 会话（各若干事件，含 tool/result）→ `/api/stats` 断言 sessions_total/events_total/tool_calls/event_type_counts 正确。
+- 空库：`TestStatsEmpty` → sessions_total 0、events_total 0、tool_calls 0。
+- 认证：`/api/stats` 无 token → 401（复用 doReq 即可，不必新测试——在 TestStats 或单独加一行）。
+
+### 4. 提交
+`M10c: dashboard 工作台（/api/stats 只读聚合 + 前端 dashboard 页面）`
+
+## 验证
+`go build ./...` + `go vet ./internal/webserver/` + `go test -count=1 -timeout 90s ./internal/webserver/ -v` 全 PASS 后提交；随后 `go test -count=1 -timeout 90s ./...` 全绿确认（env 同 M10a）。
+
+## 报告（简短）
+提交 hash + go test 结果 + 偏离说明。不要贴代码。
