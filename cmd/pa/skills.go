@@ -104,7 +104,7 @@ func (a *app) skillCatalogPreStep(ctx context.Context, _ string) []llm.Message {
 	if _, err := a.log.Append(session.EventSkillCatalog, session.NewSkillCatalog(len(cands), skillCatalogVersion(cands))); err != nil {
 		fmt.Fprintln(os.Stderr, "pa: skill/catalog event:", err)
 	}
-	return []llm.Message{{Role: llm.RoleUser, Content: text}}
+	return []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text(text)}}}
 }
 
 // formatSkillCatalog renders the sorted skill catalog as model-facing context:

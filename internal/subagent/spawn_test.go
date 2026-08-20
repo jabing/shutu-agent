@@ -157,8 +157,8 @@ func TestSpawnFullRound(t *testing.T) {
 		t.Fatalf("last child event = %q, want assistant/message", events[len(events)-1].Type)
 	}
 	hist := childLog.DeriveHistory()
-	if len(hist) != 2 || hist[0].Role != llm.RoleUser || hist[0].Content != "summarize the docs" ||
-		hist[1].Role != llm.RoleAssistant || hist[1].Content != "child answer" {
+	if len(hist) != 2 || hist[0].Role != llm.RoleUser || hist[0].Text() != "summarize the docs" ||
+		hist[1].Role != llm.RoleAssistant || hist[1].Text() != "child answer" {
 		t.Fatalf("derived child history = %+v, want user prompt + assistant answer", hist)
 	}
 	if len(model.calls) != 1 {

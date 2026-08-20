@@ -164,18 +164,20 @@ func (l *Loop) safeInject(inj PreStepInjector, ctx context.Context, userText str
 // contribute to maxInjectorChars runes (config pre_step.max_chars_per_injector,
 // default 4000): messages are kept in registration order until the budget is
 // exhausted, the message that overflows is truncated UTF-8-safely, and the rest
-// are dropped. Over-budget context never blocks the answer (fail-open).
+// are dropped. Over-budget context never blocks the answer (fail-open). The
+// injector messages are plain text this milestone, so Text()/SetText() give the
+// exact old string semantics.
 func truncateInjectorContext(msgs []llm.Message) []llm.Message {
 	budget := maxInjectorChars
 	keep := len(msgs)
 	for i := range msgs {
-		n := utf8.RuneCountInString(msgs[i].Content)
+		n := utf8.RuneCountInString(msgs[i].Text())
 		if n > budget {
 			if budget <= 0 {
 				keep = i
 				break
 			}
-			msgs[i].Content = truncateRunes(msgs[i].Content, budget)
+			msgs[i].SetText(truncateRunes(msgs[i].Text(), budget))
 			keep = i + 1
 			break
 		}
@@ -205,7 +207,7 @@ func (l *Loop) step(ctx context.Context, contextMsgs []llm.Message) (bool, error
 	history := l.log.DeriveHistory()
 	specs := l.tools.Specs()
 	messages := make([]llm.Message, 0, len(history)+1+len(contextMsgs))
-	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: l.prompt.Build()})
+	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: []llm.ContentBlock{llm.Text(l.prompt.Build())}})
 	messages = append(messages, contextMsgs...)
 	messages = append(messages, history...)
 
@@ -215,6 +217,7 @@ func (l *Loop) step(ctx context.Context, contextMsgs []llm.Message) (bool, error
 	}
 
 	var text strings.Builder
+	var reasoning string
 	var calls []llm.ToolCall
 	var finishReason string
 	for {
@@ -240,10 +243,11 @@ func (l *Loop) step(ctx context.Context, contextMsgs []llm.Message) (bool, error
 		case llm.StreamFinish:
 			calls = ev.ToolCalls
 			finishReason = ev.FinishReason
+			reasoning = ev.Reasoning // accumulated by the reader (M8)
 		}
 	}
 
-	if _, err := l.log.Append(session.EventAssistantMessage, session.NewAssistantMessage(text.String(), calls, finishReason)); err != nil {
+	if _, err := l.log.Append(session.EventAssistantMessage, session.NewAssistantMessage(text.String(), calls, finishReason, reasoning)); err != nil {
 		return false, err
 	}
 	if len(calls) == 0 {

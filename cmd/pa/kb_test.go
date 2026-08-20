@@ -46,8 +46,8 @@ func TestRecallContextInjectsAndLogs(t *testing.T) {
 	if len(msgs) != 1 || msgs[0].Role != "user" {
 		t.Fatalf("messages = %+v, want one user context message", msgs)
 	}
-	if !strings.Contains(msgs[0].Content, "架构决策记录") || !strings.Contains(msgs[0].Content, "id: ") {
-		t.Fatalf("recall content = %q, want title + id", msgs[0].Content)
+	if !strings.Contains(msgs[0].Text(), "架构决策记录") || !strings.Contains(msgs[0].Text(), "id: ") {
+		t.Fatalf("recall content = %q, want title + id", msgs[0].Text())
 	}
 	// The kb/recall event must already be in the log.
 	var recallEvents int

@@ -109,7 +109,7 @@ func recallContext(ctx context.Context, k kb.KB, log *session.Log, query string,
 	if _, err := log.Append(session.EventKBRecall, session.NewKBRecall(query, recallHits)); err != nil {
 		return nil, err
 	}
-	return []llm.Message{{Role: llm.RoleUser, Content: formatRecall(recallHits)}}, nil
+	return []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text(formatRecall(recallHits))}}}, nil
 }
 
 // formatRecall renders the injected recall context message — a bounded snippet

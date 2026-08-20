@@ -149,10 +149,10 @@ func TestCompactIfNeededTriggersOnPressure(t *testing.T) {
 	if len(msgs) != 3 {
 		t.Fatalf("derived %d messages, want 3: %+v", len(msgs), msgs)
 	}
-	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "S" {
+	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "S" {
 		t.Fatalf("msg0 = %+v, want summary user", msgs[0])
 	}
-	if msgs[1].Content != "q3" || msgs[2].Content != "a3" {
+	if msgs[1].Text() != "q3" || msgs[2].Text() != "a3" {
 		t.Fatalf("retained tail = %+v, want q3/a3", msgs[1:])
 	}
 }
@@ -227,8 +227,8 @@ func TestRetainTurnsKeepsTail(t *testing.T) {
 		t.Fatalf("derived %d messages, want %d: %+v", len(msgs), len(want), msgs)
 	}
 	for i, w := range want {
-		if msgs[i].Content != w {
-			t.Fatalf("msg %d = %q, want %q", i, msgs[i].Content, w)
+		if msgs[i].Text() != w {
+			t.Fatalf("msg %d = %q, want %q", i, msgs[i].Text(), w)
 		}
 	}
 }
@@ -356,20 +356,20 @@ func TestSummaryContextIsShadowedPart(t *testing.T) {
 		t.Fatalf("msg0 role = %q, want system", msgs[0].Role)
 	}
 	want := []llm.Message{
-		{Role: llm.RoleUser, Content: "q1"},
-		{Role: llm.RoleAssistant, Content: "a1"},
-		{Role: llm.RoleUser, Content: "q2"},
-		{Role: llm.RoleAssistant, Content: "a2"},
+		{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text("q1")}},
+		{Role: llm.RoleAssistant, Content: []llm.ContentBlock{llm.Text("a1")}},
+		{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text("q2")}},
+		{Role: llm.RoleAssistant, Content: []llm.ContentBlock{llm.Text("a2")}},
 	}
 	for i := range want {
-		if msgs[i+1].Role != want[i].Role || msgs[i+1].Content != want[i].Content {
+		if msgs[i+1].Role != want[i].Role || msgs[i+1].Text() != want[i].Text() {
 			t.Fatalf("shadowed msg %d = %+v, want %+v", i, msgs[i+1], want[i])
 		}
 	}
 	// The retained tail must not leak into the summary context.
 	var sb strings.Builder
 	for _, m := range msgs[1:] {
-		sb.WriteString(m.Content)
+		sb.WriteString(m.Text())
 	}
 	if strings.Contains(sb.String(), "q3") {
 		t.Fatalf("retained tail leaked into summary context: %+v", msgs[1:])
@@ -535,7 +535,7 @@ func TestCompactRegionClampsToLogBounds(t *testing.T) {
 		t.Fatalf("shadowed range = %v, want [1 6]", res.ShadowedRange)
 	}
 	msgs := sess.DeriveHistory()
-	if len(msgs) != 1 || msgs[0].Content != "S" {
+	if len(msgs) != 1 || msgs[0].Text() != "S" {
 		t.Fatalf("derived = %+v, want a single summary", msgs)
 	}
 }

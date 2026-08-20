@@ -252,7 +252,7 @@ func (e *BasicEngine) estimateTokens(sess SessionLike) int {
 func (e *BasicEngine) estimateMessages(msgs []llm.Message) int {
 	total := 0
 	for _, m := range msgs {
-		total += e.est(m.Content)
+		total += e.est(m.Text())
 		for _, tc := range m.ToolCalls {
 			total += e.est(tc.Name) + e.est(tc.Arguments)
 		}
@@ -279,7 +279,7 @@ func (e *BasicEngine) summarize(ctx context.Context, msgs []llm.Message) (string
 		return "", errors.New("compaction: llm required for summary")
 	}
 	full := make([]llm.Message, 0, len(msgs)+1)
-	full = append(full, llm.Message{Role: llm.RoleSystem, Content: summarySystemPrompt})
+	full = append(full, llm.Message{Role: llm.RoleSystem, Content: []llm.ContentBlock{llm.Text(summarySystemPrompt)}})
 	full = append(full, msgs...)
 	reader, err := e.opts.LLM.Stream(ctx, llm.ChatRequest{Model: e.opts.Model, Messages: full})
 	if err != nil {

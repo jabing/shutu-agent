@@ -110,7 +110,7 @@ func TestReplayEventsConsistent(t *testing.T) {
 		t.Fatalf("derived history len = %d, want %d", len(h2), len(h1))
 	}
 	for i := range h1 {
-		if h1[i].Role != h2[i].Role || h1[i].Content != h2[i].Content {
+		if h1[i].Role != h2[i].Role || h1[i].Text() != h2[i].Text() {
 			t.Errorf("history %d: got %+v, want %+v", i, h2[i], h1[i])
 		}
 	}
@@ -166,7 +166,7 @@ func TestMultiSessionRestore(t *testing.T) {
 		t.Fatalf("restore A: %v", err)
 	}
 	h := la.DeriveHistory()
-	if len(h) != 1 || h[0].Role != llm.RoleUser || h[0].Content != "hello A" {
+	if len(h) != 1 || h[0].Role != llm.RoleUser || h[0].Text() != "hello A" {
 		t.Errorf("session A history = %+v", h)
 	}
 }

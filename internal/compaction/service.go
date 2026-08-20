@@ -78,6 +78,7 @@ type Engine interface {
 
 type assistantPayload struct {
 	Text      string         `json:"text"`
+	Reasoning string         `json:"reasoning,omitempty"` // M8: folded into a reasoning block like session.derive
 	ToolCalls []llm.ToolCall `json:"toolCalls,omitempty"`
 }
 
@@ -244,25 +245,31 @@ func shadowedHistory(events []session.Event, start, end int64) []llm.Message {
 			if json.Unmarshal(ev.Data, &d) != nil {
 				continue
 			}
-			out = append(out, llm.Message{Role: llm.RoleUser, Content: d.Text})
+			out = append(out, llm.Message{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text(d.Text)}})
 		case session.EventAssistantMessage:
 			var d assistantPayload
 			if json.Unmarshal(ev.Data, &d) != nil {
 				continue
 			}
-			out = append(out, llm.Message{Role: llm.RoleAssistant, Content: d.Text, ToolCalls: d.ToolCalls})
+			// Mirror session.derive: reasoning block before the text block.
+			content := make([]llm.ContentBlock, 0, 2)
+			if d.Reasoning != "" {
+				content = append(content, llm.ContentBlock{Kind: llm.BlockReasoning, Text: d.Reasoning})
+			}
+			content = append(content, llm.Text(d.Text))
+			out = append(out, llm.Message{Role: llm.RoleAssistant, Content: content, ToolCalls: d.ToolCalls})
 		case session.EventToolResult:
 			var d toolResultPayload
 			if json.Unmarshal(ev.Data, &d) != nil {
 				continue
 			}
-			out = append(out, llm.Message{Role: llm.RoleTool, ToolCallID: d.CallID, Content: d.Output})
+			out = append(out, llm.Message{Role: llm.RoleTool, ToolCallID: d.CallID, Content: []llm.ContentBlock{llm.Text(d.Output)}})
 		case session.EventToolError:
 			var d toolErrorPayload
 			if json.Unmarshal(ev.Data, &d) != nil {
 				continue
 			}
-			out = append(out, llm.Message{Role: llm.RoleTool, ToolCallID: d.CallID, Content: "Error: " + d.Error})
+			out = append(out, llm.Message{Role: llm.RoleTool, ToolCallID: d.CallID, Content: []llm.ContentBlock{llm.Text("Error: " + d.Error)}})
 		}
 	}
 	return out

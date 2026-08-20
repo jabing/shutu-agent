@@ -210,8 +210,8 @@ func callExtractionModel(ctx context.Context, client llm.LLM, model, system, pay
 	reader, err := client.Stream(ctx, llm.ChatRequest{
 		Model: model,
 		Messages: []llm.Message{
-			{Role: llm.RoleSystem, Content: system},
-			{Role: llm.RoleUser, Content: payload},
+			{Role: llm.RoleSystem, Content: []llm.ContentBlock{llm.Text(system)}},
+			{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text(payload)}},
 		},
 	})
 	if err != nil {

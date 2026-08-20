@@ -31,10 +31,10 @@ func TestRunPreStepInjectorsInOrder(t *testing.T) {
 		PreStep: []PreStepInjector{
 			{Name: "kb", Inject: func(ctx context.Context, userText string) []llm.Message {
 				seenUserText = userText
-				return []llm.Message{{Role: llm.RoleUser, Content: "ctx-a"}}
+				return []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text("ctx-a")}}}
 			}},
 			{Name: "skills", Inject: func(ctx context.Context, userText string) []llm.Message {
-				return []llm.Message{{Role: llm.RoleUser, Content: "ctx-b"}}
+				return []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text("ctx-b")}}}
 			}},
 		},
 	})
@@ -52,8 +52,8 @@ func TestRunPreStepInjectorsInOrder(t *testing.T) {
 	if len(msgs) != 4 {
 		t.Fatalf("first request messages = %+v, want system + ctx-a + ctx-b + user", msgs)
 	}
-	if msgs[0].Role != llm.RoleSystem || msgs[1].Role != llm.RoleUser || msgs[1].Content != "ctx-a" ||
-		msgs[2].Role != llm.RoleUser || msgs[2].Content != "ctx-b" || msgs[3].Role != llm.RoleUser {
+	if msgs[0].Role != llm.RoleSystem || msgs[1].Role != llm.RoleUser || msgs[1].Text() != "ctx-a" ||
+		msgs[2].Role != llm.RoleUser || msgs[2].Text() != "ctx-b" || msgs[3].Role != llm.RoleUser {
 		t.Fatalf("first request messages out of order: %+v", msgs)
 	}
 }
@@ -83,7 +83,7 @@ func TestRunPreStepInjectedIntoFirstRequestOnly(t *testing.T) {
 		Model:  "deepseek-chat",
 		PreStep: []PreStepInjector{{Name: "ctx", Inject: func(ctx context.Context, userText string) []llm.Message {
 			injectCalls++
-			return []llm.Message{{Role: llm.RoleUser, Content: "KEEP-ME"}}
+			return []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text("KEEP-ME")}}}
 		}}},
 	})
 
@@ -97,11 +97,11 @@ func TestRunPreStepInjectedIntoFirstRequestOnly(t *testing.T) {
 		t.Fatalf("llm calls = %d, want 2", len(model.calls))
 	}
 	first := model.calls[0].Messages
-	if len(first) < 3 || first[0].Role != llm.RoleSystem || first[1].Content != "KEEP-ME" {
+	if len(first) < 3 || first[0].Role != llm.RoleSystem || first[1].Text() != "KEEP-ME" {
 		t.Fatalf("first request messages = %+v, want system + injected + user history", first)
 	}
 	for _, m := range model.calls[1].Messages {
-		if strings.Contains(m.Content, "KEEP-ME") {
+		if strings.Contains(m.Text(), "KEEP-ME") {
 			t.Fatalf("second request must not carry the pre-step context: %+v", model.calls[1].Messages)
 		}
 	}
@@ -121,10 +121,10 @@ func TestRunRecallRunsBeforePreStep(t *testing.T) {
 		Prompt: prompt.New("You are helpful."),
 		Model:  "deepseek-chat",
 		Recall: func(ctx context.Context, userText string) []llm.Message {
-			return []llm.Message{{Role: llm.RoleUser, Content: "recall-msg"}}
+			return []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text("recall-msg")}}}
 		},
 		PreStep: []PreStepInjector{{Name: "extra", Inject: func(ctx context.Context, userText string) []llm.Message {
-			return []llm.Message{{Role: llm.RoleUser, Content: "extra-msg"}}
+			return []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text("extra-msg")}}}
 		}}},
 	})
 
@@ -135,7 +135,7 @@ func TestRunRecallRunsBeforePreStep(t *testing.T) {
 	if len(msgs) != 4 {
 		t.Fatalf("first request messages = %+v, want system + recall-msg + extra-msg + user", msgs)
 	}
-	if msgs[1].Content != "recall-msg" || msgs[2].Content != "extra-msg" {
+	if msgs[1].Text() != "recall-msg" || msgs[2].Text() != "extra-msg" {
 		t.Fatalf("recall must precede pre-step injectors: %+v", msgs)
 	}
 }
@@ -155,7 +155,7 @@ func TestRunPreStepBudgetTruncation(t *testing.T) {
 		Prompt: prompt.New("You are helpful."),
 		Model:  "deepseek-chat",
 		PreStep: []PreStepInjector{{Name: "big", Inject: func(ctx context.Context, userText string) []llm.Message {
-			return []llm.Message{{Role: llm.RoleUser, Content: big}}
+			return []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text(big)}}}
 		}}},
 	})
 
@@ -166,7 +166,7 @@ func TestRunPreStepBudgetTruncation(t *testing.T) {
 	if len(msgs) != 3 {
 		t.Fatalf("first request messages = %+v, want system + truncated + user", msgs)
 	}
-	got := msgs[1].Content
+	got := msgs[1].Text()
 	if utf8.RuneCountInString(got) != maxInjectorChars {
 		t.Fatalf("truncated content has %d runes, want %d", utf8.RuneCountInString(got), maxInjectorChars)
 	}
@@ -196,8 +196,8 @@ func TestRunPreStepAggregateBudget(t *testing.T) {
 		Model:  "deepseek-chat",
 		PreStep: []PreStepInjector{{Name: "multi", Inject: func(ctx context.Context, userText string) []llm.Message {
 			return []llm.Message{
-				{Role: llm.RoleUser, Content: first},
-				{Role: llm.RoleUser, Content: second},
+				{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text(first)}},
+				{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text(second)}},
 			}
 		}}},
 	})
@@ -209,16 +209,16 @@ func TestRunPreStepAggregateBudget(t *testing.T) {
 	if len(msgs) != 4 {
 		t.Fatalf("first request messages = %+v, want system + first(whole) + second(truncated) + user", msgs)
 	}
-	if msgs[1].Content != first {
-		t.Fatalf("first message must be kept whole, got %d runes", utf8.RuneCountInString(msgs[1].Content))
+	if msgs[1].Text() != first {
+		t.Fatalf("first message must be kept whole, got %d runes", utf8.RuneCountInString(msgs[1].Text()))
 	}
 	// 3000 + 1000 = 4000 budget; the second message is truncated to the remainder.
-	if utf8.RuneCountInString(msgs[2].Content) != maxInjectorChars-3000 {
+	if utf8.RuneCountInString(msgs[2].Text()) != maxInjectorChars-3000 {
 		t.Fatalf("second message truncated to %d runes, want %d",
-			utf8.RuneCountInString(msgs[2].Content), maxInjectorChars-3000)
+			utf8.RuneCountInString(msgs[2].Text()), maxInjectorChars-3000)
 	}
-	if msgs[2].Content != second[:maxInjectorChars-3000] {
-		t.Fatalf("second message must be the UTF-8-safe head: %q", msgs[2].Content)
+	if msgs[2].Text() != second[:maxInjectorChars-3000] {
+		t.Fatalf("second message must be the UTF-8-safe head: %q", msgs[2].Text())
 	}
 }
 
@@ -240,7 +240,7 @@ func TestRunPreStepPanicContained(t *testing.T) {
 				panic("injector exploded")
 			}},
 			{Name: "ok", Inject: func(ctx context.Context, userText string) []llm.Message {
-				return []llm.Message{{Role: llm.RoleUser, Content: "after-boom"}}
+				return []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text("after-boom")}}}
 			}},
 		},
 	})
@@ -249,7 +249,7 @@ func TestRunPreStepPanicContained(t *testing.T) {
 		t.Fatalf("run must survive an injector panic, got %v", err)
 	}
 	msgs := model.calls[0].Messages
-	if len(msgs) != 3 || msgs[1].Content != "after-boom" {
+	if len(msgs) != 3 || msgs[1].Text() != "after-boom" {
 		t.Fatalf("panicking injector must be skipped and the rest kept: %+v", msgs)
 	}
 }

@@ -114,9 +114,9 @@ func TestExtractCreatesAndIsSearchable(t *testing.T) {
 			model.calls[0].Messages[1].Role != llm.RoleUser {
 			t.Fatalf("extraction call = %+v", model.calls)
 		}
-		if !strings.Contains(model.calls[0].Messages[1].Content, "周末不工作") ||
-			!strings.Contains(model.calls[0].Messages[1].Content, "conversation") {
-			t.Fatalf("extraction frame lacks the conversation: %s", model.calls[0].Messages[1].Content)
+		if !strings.Contains(model.calls[0].Messages[1].Text(), "周末不工作") ||
+			!strings.Contains(model.calls[0].Messages[1].Text(), "conversation") {
+			t.Fatalf("extraction frame lacks the conversation: %s", model.calls[0].Messages[1].Text())
 		}
 	})
 }

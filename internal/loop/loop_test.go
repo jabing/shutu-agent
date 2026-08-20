@@ -109,7 +109,7 @@ func TestRunSimpleAnswerNoTools(t *testing.T) {
 	if msgs[0].Role != llm.RoleSystem {
 		t.Fatalf("first message role = %v, want system", msgs[0].Role)
 	}
-	if len(msgs) < 2 || msgs[1].Role != llm.RoleUser || msgs[1].Content != "hello" {
+	if len(msgs) < 2 || msgs[1].Role != llm.RoleUser || msgs[1].Text() != "hello" {
 		t.Fatalf("messages = %+v", msgs)
 	}
 }
@@ -229,7 +229,7 @@ func TestRunRecallHookInjectedIntoFirstRequestOnly(t *testing.T) {
 			if userText != "what time is it" {
 				t.Errorf("recall received userText %q, want %q", userText, "what time is it")
 			}
-			return []llm.Message{{Role: llm.RoleUser, Content: "KB snippet: <架构决策记录>"}}
+			return []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text("KB snippet: <架构决策记录>")}}}
 		},
 	})
 
@@ -243,11 +243,11 @@ func TestRunRecallHookInjectedIntoFirstRequestOnly(t *testing.T) {
 		t.Fatalf("llm calls = %d, want 2", len(model.calls))
 	}
 	first := model.calls[0].Messages
-	if len(first) < 3 || first[0].Role != llm.RoleSystem || first[1].Role != llm.RoleUser || first[1].Content != "KB snippet: <架构决策记录>" || first[2].Role != llm.RoleUser {
+	if len(first) < 3 || first[0].Role != llm.RoleSystem || first[1].Role != llm.RoleUser || first[1].Text() != "KB snippet: <架构决策记录>" || first[2].Role != llm.RoleUser {
 		t.Fatalf("first request messages = %+v, want system + recall + user history", first)
 	}
 	for _, m := range model.calls[1].Messages {
-		if strings.Contains(m.Content, "KB snippet") {
+		if strings.Contains(m.Text(), "KB snippet") {
 			t.Fatalf("second request must not carry the recall: %+v", model.calls[1].Messages)
 		}
 	}

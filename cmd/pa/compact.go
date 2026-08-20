@@ -43,7 +43,7 @@ type compactionEstimator func(log *session.Log) int
 func defaultCompactionEstimator(log *session.Log) int {
 	total := 0
 	for _, m := range log.DeriveHistory() {
-		total += len(m.Content) / 4
+		total += len(m.Text()) / 4
 		for _, tc := range m.ToolCalls {
 			total += len(tc.Name)/4 + len(tc.Arguments)/4
 		}
@@ -136,7 +136,7 @@ func (a *app) compactionPreStep(est compactionEstimator) func(context.Context, s
 		if res == nil {
 			return nil
 		}
-		return []llm.Message{{Role: llm.RoleUser, Content: compactedNotice}}
+		return []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text(compactedNotice)}}}
 	}
 }
 

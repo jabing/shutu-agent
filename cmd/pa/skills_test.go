@@ -226,7 +226,7 @@ func TestSkillCatalogInjectorInjectsAndLogs(t *testing.T) {
 	if len(msgs) != 1 || msgs[0].Role != llm.RoleUser {
 		t.Fatalf("injected = %+v, want exactly one user catalog message", msgs)
 	}
-	content := msgs[0].Content
+	content := msgs[0].Text()
 	if !strings.Contains(content, "- alpha: alpha desc") || !strings.Contains(content, "- beta: beta desc") {
 		t.Fatalf("catalog = %q, want sorted name+description lines", content)
 	}
@@ -271,10 +271,10 @@ func TestSkillCatalogInjectorBoundApplied(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("injected = %+v, want one message", msgs)
 	}
-	if got := utf8.RuneCountInString(msgs[0].Content); got > 14 {
+	if got := utf8.RuneCountInString(msgs[0].Text()); got > 14 {
 		t.Fatalf("injected catalog runes = %d, want <= 14 (catalog_max_chars bound)", got)
 	}
-	if !utf8.ValidString(msgs[0].Content) {
+	if !utf8.ValidString(msgs[0].Text()) {
 		t.Fatal("injected catalog is not valid UTF-8")
 	}
 }
@@ -346,7 +346,7 @@ func TestLoopPreStepSkillCatalog(t *testing.T) {
 	first := model.calls[0].Messages
 	var catalogSeen bool
 	for _, m := range first {
-		if strings.Contains(m.Content, "review-bash") && strings.Contains(m.Content, "review bash scripts") {
+		if strings.Contains(m.Text(), "review-bash") && strings.Contains(m.Text(), "review bash scripts") {
 			catalogSeen = true
 		}
 	}

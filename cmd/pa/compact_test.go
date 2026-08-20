@@ -23,7 +23,7 @@ import (
 func byteTokens(log *session.Log) int {
 	total := 0
 	for _, m := range log.DeriveHistory() {
-		total += len(m.Content)
+		total += len(m.Text())
 		for _, tc := range m.ToolCalls {
 			total += len(tc.Name) + len(tc.Arguments)
 		}
@@ -277,7 +277,7 @@ func TestCompactCommandEnabledCompactsAndLogs(t *testing.T) {
 	}
 	// The folded history substitutes the summary for the shadowed prefix.
 	msgs := app.log.DeriveHistory()
-	if len(msgs) != 3 || msgs[0].Content != "S" || msgs[1].Content != "q3" || msgs[2].Content != "a3" {
+	if len(msgs) != 3 || msgs[0].Text() != "S" || msgs[1].Text() != "q3" || msgs[2].Text() != "a3" {
 		t.Fatalf("derived = %+v, want [S q3 a3]", msgs)
 	}
 }
@@ -377,11 +377,11 @@ func TestCompactionInjectorTriggersAndLogsExactlyOnce(t *testing.T) {
 	if len(msgs) != 1 || msgs[0].Role != llm.RoleUser {
 		t.Fatalf("injected = %+v, want exactly one user notice", msgs)
 	}
-	if !strings.Contains(msgs[0].Content, "compacted") {
-		t.Fatalf("notice content = %q, want a compacted hint", msgs[0].Content)
+	if !strings.Contains(msgs[0].Text(), "compacted") {
+		t.Fatalf("notice content = %q, want a compacted hint", msgs[0].Text())
 	}
-	if strings.Contains(msgs[0].Content, "summary:") || msgs[0].Content == "S" {
-		t.Fatalf("injected content must not be the summary body: %q", msgs[0].Content)
+	if strings.Contains(msgs[0].Text(), "summary:") || msgs[0].Text() == "S" {
+		t.Fatalf("injected content must not be the summary body: %q", msgs[0].Text())
 	}
 	// The summary marker landed (D1: old events stay, the marker shadows them).
 	if _, ok := markerRange(t, app.log); !ok {
@@ -403,7 +403,7 @@ func TestCompactionInjectorTriggersAndLogsExactlyOnce(t *testing.T) {
 	}
 	// The model-visible history is folded: summary substitutes the prefix.
 	msgsD := app.log.DeriveHistory()
-	if len(msgsD) != 3 || msgsD[0].Content != "S" || msgsD[1].Content != "q3" || msgsD[2].Content != "a3" {
+	if len(msgsD) != 3 || msgsD[0].Text() != "S" || msgsD[1].Text() != "q3" || msgsD[2].Text() != "a3" {
 		t.Fatalf("derived = %+v, want [S q3 a3]", msgsD)
 	}
 }
@@ -530,11 +530,11 @@ func TestLoopPreStepAutoCompacts(t *testing.T) {
 	var noticeSeen, summarySeen, userSeen bool
 	for _, m := range req {
 		switch {
-		case m.Content == "hello":
+		case m.Text() == "hello":
 			userSeen = true
-		case m.Content == "S":
+		case m.Text() == "S":
 			summarySeen = true
-		case strings.Contains(m.Content, "compacted"):
+		case strings.Contains(m.Text(), "compacted"):
 			noticeSeen = true
 		}
 	}
