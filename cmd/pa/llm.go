@@ -116,9 +116,11 @@ func llmCredentialEnv(id string) string {
 }
 
 // llmStatus prints the /llm-status report (dispatch-m8-2 §6, 照 /kb-status
-// 风格): the selected provider (marked *), every registered provider with its
-// availability, and the input modalities (text). An unconfigured provider (key
-// absent / bad base_url) is shown as unavailable.
+// 风格; M8-3 §4 adds modalities + multimodal): the selected provider (marked *),
+// every registered provider with its availability, the input modalities
+// (cfg.LLM.ModelInputModalities: text / text,image), and the multimodal gate
+// (enabled|disabled, D10). An unconfigured provider (key absent / bad base_url)
+// is shown as unavailable.
 func (a *app) llmStatus() error {
 	if a.llmReg == nil {
 		fmt.Println("llm: no provider registry (registerLLM did not run)")
@@ -137,8 +139,25 @@ func (a *app) llmStatus() error {
 		}
 		fmt.Printf("%s%s: %s (model=%s)\n", marker, p.ID(), avail, llmProviderModel(a.cfg, p.ID()))
 	}
-	fmt.Println("  modalities: text")
+	fmt.Printf("  modalities: %s\n", llmModalitiesValue(a.cfg))
+	mm := "disabled"
+	if a.cfg.LLM.Multimodal.Enabled {
+		mm = "enabled"
+	}
+	fmt.Printf("  multimodal: %s\n", mm)
 	return nil
+}
+
+// llmModalitiesValue returns the effective model_input_modalities declaration,
+// falling back to the default "text" when the config field is empty (the
+// applyDefaults path always fills it, but direct-constructed configs in tests
+// and defensive callers read the fallback). /llm-status and printHelp display
+// it (dispatch-m8-3 §3/§4: "text" | "text,image").
+func llmModalitiesValue(cfg config.Config) string {
+	if cfg.LLM.ModelInputModalities == "" {
+		return config.DefaultModelInputModalities
+	}
+	return cfg.LLM.ModelInputModalities
 }
 
 // llmProviderModel returns the configured model for provider id: the legacy

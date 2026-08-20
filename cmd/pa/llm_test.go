@@ -156,6 +156,9 @@ func TestLLMStatusOutput(t *testing.T) {
 	if !strings.Contains(out, "modalities: text") {
 		t.Errorf("output missing modalities line: %q", out)
 	}
+	if !strings.Contains(out, "multimodal: disabled") {
+		t.Errorf("output missing multimodal disabled line (D10 default): %q", out)
+	}
 }
 
 // TestLLMStatusShowsUnavailableProvider verifies an unconfigured (keyless)
@@ -294,5 +297,63 @@ func TestLLMStatusShowsAnthropic(t *testing.T) {
 	}
 	if !strings.Contains(out, "modalities: text") {
 		t.Errorf("output missing modalities line: %q", out)
+	}
+}
+
+// TestLLMStatusMultimodalEnabled verifies the M8-3 /llm-status additions
+// (dispatch-m8-3 §4): the modalities line reflects cfg.LLM.ModelInputModalities
+// (text,image here) and the multimodal line reports enabled when
+// llm.multimodal.enabled is true (vs the disabled default elsewhere).
+func TestLLMStatusMultimodalEnabled(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	a := &app{
+		cfg: config.Config{
+			Model: "deepseek-chat",
+			LLM: config.LLMConfig{
+				Provider:             "deepseek",
+				ModelInputModalities: "text,image",
+				Multimodal:           config.MultimodalConfig{Enabled: true, MaxImageBytes: 1 << 20},
+			},
+		},
+	}
+	if err := a.registerLLM(); err != nil {
+		t.Fatalf("registerLLM: %v", err)
+	}
+	out := captureStdout(func() {
+		if err := a.llmStatus(); err != nil {
+			t.Errorf("llmStatus: %v", err)
+		}
+	})
+	if !strings.Contains(out, "modalities: text,image") {
+		t.Errorf("output missing modalities text,image line: %q", out)
+	}
+	if !strings.Contains(out, "multimodal: enabled") {
+		t.Errorf("output missing multimodal enabled line: %q", out)
+	}
+}
+
+// TestLLMStatusMultimodalDisabledDefault verifies the D10 default shows
+// multimodal: disabled even when a provider is registered and running.
+func TestLLMStatusMultimodalDisabledDefault(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	a := &app{
+		cfg: config.Config{
+			Model: "deepseek-chat",
+			LLM:   config.LLMConfig{Provider: "deepseek"},
+		},
+	}
+	if err := a.registerLLM(); err != nil {
+		t.Fatalf("registerLLM: %v", err)
+	}
+	out := captureStdout(func() {
+		if err := a.llmStatus(); err != nil {
+			t.Errorf("llmStatus: %v", err)
+		}
+	})
+	if !strings.Contains(out, "multimodal: disabled") {
+		t.Errorf("output missing multimodal disabled line: %q", out)
+	}
+	if !strings.Contains(out, "modalities: text") {
+		t.Errorf("output missing modalities text line (fallback default): %q", out)
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"personal-agent/internal/attachment"
 	"personal-agent/internal/code"
 	"personal-agent/internal/compaction"
 	"personal-agent/internal/config"
@@ -109,6 +110,12 @@ func main() {
 	// and kb extraction all consume (D2). It must run before registerSubagent /
 	// registerCompaction / registerKB, which read a.llm at wiring time.
 	if err := app.registerLLM(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
+	// M8-3: wire the image-attachment store — under <data_dir>/attachments/ —
+	// when llm.multimodal.enabled (默认关 D10). disabled ⇒ /attach unavailable.
+	if err := app.registerAttachments(); err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
 	}
@@ -312,7 +319,11 @@ type app struct {
 	// builds it and injects the selected provider into llm; /llm-status reads
 	// it. Non-nil only after registerLLM succeeds.
 	llmReg *llm.Registry
-	kb     kb.KB // nil when kb disabled (D10)
+	// attachStore is the M8-3 image-attachment store (dispatch-m8-3 §4): created
+	// by registerAttachments only when llm.multimodal.enabled; nil when disabled
+	// (D10) — /attach then errors.
+	attachStore *attachment.Store
+	kb          kb.KB // nil when kb disabled (D10)
 
 	currentID string
 	log       *session.Log
@@ -522,6 +533,8 @@ func (a *app) command(ctx context.Context, line string) error {
 		return a.kbReindex(ctx)
 	case "/llm-status":
 		return a.llmStatus()
+	case "/attach":
+		return a.attachCommand(ctx, fields[1:])
 	case "/compact":
 		return a.compactCommand(ctx, fields[1:])
 	default:
@@ -539,6 +552,7 @@ func (a *app) printHelp() {
   /kb-status        knowledge-base status (entries / db size / recent writes)
   /kb-reindex       rebuild the knowledge-base FTS index
   /llm-status       LLM provider status (provider / model / modalities)
+  /attach <path>    attach an image file as a multimodal user message (M8-3)
   /compact          compact the session now (fold old context into a summary)
   /compact region <start> <end>  compact only the given surface event range
   /help             show this command table
@@ -546,8 +560,13 @@ func (a *app) printHelp() {
   anything else     send to the agent as a message
 
 startup:  pa [--config <path>]   config defaults to config.yaml`)
-	fmt.Printf("llm: provider=%s model=%s modalities=text\n",
-		a.cfg.LLM.Provider, llmProviderModel(a.cfg, a.cfg.LLM.Provider))
+	fmt.Printf("llm: provider=%s model=%s modalities=%s\n",
+		a.cfg.LLM.Provider, llmProviderModel(a.cfg, a.cfg.LLM.Provider), llmModalitiesValue(a.cfg))
+	if a.cfg.LLM.Multimodal.Enabled {
+		fmt.Printf("multimodal: enabled (max_image_bytes=%d)\n", a.cfg.LLM.Multimodal.MaxImageBytes)
+	} else {
+		fmt.Println("multimodal: disabled (llm.multimodal.enabled=false)")
+	}
 	fmt.Printf("enabled tools: %s\n", strings.Join(a.cfg.Tools.Enabled, ", "))
 	if a.cfg.KB.Enabled {
 		fmt.Printf("knowledge base: enabled (db=%s, recall_limit=%d, catalog=%v)\n",

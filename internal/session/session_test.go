@@ -1790,3 +1790,64 @@ func TestDeriveHistoryOldFormatReplayNoRegression(t *testing.T) {
 		t.Fatalf("old tool = %+v, want the plain output preserved", msgs[2])
 	}
 }
+
+// M8-3: NewUserMessageWithBlocks logs a user/message whose content carries an
+// image block holding only the ImageRef — never the image bytes — and
+// DeriveHistory folds that back into a model-visible user message with the
+// image block intact (dispatch-m8-3 §4/§5: 事件 data 含 image block 且只有 ImageRef
+// 无字节).
+func TestNewUserMessageWithBlocksImageRefOnly(t *testing.T) {
+	ref := llm.ImageRef{
+		ID:        "a1b2c3",
+		MediaType: "image/png",
+		Bytes:     16,
+		Width:     0,
+		Height:    0,
+		Path:      "attachments/a1b2c3.png",
+	}
+	payload := NewUserMessageWithBlocks("", []llm.ContentBlock{{Kind: llm.BlockImage, Image: ref}})
+
+	// The payload marshals the image block as a ref-only shape (no bytes, no
+	// base64, no data field — ContentBlock carries no byte payload).
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(raw)
+	for _, forbidden := range []string{"base64", "dataURL"} {
+		if strings.Contains(s, forbidden) {
+			t.Fatalf("user/message payload must not carry image bytes (found %q): %s", forbidden, s)
+		}
+	}
+	var d userMessageData
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(d.Content) != 1 || d.Content[0].Kind != llm.BlockImage {
+		t.Fatalf("content = %+v, want one image block", d.Content)
+	}
+	if d.Content[0].Image != ref {
+		t.Fatalf("image = %+v, want ref %+v", d.Content[0].Image, ref)
+	}
+
+	// Append + derive: the block folds back into a user message with the image
+	// block intact, and HasImage() reports it.
+	l := New()
+	if _, err := l.Append(EventUserMessage, payload); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	msgs := l.DeriveHistory()
+	if len(msgs) != 1 {
+		t.Fatalf("derived %d messages, want 1", len(msgs))
+	}
+	m := msgs[0]
+	if m.Role != llm.RoleUser {
+		t.Fatalf("role = %v, want user", m.Role)
+	}
+	if !m.HasImage() {
+		t.Fatal("derived message must have an image block")
+	}
+	if len(m.Content) != 1 || m.Content[0].Kind != llm.BlockImage || m.Content[0].Image != ref {
+		t.Fatalf("derived content = %+v, want the image ref block", m.Content)
+	}
+}

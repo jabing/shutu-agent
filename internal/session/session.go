@@ -467,6 +467,17 @@ type toolErrorData struct {
 // NewUserMessage builds the user/message payload.
 func NewUserMessage(text string) any { return userMessageData{Text: text} }
 
+// NewUserMessageWithBlocks builds a user/message payload carrying explicit
+// content blocks (M8-3, /attach; dispatch-m8-3 §4): the image attachment lands
+// as an image block carrying only its ImageRef — never the image bytes (dsh
+// 7078918: 落库只存引用). text is the optional accompanying plain text ("" for a
+// pure /attach). derive() prefers Content blocks over Text when folding (M8-1
+// reservation), so a later request replays the image ref into the model-visible
+// history. Constructed in the same New* style as NewAssistantMessage.
+func NewUserMessageWithBlocks(text string, blocks []llm.ContentBlock) any {
+	return userMessageData{Text: text, Content: blocks}
+}
+
 // NewUserMessageReplace builds a user/message payload for a compaction summary
 // (M5c, 决策 ③): it carries the summary text plus a surfaceOp.replace marker
 // shadowing the surface events whose Seq is in [start, end]. derive() then
