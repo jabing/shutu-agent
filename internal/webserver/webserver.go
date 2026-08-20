@@ -15,7 +15,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -169,24 +171,59 @@ func (s *Server) Handlers() InteractiveHandlers {
 	return InteractiveHandlers{Message: s.msgFn, Session: s.sessFn, Event: s.evSrc, Config: s.cfgFn}
 }
 
+// panicSafeWriter tracks whether a response has started so a deferred recover
+// can decide if it may still write a 500 body (writing after the header was
+// sent panics again). It also forwards Flush for the SSE stream.
+type panicSafeWriter struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (w *panicSafeWriter) WriteHeader(code int) {
+	w.wrote = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *panicSafeWriter) Write(b []byte) (int, error) {
+	w.wrote = true
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *panicSafeWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // requireAuth wraps an /api handler with the bearer-token check (D-WEB-2): the
 // presented token's SHA-256 must match the stored digest under a constant-time
 // compare. Only the API routes are gated; the static shell stays public so the
-// login view can load (data never leaves the API).
+// login view can load (data never leaves the API). It also recovers a panicking
+// handler into a JSON 500 (M10 W3 robustness): a crashed route must never
+// answer a bare connection reset, and the panic + stack is logged for repair.
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sw := &panicSafeWriter{ResponseWriter: w}
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("pa: web handler panic: %v\n%s", rec, debug.Stack())
+				if !sw.wrote {
+					writeJSON(sw, http.StatusInternalServerError, map[string]any{"error": fmt.Sprintf("internal error: %v", rec)})
+				}
+			}
+		}()
 		auth := r.Header.Get("Authorization")
 		const prefix = "Bearer "
 		if !strings.HasPrefix(auth, prefix) {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			writeJSON(sw, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 			return
 		}
 		sum := sha256.Sum256([]byte(strings.TrimPrefix(auth, prefix)))
 		if subtle.ConstantTimeCompare(sum[:], s.tokenHash[:]) != 1 {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			writeJSON(sw, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 			return
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(sw, r)
 	})
 }
 

@@ -313,3 +313,55 @@ func TestWebConfigRedacts(t *testing.T) {
 		t.Fatalf("wired cfgFn returned model %v, want deepseek-chat", got["model"])
 	}
 }
+
+// TestWebSessionNewThenMessageAfterRequestCtxCancelled is the M10 W3 regression
+// for the real-smoke catch: the persist sink must survive the request ctx that
+// created/resumed the session. webSessionManager/webMessage run with an HTTP
+// request ctx (r.Context()) that is cancelled the instant its handler returns;
+// if the sink captured that ctx, every later append failed with "store: begin
+// append: context canceled" and the web message returned 500. The sink persists
+// under the process-level baseCtx (Background in tests), so a later message
+// still lands.
+func TestWebSessionNewThenMessageAfterRequestCtxCancelled(t *testing.T) {
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := makeTurnApp()
+	a.store = st
+	a.baseCtx = context.Background() // the process-lifetime ctx (main sets it)
+	a.currentID = ""
+
+	// Simulate POST /api/sessions: a request-scoped ctx that is cancelled when
+	// the handler returns (r.Context() semantics).
+	reqCtx, cancel := context.WithCancel(context.Background())
+	sid, err := a.webSessionManager(reqCtx, "new", "")
+	cancel() // handler returned -> r.Context() is now cancelled
+	if err != nil {
+		t.Fatalf("webSessionManager new: %v", err)
+	}
+
+	// A later, unrelated request's message must still persist (the sink must
+	// NOT be bound to the cancelled request ctx).
+	if err := a.webMessage(context.Background(), sid, "hello"); err != nil {
+		t.Fatalf("webMessage after request ctx cancelled: %v (persist sink must use baseCtx)", err)
+	}
+
+	evs, err := st.LoadSession(context.Background(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range []string{session.EventUserMessage, session.EventAssistantChunk, session.EventAssistantMessage} {
+		found := false
+		for _, ev := range evs {
+			if ev.Type == typ {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("store missing %s after message (persist failed under cancelled ctx)", typ)
+		}
+	}
+}

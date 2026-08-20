@@ -51,6 +51,7 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to the configuration file")
+	webOnly := flag.Bool("web-only", false, "serve the web portal only, without the REPL (blocks until interrupted)")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
@@ -112,6 +113,9 @@ func main() {
 		// process lifetime so attachSink can broadcast every persisted event to
 		// the web's SSE subscribers whenever the webserver is enabled.
 		hub: NewEventHub(),
+		// baseCtx = the process-lifetime signal ctx (see the field comment): the
+		// persist sink and the web-only block live as long as the process.
+		baseCtx: ctx,
 	}
 	// M8-2: registerLLM builds the provider registry and injects the selected
 	// provider into a.llm — the single llm.LLM the loop, compaction, subagent
@@ -387,7 +391,18 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
 	}
-	app.repl(ctx)
+	// M10 W3: --web-only serves the portal without the REPL (dsh-style
+	// standalone web). The signal ctx cancels on Ctrl+C/Ctrl+Break; the
+	// deferred webserver.Close shuts the listener so no port lingers.
+	if *webOnly {
+		if app.webserver == nil {
+			fmt.Fprintln(os.Stderr, "pa: --web-only requires web_server.enabled=true in config")
+			os.Exit(1)
+		}
+		<-ctx.Done()
+	} else {
+		app.repl(ctx)
+	}
 }
 
 // app holds the REPL's mutable session state.
@@ -397,6 +412,13 @@ type app struct {
 	reg    *tools.Registry
 	prompt *prompt.Builder
 	llm    llm.LLM
+	// baseCtx is the process-lifetime context (the main signal context). It is
+	// the ctx the persist sink uses (attachSink), decoupled from any HTTP
+	// request ctx: webSessionManager/webMessage pass r.Context() into
+	// newSession/resumeSession, whose handler returns and cancels it — had the
+	// sink captured that, every later append would fail with "context canceled"
+	// (M10 W3 real-smoke catch). It also governs the web-only <-ctx.Done().
+	baseCtx context.Context
 	// llmReg is the M8-2 provider registry (dispatch-m8-2 §6): registerLLM
 	// builds it and injects the selected provider into llm; /llm-status reads
 	// it. Non-nil only after registerLLM succeeds.
@@ -529,10 +551,24 @@ func (a *app) resumeSession(ctx context.Context, id string) error {
 // (M10 W1, ADR D-WEB2-B). Publish is non-blocking and never fails, so the
 // store's error semantics are unchanged: a store error still rolls the event
 // back out of the log.
+// attachSink forwards every appended event to the durable store for the
+// current session (D8: append-on-write, replay at startup). The persist ctx is
+// a.baseCtx — the process-lifetime context, NOT the caller's request ctx —
+// because the sink outlives any single HTTP request (M10 W3): a request ctx
+// is cancelled when its handler returns, which would fail every later append
+// with "context canceled" (real-smoke catch). The passed ctx is ignored for
+// persistence (kept in the signature for the call sites).
 func (a *app) attachSink(ctx context.Context) {
 	id := a.currentID
+	// Persist under the process-lifetime ctx. baseCtx is always set by main;
+	// tests that build an app directly fall back to Background so a nil ctx can
+	// never reach database/sql (which panics on a nil context).
+	pctx := a.baseCtx
+	if pctx == nil {
+		pctx = context.Background()
+	}
 	a.log.SetSink(func(ev session.Event) error {
-		if err := a.store.AppendEvents(ctx, id, []session.Event{ev}); err != nil {
+		if err := a.store.AppendEvents(pctx, id, []session.Event{ev}); err != nil {
 			return err
 		}
 		if a.hub != nil {
