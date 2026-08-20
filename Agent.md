@@ -49,6 +49,8 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 
 **2026-08-20 任务评测接缝列候选（对照 dsh 的闭环差距）**：用户问"Agent 能力实现后能否像 dsh 一样做复杂任务分解/派发/评测"。核对结论：**分解**（M6b plan：goal→plan→todo + `plan_*`）与**派发**（M5b subagent 委托/控制/报告 + M5a jobs 后台 + M6a schedule 定时）**已是完成的闭环**；**评测是真正缺口**——当前只有 子代理自报报告 + 父模型判断 + `interact` 人工审批，**无独立自动评测接缝**（dsh 同样无开箱即用 eval，评测主要报告驱动，非其专有能力）。用户拍板：**记入候选**（编译期接缝，非运行时插件）。设计方向：`eval` 接缝（EvalProvider：规则断言 / LLM judge / 人工回退 + `eval_*` 工具 + `eval/*` 事件 + config 默认关 D10）；**评测标准来源 = `plan_todo` 条目带验收标准字段 → 派发随任务传给子代理 → 评测器对照验收标准**（规则断言优先、LLM judge 兜底、无法自动判定落 `interact` 人工），形成"分解→派发→评测→（不合格重派）"闭环。**建议排期：M9 之后、KB 全量之前**（可在 M8/M9 捎带，因引用 `llm.Message` 与子代理域）。
 
+**2026-08-20 M8-1 段完成（消息模型 content parts + reasoning 落库回传，ADR `docs/decisions/2026-08-20-m8-message-model.md`）**：M8 三段第一段派发并验收通过（dispatch-m8；4 阶段提交 `4fcc57d`/`f3aab40`/`3bcfd35`/`45b6050`）。交付：`internal/llm` `Message.Content` 从 string 升级为 `[]ContentBlock`（text/reasoning/image-ref 预置 + `Text()/SetText()/Reasoning()/HasImage()` helper）；`StreamEvent` 增 `StreamReasoningDelta` + `Finish.Reasoning`；deepseek wire `reasoning_content` 序列化 + SSE `reasoning_content` delta 解析；`assistant/message` 事件增 `reasoning` 载荷、`user/message` 预留 `content` blocks（M8-3）；`DeriveHistory` 折叠 reasoning 前置、旧格式纯字符串回放包 text block（D8）；全使用方一次性迁移（loop/compaction/compact/kb/skills/extract/subagent + 测试断言 `m.Text()`）。验收：vet/build 0、22 包 test 全绿（复跑确认；首跑 cmd/pa kb 测试偶发 flaky，复跑 3 次全绿，判定与 M8-1 无因果）；loop.go turn/step 未动（D4）；零新依赖。**遗留**：kb 既有测试偶发 flaky 现象记录（待复现再深挖）。
+
 ## 4. 路线图
 
 | 里程碑 | 交付物 | 验收标准（达标才算完成） | 状态 |
