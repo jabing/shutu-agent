@@ -61,6 +61,8 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	mux.HandleFunc("GET /static/{file...}", s.handleStatic)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/stats", s.handleStats)
+	mux.HandleFunc("GET /api/kb", s.handleKBStub)
+	mux.HandleFunc("GET /api/kb/{rest...}", s.handleKBStub)
 	mux.HandleFunc("GET /api/sessions", s.handleSessions)
 	mux.HandleFunc("GET /api/sessions/{id}/events", s.handleEvents)
 	s.srv = &http.Server{
@@ -218,6 +220,14 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, st)
+}
+
+// handleKBStub is the M10b KB-admin placeholder (ADR D-WEB-6): the /api/kb/*
+// routes return 501 until the KB 全量 (content layer) lands and the real admin
+// data/API is mounted — the shell exists so the frontend can navigate, the
+// backend is honestly "not implemented".
+func (s *Server) handleKBStub(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "KB admin not implemented (KB 全量后挂)"})
 }
 
 // eventView is one event's bounded public summary (D-WEB-4: data is never
