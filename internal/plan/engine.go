@@ -120,8 +120,9 @@ func (e *engine) CreatePlan(ctx context.Context, goalID, title string, steps []s
 }
 
 // AddTodo appends a pending todo to the plan with planID; an unknown planID is
-// rejected.
-func (e *engine) AddTodo(ctx context.Context, planID, title string) (Todo, error) {
+// rejected. acceptance is the optional eval criteria list (ADR D-EVAL-4); the
+// returned todo carries a copy so callers can never alias the engine's state.
+func (e *engine) AddTodo(ctx context.Context, planID, title string, acceptance []string) (Todo, error) {
 	if err := ctx.Err(); err != nil {
 		return Todo{}, err
 	}
@@ -139,10 +140,11 @@ func (e *engine) AddTodo(ctx context.Context, planID, title string) (Todo, error
 	e.mu.Lock()
 	e.todoSeq++
 	todo := Todo{
-		ID:        fmt.Sprintf("todo-%d", e.todoSeq),
-		Title:     title,
-		Status:    StatusPending,
-		CreatedAt: time.Now(),
+		ID:         fmt.Sprintf("todo-%d", e.todoSeq),
+		Title:      title,
+		Status:     StatusPending,
+		Acceptance: append([]string(nil), acceptance...),
+		CreatedAt:  time.Now(),
 	}
 	e.mu.Unlock()
 

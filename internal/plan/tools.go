@@ -187,7 +187,7 @@ func (t PlanGoalTool) Execute(ctx context.Context, args json.RawMessage) (string
 	// plan/create is a log-only fact (D3); the created goal id/title are logged
 	// with the goal scope, and the returned text is what the loop logs as
 	// tool/result.
-	t.t.emit(session.EventPlanCreate, session.NewPlanCreate(string(ScopeGoal), g.ID, g.Title))
+	t.t.emit(session.EventPlanCreate, session.NewPlanCreate(string(ScopeGoal), g.ID, g.Title, nil))
 	return fmt.Sprintf("created goal %s: %s", g.ID, g.Title), nil
 }
 
@@ -247,7 +247,7 @@ func (t PlanPlanTool) Execute(ctx context.Context, args json.RawMessage) (string
 	if err != nil {
 		return "", fmt.Errorf("plan_plan: %w", err)
 	}
-	t.t.emit(session.EventPlanCreate, session.NewPlanCreate(string(ScopePlan), p.ID, p.Title))
+	t.t.emit(session.EventPlanCreate, session.NewPlanCreate(string(ScopePlan), p.ID, p.Title, nil))
 	return fmt.Sprintf("created plan %s under goal %s: %s (%d steps)", p.ID, p.GoalID, p.Title, len(p.Steps)), nil
 }
 
@@ -276,6 +276,11 @@ func (PlanTodoTool) Schema() map[string]any {
 				"minLength":   1,
 				"description": "one-line step title",
 			},
+			"acceptance": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string", "minLength": 1},
+				"description": "optional acceptance criteria this todo must satisfy (eval); entries may carry a mode prefix (contains:/not:/llm:/manual:)",
+			},
 		},
 		"required":             []string{"plan_id", "title"},
 		"additionalProperties": false,
@@ -284,8 +289,9 @@ func (PlanTodoTool) Schema() map[string]any {
 
 func (t PlanTodoTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {
-		PlanID string `json:"plan_id"`
-		Title  string `json:"title"`
+		PlanID     string   `json:"plan_id"`
+		Title      string   `json:"title"`
+		Acceptance []string `json:"acceptance"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("plan_todo: %w", err)
@@ -293,11 +299,11 @@ func (t PlanTodoTool) Execute(ctx context.Context, args json.RawMessage) (string
 	if strings.TrimSpace(a.Title) == "" {
 		return "", fmt.Errorf("plan_todo: empty title")
 	}
-	todo, err := t.t.e.AddTodo(ctx, a.PlanID, a.Title)
+	todo, err := t.t.e.AddTodo(ctx, a.PlanID, a.Title, a.Acceptance)
 	if err != nil {
 		return "", fmt.Errorf("plan_todo: %w", err)
 	}
-	t.t.emit(session.EventPlanCreate, session.NewPlanCreate(string(ScopeTodo), todo.ID, todo.Title))
+	t.t.emit(session.EventPlanCreate, session.NewPlanCreate(string(ScopeTodo), todo.ID, todo.Title, todo.Acceptance))
 	return fmt.Sprintf("added todo %s to plan %s: %s", todo.ID, a.PlanID, todo.Title), nil
 }
 

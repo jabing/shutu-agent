@@ -50,10 +50,14 @@ const (
 
 // Todo is one actionable step of a plan (dsh tool-todo Todo).
 type Todo struct {
-	ID          string // engine-issued id ("todo-N")
-	Title       string // one-line step label
-	Status      Status // pending by default
-	Details     string // free-form step notes (optional)
+	ID      string // engine-issued id ("todo-N")
+	Title   string // one-line step label
+	Status  Status // pending by default
+	Details string // free-form step notes (optional)
+	// Acceptance lists the acceptance criteria this todo must satisfy when
+	// evaluated (eval seam, ADR D-EVAL-4); entries may carry a mode prefix
+	// (contains:/not:/llm:/manual:). Optional.
+	Acceptance  []string
 	CreatedAt   time.Time
 	CompletedAt *time.Time // set when Status turns done; cleared on a live status
 }
@@ -127,8 +131,9 @@ type Engine interface {
 	// rejected; an empty goalID creates a standalone plan.
 	CreatePlan(ctx context.Context, goalID, title string, steps []string) (Plan, error)
 	// AddTodo appends a pending todo to the plan with planID; an unknown
-	// planID is rejected.
-	AddTodo(ctx context.Context, planID, title string) (Todo, error)
+	// planID is rejected. acceptance is the optional eval criteria list
+	// (ADR D-EVAL-4).
+	AddTodo(ctx context.Context, planID, title string, acceptance []string) (Todo, error)
 	// SetStatus sets the Status of the goal/plan/todo with id. scope is one of
 	// ScopeGoal, ScopePlan or ScopeTodo. Invalid statuses and unknown ids are
 	// rejected; an unknown scope is rejected. A transition to done stamps

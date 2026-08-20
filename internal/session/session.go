@@ -888,12 +888,16 @@ func NewScheduleFire(id, payload string) any {
 }
 
 // planCreateData is the plan/create payload: the tree level (scope: goal |
-// plan | todo), the engine-issued id and the title of the stored record.
+// plan | todo), the engine-issued id, the title and — for todos — the optional
+// acceptance criteria (eval seam, ADR D-EVAL-4) of the stored record.
 // DeriveHistory treats it as opaque data.
 type planCreateData struct {
 	Scope string `json:"scope"`
 	ID    string `json:"id"`
 	Title string `json:"title"`
+	// Acceptance carries the todo's eval criteria (nil for goals/plans, and
+	// omitted from the payload when empty).
+	Acceptance []string `json:"acceptance,omitempty"`
 }
 
 // planUpdateData is the plan/update payload: the tree level and id of an
@@ -928,8 +932,10 @@ type planListData struct {
 
 // NewPlanCreate builds the plan/create payload recorded when plan_goal /
 // plan_plan / plan_todo store a goal/plan/todo (dispatch-m6b-2 §1 / D3).
-func NewPlanCreate(scope, id, title string) any {
-	return planCreateData{Scope: scope, ID: id, Title: title}
+// acceptance is the todo's optional eval criteria list (ADR D-EVAL-4); goals
+// and plans pass nil.
+func NewPlanCreate(scope, id, title string, acceptance []string) any {
+	return planCreateData{Scope: scope, ID: id, Title: title, Acceptance: acceptance}
 }
 
 // NewPlanUpdate builds the plan/update payload — reserved vocabulary for a

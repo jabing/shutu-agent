@@ -89,7 +89,7 @@ func TestEngineCreateGoalPlanTodo(t *testing.T) {
 		}
 	}
 
-	todo, err := e.AddTodo(context.Background(), p.ID, "announce")
+	todo, err := e.AddTodo(context.Background(), p.ID, "announce", nil)
 	if err != nil {
 		t.Fatalf("AddTodo: %v", err)
 	}
@@ -128,6 +128,56 @@ func TestEngineCreatePlanStandalone(t *testing.T) {
 	}
 	if len(goals) != 0 {
 		t.Errorf("List returned %d goals, want 0 (standalone plan must not be in the tree)", len(goals))
+	}
+}
+
+// TestAddTodoAcceptance verifies the eval seam (ADR D-EVAL-4): AddTodo stores
+// the acceptance criteria list in order, hands back a fresh copy (the caller's
+// slice is never aliased), and the list reads back through the aggregation
+// tree (List → plan Steps).
+func TestAddTodoAcceptance(t *testing.T) {
+	e := newTestEngine(t)
+	g, err := e.CreateGoal(context.Background(), "G", "o")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	p, err := e.CreatePlan(context.Background(), g.ID, "P", nil)
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+
+	want := []string{"contains:输出包含报告", "llm:结论合理"}
+	todo, err := e.AddTodo(context.Background(), p.ID, "step", want)
+	if err != nil {
+		t.Fatalf("AddTodo(acceptance): %v", err)
+	}
+	// Order-preserving copy on the returned todo.
+	if !reflect.DeepEqual(todo.Acceptance, want) {
+		t.Fatalf("todo.Acceptance = %v, want %v", todo.Acceptance, want)
+	}
+	// The stored list must not share its backing array with the caller's input:
+	// mutating the input after the call must not leak into the engine's copy.
+	input := []string{"contains:输出包含报告", "llm:结论合理"}
+	if _, err := e.AddTodo(context.Background(), p.ID, "other", input); err != nil {
+		t.Fatalf("AddTodo(acceptance 2): %v", err)
+	}
+	input[0] = "mutated"
+	gotP := getPlan(t, e, p.ID)
+	if got := gotP.Steps[1].Acceptance; !reflect.DeepEqual(got, []string{"contains:输出包含报告", "llm:结论合理"}) {
+		t.Errorf("engine state leaked caller mutation: Acceptance = %v", got)
+	}
+
+	// Read back through the aggregation tree: List → goal Plans → plan Steps.
+	goals, err := e.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(goals) != 1 || len(goals[0].Plans) != 1 {
+		t.Fatalf("List tree = %+v, want goal-1 with one plan", goals)
+	}
+	plan := getPlan(t, e, goals[0].Plans[0])
+	if got := plan.Steps[0].Acceptance; !reflect.DeepEqual(got, want) {
+		t.Fatalf("plan.Steps[0].Acceptance read back = %v, want %v", got, want)
 	}
 }
 
@@ -224,7 +274,7 @@ func TestEngineListTree(t *testing.T) {
 	p1, _ := e.CreatePlan(context.Background(), g1.ID, "Code", []string{"write", "test"})
 	p2, _ := e.CreatePlan(context.Background(), g1.ID, "Release", []string{"tag"})
 	p3, _ := e.CreatePlan(context.Background(), g2.ID, "Notes", []string{"skim"})
-	todo, _ := e.AddTodo(context.Background(), p1.ID, "self-review")
+	todo, _ := e.AddTodo(context.Background(), p1.ID, "self-review", nil)
 	standalone, _ := e.CreatePlan(context.Background(), "", "Standalone", []string{"x"})
 
 	goals, err := e.List(context.Background())
@@ -309,7 +359,7 @@ func TestEngineRemoveCascade(t *testing.T) {
 	// Removing a todo deletes it from its owning plan's Steps.
 	g3, _ := e.CreateGoal(context.Background(), "G3", "o")
 	p3, _ := e.CreatePlan(context.Background(), g3.ID, "P3", []string{"keep"})
-	todo, _ := e.AddTodo(context.Background(), p3.ID, "drop")
+	todo, _ := e.AddTodo(context.Background(), p3.ID, "drop", nil)
 	if err := e.Remove(context.Background(), "todo", todo.ID); err != nil {
 		t.Fatalf("Remove(todo): %v", err)
 	}
@@ -352,7 +402,7 @@ func TestEngineRejectsUnknownReferences(t *testing.T) {
 	if _, err := e.CreatePlan(context.Background(), "goal-missing", "P", nil); !errors.Is(err, ErrUnknownGoal) {
 		t.Errorf("CreatePlan(unknown goal): err = %v, want ErrUnknownGoal", err)
 	}
-	if _, err := e.AddTodo(context.Background(), "plan-missing", "t"); !errors.Is(err, ErrUnknownPlan) {
+	if _, err := e.AddTodo(context.Background(), "plan-missing", "t", nil); !errors.Is(err, ErrUnknownPlan) {
 		t.Errorf("AddTodo(unknown plan): err = %v, want ErrUnknownPlan", err)
 	}
 	if _, err := e.CreateGoal(context.Background(), "", "o"); !errors.Is(err, ErrInvalidTitle) {
@@ -361,7 +411,7 @@ func TestEngineRejectsUnknownReferences(t *testing.T) {
 	if _, err := e.CreatePlan(context.Background(), "", "", nil); !errors.Is(err, ErrInvalidTitle) {
 		t.Errorf("CreatePlan(empty title): err = %v, want ErrInvalidTitle", err)
 	}
-	if _, err := e.AddTodo(context.Background(), "", "t"); !errors.Is(err, ErrUnknownPlan) {
+	if _, err := e.AddTodo(context.Background(), "", "t", nil); !errors.Is(err, ErrUnknownPlan) {
 		t.Errorf("AddTodo(empty plan id): err = %v, want ErrUnknownPlan", err)
 	}
 }
@@ -383,7 +433,7 @@ func TestEngineCloseIdempotent(t *testing.T) {
 	if _, err := e.CreatePlan(context.Background(), "g", "P", nil); !errors.Is(err, ErrEngineClosed) {
 		t.Errorf("CreatePlan after Close: err = %v, want ErrEngineClosed", err)
 	}
-	if _, err := e.AddTodo(context.Background(), "p", "t"); !errors.Is(err, ErrEngineClosed) {
+	if _, err := e.AddTodo(context.Background(), "p", "t", nil); !errors.Is(err, ErrEngineClosed) {
 		t.Errorf("AddTodo after Close: err = %v, want ErrEngineClosed", err)
 	}
 	if err := e.SetStatus(context.Background(), "goal", "g", StatusPending); !errors.Is(err, ErrEngineClosed) {

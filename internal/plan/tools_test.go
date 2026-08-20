@@ -112,8 +112,8 @@ func TestPlanGoalToolRejectsEmptyTitle(t *testing.T) {
 func TestPlanToolsBuildTreeListAndStatus(t *testing.T) {
 	_, pt, recs := newPlanToolsWithEvents(t)
 
-	mustExec(t, pt.Goal(), `{"title":"Ship","objective":"ship it"}`)             // goal-1, plan/create(goal)
-	mustExec(t, pt.Goal(), `{"title":"Read"}`)                                    // goal-2, plan/create(goal)
+	mustExec(t, pt.Goal(), `{"title":"Ship","objective":"ship it"}`) // goal-1, plan/create(goal)
+	mustExec(t, pt.Goal(), `{"title":"Read"}`)                       // goal-2, plan/create(goal)
 	out := mustExec(t, pt.Plan(), `{"goal_id":"goal-1","title":"Code","steps":["write","test"]}`)
 	if !strings.Contains(out, "created plan plan-1 under goal goal-1: Code (2 steps)") {
 		t.Fatalf("plan_plan output = %q", out)
@@ -180,10 +180,52 @@ func TestPlanToolsBuildTreeListAndStatus(t *testing.T) {
 	}
 }
 
+// TestPlanTodoToolAcceptance verifies the eval seam (ADR D-EVAL-4) on plan_todo:
+// the schema declares the optional acceptance list and Execute with acceptance
+// stores it on the todo, returns it in the plan/create payload, and it reads
+// back through the engine.
+func TestPlanTodoToolAcceptance(t *testing.T) {
+	e, pt, recs := newPlanToolsWithEvents(t)
+	mustExec(t, pt.Goal(), `{"title":"G","objective":"o"}`)               // goal-1
+	mustExec(t, pt.Plan(), `{"goal_id":"goal-1","title":"P","steps":[]}`) // plan-1
+
+	// Schema declares the acceptance property (optional array of strings).
+	schema := toolSchema(pt.Todo())
+	props, _ := schema["properties"].(map[string]any)
+	acc, ok := props["acceptance"].(map[string]any)
+	if !ok {
+		t.Fatal("plan_todo schema lacks the acceptance property")
+	}
+	if acc["type"] != "array" {
+		t.Errorf("acceptance schema type = %v, want array", acc["type"])
+	}
+
+	want := []string{"contains:输出包含报告", "llm:结论合理"}
+	out := mustExec(t, pt.Todo(), `{"plan_id":"plan-1","title":"step","acceptance":["contains:输出包含报告","llm:结论合理"]}`)
+	if !strings.Contains(out, "added todo todo-1 to plan plan-1: step") {
+		t.Fatalf("plan_todo output = %q", out)
+	}
+	// The plan/create payload carries the todo's acceptance list.
+	create := decodeEvent[struct {
+		Scope      string   `json:"scope"`
+		ID         string   `json:"id"`
+		Title      string   `json:"title"`
+		Acceptance []string `json:"acceptance"`
+	}](t, (*recs)[len(*recs)-1])
+	if create.Scope != "todo" || create.ID != "todo-1" || !equalStrings(create.Acceptance, want) {
+		t.Fatalf("plan/create(todo) payload = %+v, want scope todo / todo-1 / acceptance %v", create, want)
+	}
+	// The stored todo's Acceptance reads back through the engine.
+	got := getPlan(t, e, "plan-1")
+	if len(got.Steps) != 1 || !equalStrings(got.Steps[0].Acceptance, want) {
+		t.Fatalf("plan.Steps[0].Acceptance read back = %v, want %v", got.Steps[0].Acceptance, want)
+	}
+}
+
 func TestPlanRemoveToolEmitsAndCascades(t *testing.T) {
 	e, pt, recs := newPlanToolsWithEvents(t)
-	mustExec(t, pt.Goal(), `{"title":"G1","objective":"o"}`)                       // goal-1
-	mustExec(t, pt.Plan(), `{"goal_id":"goal-1","title":"P1","steps":["a","b"]}`)  // plan-1
+	mustExec(t, pt.Goal(), `{"title":"G1","objective":"o"}`)                      // goal-1
+	mustExec(t, pt.Plan(), `{"goal_id":"goal-1","title":"P1","steps":["a","b"]}`) // plan-1
 	out := mustExec(t, pt.Remove(), `{"scope":"plan","id":"plan-1"}`)
 	if !strings.Contains(out, "removed plan plan-1") {
 		t.Fatalf("plan_remove output = %q", out)

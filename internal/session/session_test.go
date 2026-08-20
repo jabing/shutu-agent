@@ -1023,7 +1023,7 @@ func TestPlanEventsAppendAndReplay(t *testing.T) {
 		persisted = append(persisted, ev)
 		return nil
 	})
-	if _, err := l.Append(EventPlanCreate, NewPlanCreate("goal", "goal-1", "Ship the agent")); err != nil {
+	if _, err := l.Append(EventPlanCreate, NewPlanCreate("goal", "goal-1", "Ship the agent", nil)); err != nil {
 		t.Fatalf("append plan/create: %v", err)
 	}
 	if _, err := l.Append(EventPlanUpdate, NewPlanUpdate("plan", "plan-1")); err != nil {
@@ -1114,7 +1114,7 @@ func TestPlanEventsAppendAndReplay(t *testing.T) {
 func TestPlanEventsMixedWithConversationDeriveOnlyConversation(t *testing.T) {
 	l := New()
 	l.Append(EventUserMessage, NewUserMessage("plan the release"))
-	l.Append(EventPlanCreate, NewPlanCreate("goal", "goal-1", "Ship"))
+	l.Append(EventPlanCreate, NewPlanCreate("goal", "goal-1", "Ship", nil))
 	l.Append(EventAssistantMessage, NewAssistantMessage("Created goal-1.", nil, "stop"))
 	l.Append(EventPlanStatus, NewPlanStatus("goal", "goal-1", "in-progress"))
 	msgs := l.DeriveHistory()
