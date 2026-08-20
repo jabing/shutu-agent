@@ -201,6 +201,11 @@ func (SubagentSpawnTool) Schema() map[string]any {
 				"items":       map[string]any{"type": "string", "minLength": 1},
 				"description": "optional acceptance criteria the deliverable must satisfy (eval); injected into the subagent prompt for self-check",
 			},
+			"provider": map[string]any{
+				"type":        "string",
+				"enum":        []string{"spawn", "codex", "claude-code"},
+				"description": "subagent provider: spawn (default, local) | codex | claude-code (external CLI; must be enabled in config)",
+			},
 		},
 		"required":             []string{"prompt"},
 		"additionalProperties": false,
@@ -214,6 +219,7 @@ func (t SubagentSpawnTool) Execute(ctx context.Context, args json.RawMessage) (s
 		OwnerSession       string   `json:"owner_session"`
 		MaxDepth           int      `json:"max_depth"`
 		AcceptanceCriteria []string `json:"acceptance_criteria"`
+		Provider           string   `json:"provider"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("subagent_spawn: %w", err)
@@ -233,7 +239,15 @@ func (t SubagentSpawnTool) Execute(ctx context.Context, args json.RawMessage) (s
 	if maxDepth <= 0 {
 		maxDepth = t.t.defaultMaxDepth
 	}
-	run, err := t.t.rt.Start(ctx, defaultProviderName, StartRequest{
+	// provider defaults to the local in-process provider; an explicit
+	// provider selects an external backend when it is enabled and registered.
+	// An unknown or unregistered provider is surfaced as an error by
+	// Runtime.Start (fail-closed, no silent fallback to the local provider).
+	provider := a.Provider
+	if provider == "" {
+		provider = defaultProviderName
+	}
+	run, err := t.t.rt.Start(ctx, provider, StartRequest{
 		Label:              label,
 		Prompt:             a.Prompt,
 		ParentSessionID:    parent,
@@ -243,11 +257,11 @@ func (t SubagentSpawnTool) Execute(ctx context.Context, args json.RawMessage) (s
 	if err != nil {
 		return "", fmt.Errorf("subagent_spawn: %w", err)
 	}
-	t.t.register(run.ID, &childInfo{run: run, provider: defaultProviderName, label: label, parent: parent})
-	t.t.emit(session.EventSubagentStart, session.NewSubagentStart(run.ID, defaultProviderName, parent, label))
+	t.t.register(run.ID, &childInfo{run: run, provider: provider, label: label, parent: parent})
+	t.t.emit(session.EventSubagentStart, session.NewSubagentStart(run.ID, provider, parent, label))
 	return fmt.Sprintf("started subagent %s (provider=%s, label=%q, parent=%s); "+
 		"observe with subagent_status/subagent_list, cancel with subagent_cancel",
-		run.ID, defaultProviderName, label, parent), nil
+		run.ID, provider, label, parent), nil
 }
 
 // SubagentStatusTool returns one subagent's summary: running while live, or

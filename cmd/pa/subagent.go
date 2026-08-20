@@ -42,6 +42,24 @@ func (a *app) registerSubagent() error {
 	if err := rt.RegisterProvider(prov); err != nil {
 		return fmt.Errorf("pa: register subagent provider: %w", err)
 	}
+	// D-GAP-4: optional external subagent backends (codex / claude-code).
+	// Register one provider per enabled config entry; a failed registration
+	// (e.g. a duplicate name) fails closed — no silent fallback. The config
+	// key "claude_code" registers under the tool-facing provider name
+	// "claude-code" (the subagent_spawn provider enum), which also selects the
+	// `claude -p` headless args preset in NewExternalProvider.
+	for name, ep := range a.cfg.Subagent.ExternalProviders {
+		if !ep.Enabled {
+			continue // D10: an unenabled provider is never registered
+		}
+		providerName := name
+		if name == "claude_code" {
+			providerName = "claude-code"
+		}
+		if err := rt.RegisterProvider(subagent.NewExternalProvider(providerName, ep.Command)); err != nil {
+			return fmt.Errorf("pa: register external subagent provider %q: %w", name, err)
+		}
+	}
 	a.subagents = rt
 	// D3 event sink: subagent/* events are appended to the active session log.
 	// The callback only ever runs inside a subagent_* tool Execute — the

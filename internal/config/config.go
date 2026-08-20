@@ -368,6 +368,28 @@ type SubagentConfig struct {
 	// the default "spawn" (the only provider shipped in M5b, so the tool
 	// resolves to it regardless).
 	DefaultProvider string `yaml:"default_provider"`
+	// ExternalProviders declares optional external subagent backends
+	// (D-GAP-4): keyed by provider name, each with an optional enable flag
+	// (default false) and the CLI command (empty → per-name default:
+	// codex→"codex", claude_code→"claude"). A provider is registered only
+	// when Enabled is true; an enabled provider whose binary is missing fails
+	// closed at Start. All default off (D10).
+	ExternalProviders map[string]ExternalProviderConfig `yaml:"external_providers"`
+}
+
+// ExternalProviderConfig is one optional external subagent backend (D-GAP-4):
+// an enable flag (default off, D10) and the one-shot CLI command. The provider
+// is registered into the subagent Runtime only when Enabled is true; an
+// enabled provider whose binary is missing fails closed at Start (no silent
+// fallback to the local provider).
+type ExternalProviderConfig struct {
+	// Enabled gates this provider's registration (default false, D10).
+	Enabled bool `yaml:"enabled"`
+	// Command is the CLI binary invoked for a one-shot prompt→stdout session;
+	// empty means the per-name default filled by applyDefaults (codex→"codex",
+	// claude_code→"claude"); any other key keeps an empty command and the
+	// composition root looks the name up as-is (fail-closed at Start).
+	Command string `yaml:"command"`
 }
 
 // CompactionConfig is the context-compaction policy (dispatch-m5c-2a §2 /
@@ -846,6 +868,25 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Subagent.DefaultProvider == "" {
 		cfg.Subagent.DefaultProvider = DefaultSubagentProvider
+	}
+	// D-GAP-4 external subagent providers: all default off (D10); an empty
+	// command falls back to the per-name default (codex→"codex",
+	// claude_code→"claude"). Any other key keeps an empty command and the
+	// composition root looks the name up as-is (fail-closed at Start when the
+	// binary is missing). Registration itself is gated by Enabled plus the
+	// subagent master switch — registerSubagent returns early when subagent is
+	// disabled, so the minimal preset's Subagent.Enabled=false also disables
+	// every external provider (D-MODE-2).
+	for name, ep := range cfg.Subagent.ExternalProviders {
+		if ep.Command == "" {
+			switch name {
+			case "codex":
+				ep.Command = "codex"
+			case "claude_code":
+				ep.Command = "claude"
+			}
+		}
+		cfg.Subagent.ExternalProviders[name] = ep
 	}
 	// M5c compaction defaults: off by default (D10); the token-pressure
 	// threshold is 32000; the retained tail is 8 turns; max_chars 0 means the

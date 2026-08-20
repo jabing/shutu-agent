@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -174,5 +175,51 @@ func TestRegisterSubagentEnabledRegistersAndLogsEvents(t *testing.T) {
 	}
 	if got := countEvent(app.log, session.EventSubagentEnd); got != 1 {
 		t.Fatalf("subagent/end count = %d, want exactly 1", got)
+	}
+}
+
+// TestRegisterSubagentExternalProviders verifies the D-GAP-4 wiring: an
+// enabled external provider config is registered into the subagent Runtime
+// under its tool-facing provider name (config key claude_code →
+// "claude-code"), while a disabled one is never registered (D10). The command
+// points at the current test binary (a stand-in CLI); registration never
+// starts it.
+func TestRegisterSubagentExternalProviders(t *testing.T) {
+	app := makeSubagentApp(true)
+	app.cfg.Subagent.ExternalProviders = map[string]config.ExternalProviderConfig{
+		"codex":       {Enabled: true, Command: os.Args[0]},
+		"claude_code": {Enabled: true, Command: os.Args[0]},
+		"disabled":    {Enabled: false, Command: "nope"},
+	}
+	if err := app.registerSubagent(); err != nil {
+		t.Fatalf("registerSubagent: %v", err)
+	}
+	defer app.subagents.Close()
+	got := app.subagents.ListProviders()
+	for _, want := range []string{"spawn", "codex", "claude-code"} {
+		if !containsStr(got, want) {
+			t.Fatalf("registered providers %v lack %q", got, want)
+		}
+	}
+	if containsStr(got, "disabled") {
+		t.Fatalf("disabled external provider must not be registered (D10), got %v", got)
+	}
+}
+
+// TestRegisterSubagentExternalDisabled verifies the D10 gate for external
+// providers: with every external provider disabled, only the local spawn
+// provider is registered.
+func TestRegisterSubagentExternalDisabled(t *testing.T) {
+	app := makeSubagentApp(true)
+	app.cfg.Subagent.ExternalProviders = map[string]config.ExternalProviderConfig{
+		"codex": {Enabled: false, Command: "codex"},
+	}
+	if err := app.registerSubagent(); err != nil {
+		t.Fatalf("registerSubagent: %v", err)
+	}
+	defer app.subagents.Close()
+	got := app.subagents.ListProviders()
+	if len(got) != 1 || got[0] != "spawn" {
+		t.Fatalf("registered providers = %v, want only [spawn] when no external provider is enabled", got)
 	}
 }

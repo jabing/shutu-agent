@@ -537,6 +537,41 @@ func TestLoadSubagentEnabledAppendsToolsToWhitelist(t *testing.T) {
 	}
 }
 
+// D-GAP-4: external subagent providers are off by default (D10) and an empty
+// command falls back to the per-name default (codex→"codex",
+// claude_code→"claude") in applyDefaults.
+func TestExternalProviderDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(
+		"subagent:\n  external_providers:\n    codex:\n      enabled: true\n    claude_code: {}\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	codex, ok := cfg.Subagent.ExternalProviders["codex"]
+	if !ok {
+		t.Fatal("external_providers.codex missing after Load")
+	}
+	if !codex.Enabled {
+		t.Error("codex.enabled should be true")
+	}
+	if codex.Command != "codex" {
+		t.Errorf("codex command = %q, want the default \"codex\"", codex.Command)
+	}
+	cc, ok := cfg.Subagent.ExternalProviders["claude_code"]
+	if !ok {
+		t.Fatal("external_providers.claude_code missing after Load")
+	}
+	if cc.Enabled {
+		t.Error("claude_code must be disabled by default (D10)")
+	}
+	if cc.Command != "claude" {
+		t.Errorf("claude_code command = %q, want the default \"claude\"", cc.Command)
+	}
+}
+
 // M5c: compaction is off by default (D10), the token-pressure threshold
 // defaults to 32000, the retained tail to 8 turns, and max_chars to 0 (the
 // engine default). Unlike kb/jobs/subagent, compaction has no consumer tools —

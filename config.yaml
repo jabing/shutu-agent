@@ -157,6 +157,16 @@ subagent:
   # Provider subagent_spawn delegates to. "spawn" (the in-process provider) is
   # the only one shipped in M5b; empty/absent ⇒ "spawn".
   default_provider: spawn
+  # 外部子代理后端 (可选, 默认关 D10): codex → `codex exec --json`,
+  # claude_code → `claude -p`. command 缺省即同名命令. CLI 不存在时
+  # subagent_spawn provider=codex 报错 (fail-closed, 不回退本地).
+  external_providers:
+    codex:
+      enabled: false
+      command: codex
+    claude_code:
+      enabled: false
+      command: claude
 
 # Context-compaction capability (M5c; ADR 2026-08-18-m5-agent-core.md
 # 决策 ③). Off by default (D10): when disabled the automatic pre-step trigger

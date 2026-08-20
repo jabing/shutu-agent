@@ -378,3 +378,35 @@ func TestSubagentUnknownChild(t *testing.T) {
 		t.Fatal("subagent_cancel on an unknown id must fail")
 	}
 }
+
+// TestSpawnToolProviderField verifies the D-GAP-4 provider field on
+// subagent_spawn: "spawn" passed explicitly resolves to the same provider as
+// the default, and an unregistered external provider name fails closed with an
+// "unknown provider" error (no silent fallback). The test runtime registers
+// only the local spawn provider.
+func TestSpawnToolProviderField(t *testing.T) {
+	model := &scriptedLLM{steps: [][]llm.StreamEvent{{
+		{Kind: llm.StreamFinish, FinishReason: "stop"},
+	}}}
+	st := testBundle(t, model, 8, nil)
+	ctx := context.Background()
+
+	// Explicit "spawn" is equivalent to the omitted (default) provider.
+	out, err := st.Spawn().Execute(ctx, json.RawMessage(`{"prompt":"x","provider":"spawn"}`))
+	if err != nil {
+		t.Fatalf("subagent_spawn with provider=spawn: %v", err)
+	}
+	if !strings.Contains(out, "started subagent spawn-1") || !strings.Contains(out, "provider=spawn") {
+		t.Fatalf("subagent_spawn output = %q, want started subagent spawn-1 (provider=spawn)", out)
+	}
+
+	// An unregistered external provider must fail closed with an unknown-provider
+	// error, never fall back to the local provider.
+	out, err = st.Spawn().Execute(ctx, json.RawMessage(`{"prompt":"x","provider":"codex"}`))
+	if err == nil {
+		t.Fatalf("subagent_spawn with unregistered provider=codex must fail, got output %q", out)
+	}
+	if !strings.Contains(err.Error(), "unknown provider") {
+		t.Fatalf("subagent_spawn error = %v, want it to mention \"unknown provider\"", err)
+	}
+}
