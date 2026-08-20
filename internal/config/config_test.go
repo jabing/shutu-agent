@@ -1480,3 +1480,87 @@ func TestLoadWebNonPositiveCapsFallBack(t *testing.T) {
 		t.Errorf("fetch_max_redirects -2 = %d, want default %d", cfg.Web.FetchMaxRedirects, DefaultWebFetchMaxRedirects)
 	}
 }
+
+// M8-2: an absent llm section means the default provider is deepseek
+// (regression: behavior identical to before M8-2), the openai base_url/model
+// fall back to https://api.openai.com/v1 / gpt-4o-mini, the anthropic
+// placeholders fall back to their defaults, and the top-level model/base_url
+// stay as the deepseek default configuration (dispatch-m8-2 §5/§7).
+func TestLoadLLMDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LLM.Provider != DefaultLLMProvider {
+		t.Errorf("llm.provider = %q, want default %q", cfg.LLM.Provider, DefaultLLMProvider)
+	}
+	if cfg.LLM.OpenAI.BaseURL != DefaultOpenAIBaseURL {
+		t.Errorf("llm.openai.base_url = %q, want %q", cfg.LLM.OpenAI.BaseURL, DefaultOpenAIBaseURL)
+	}
+	if cfg.LLM.OpenAI.Model != DefaultOpenAIModel {
+		t.Errorf("llm.openai.model = %q, want %q", cfg.LLM.OpenAI.Model, DefaultOpenAIModel)
+	}
+	if cfg.LLM.Anthropic.BaseURL != DefaultAnthropicBaseURL {
+		t.Errorf("llm.anthropic.base_url = %q, want %q", cfg.LLM.Anthropic.BaseURL, DefaultAnthropicBaseURL)
+	}
+	if cfg.LLM.Anthropic.Model != DefaultAnthropicModel {
+		t.Errorf("llm.anthropic.model = %q, want %q", cfg.LLM.Anthropic.Model, DefaultAnthropicModel)
+	}
+	// Top-level deepseek default configuration stays put (not migrated).
+	if cfg.Model != DefaultModel {
+		t.Errorf("top-level model = %q, want %q", cfg.Model, DefaultModel)
+	}
+	if cfg.BaseURL != DefaultBaseURL {
+		t.Errorf("top-level base_url = %q, want %q", cfg.BaseURL, DefaultBaseURL)
+	}
+}
+
+// M8-2: an explicit llm section is honored — provider selection, openai
+// base_url/model, anthropic base_url/model — while fields left absent still
+// fall back to their defaults (dispatch-m8-2 §5).
+func TestLoadLLMParsesSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := `llm:
+  provider: openai
+  openai:
+    base_url: https://custom.example/v1
+    model: custom-model
+  anthropic:
+    base_url: https://custom-anthropic.example/v1
+    model: custom-claude
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LLM.Provider != "openai" {
+		t.Errorf("llm.provider = %q, want openai", cfg.LLM.Provider)
+	}
+	if cfg.LLM.OpenAI.BaseURL != "https://custom.example/v1" || cfg.LLM.OpenAI.Model != "custom-model" {
+		t.Errorf("llm.openai = %+v, want the explicit values", cfg.LLM.OpenAI)
+	}
+	if cfg.LLM.Anthropic.BaseURL != "https://custom-anthropic.example/v1" || cfg.LLM.Anthropic.Model != "custom-claude" {
+		t.Errorf("llm.anthropic = %+v, want the explicit values", cfg.LLM.Anthropic)
+	}
+	// An empty provider field still defaults to deepseek.
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	if err := os.WriteFile(path2, []byte("llm:\n  openai:\n    model: gpt-5\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.LLM.Provider != DefaultLLMProvider {
+		t.Errorf("absent llm.provider = %q, want default %q", cfg2.LLM.Provider, DefaultLLMProvider)
+	}
+	if cfg2.LLM.OpenAI.Model != "gpt-5" {
+		t.Errorf("llm.openai.model = %q, want gpt-5", cfg2.LLM.OpenAI.Model)
+	}
+	if cfg2.LLM.OpenAI.BaseURL != DefaultOpenAIBaseURL {
+		t.Errorf("absent llm.openai.base_url = %q, want default %q", cfg2.LLM.OpenAI.BaseURL, DefaultOpenAIBaseURL)
+	}
+}

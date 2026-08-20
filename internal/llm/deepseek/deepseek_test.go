@@ -312,6 +312,41 @@ func TestStreamRetryAbortsOnCancellation(t *testing.T) {
 	}
 }
 
+// TestID returns the stable provider id (M8-2, dispatch-m8-2 §3).
+func TestID(t *testing.T) {
+	if got := New(Config{}).ID(); got != "deepseek" {
+		t.Fatalf("ID = %q, want deepseek", got)
+	}
+}
+
+// TestAvailable verifies the cheap local availability check (dispatch-m8-2 §3):
+// key present + base URL parseable, with no network call. A missing key or an
+// unparseable base URL makes the provider unavailable.
+func TestAvailable(t *testing.T) {
+	// Key present, valid base URL (explicit and defaulted).
+	if !New(Config{APIKey: "k"}).Available() {
+		t.Error("key + default base URL must be available")
+	}
+	if !New(Config{APIKey: "k", BaseURL: "https://api.deepseek.com"}).Available() {
+		t.Error("key + explicit base URL must be available")
+	}
+
+	// Missing key → unavailable regardless of base URL.
+	if New(Config{}).Available() {
+		t.Error("empty key must be unavailable")
+	}
+	if New(Config{BaseURL: "https://api.deepseek.com"}).Available() {
+		t.Error("empty key with a base URL must be unavailable")
+	}
+
+	// Invalid / unparseable base URL → unavailable even with a key.
+	for _, bad := range []string{":", "://", "not a url", "http://"} {
+		if New(Config{APIKey: "k", BaseURL: bad}).Available() {
+			t.Errorf("base URL %q must be unavailable", bad)
+		}
+	}
+}
+
 // TestToWireMessageReasoning verifies the M8 wire contract: an assistant
 // message whose content carries a reasoning block serializes the joined
 // reasoning text on the OpenAI-compatible reasoning_content field, and

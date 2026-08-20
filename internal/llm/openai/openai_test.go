@@ -1,0 +1,132 @@
+package openai
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"personal-agent/internal/llm"
+)
+
+func sse(payloads ...string) string {
+	var sb strings.Builder
+	for _, p := range payloads {
+		sb.WriteString("data: " + p + "\n\n")
+	}
+	return sb.String()
+}
+
+// TestNewID verifies the stable provider id (dispatch-m8-2 §4). The default
+// base_url/model (https://api.openai.com/v1 / gpt-4o-mini) are applied inside
+// New and asserted at the config layer (dispatch-m8-2 §7); the wire behavior
+// with an explicit config is covered by TestStreamTextAndToolCallsRegression.
+func TestNewID(t *testing.T) {
+	if got := New(Config{APIKey: "k"}).ID(); got != "openai" {
+		t.Fatalf("ID = %q, want openai", got)
+	}
+}
+
+// TestStreamTextAndToolCallsRegression verifies the delegation regression: the
+// openai provider streams text and tool calls through the shared
+// OpenAI-compatible SSE client exactly like deepseek (dispatch-m8-2 §4/§7 —
+// httptest fake OpenAI-compatible SSE service).
+func TestStreamTextAndToolCallsRegression(t *testing.T) {
+	var gotPath string
+	var gotAuth string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		if body, err := io.ReadAll(r.Body); err == nil {
+			_ = json.Unmarshal(body, &gotBody)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(sse(
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_time","arguments":""}}]},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"tz\":\"UTC\"}"}}]},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{"content":"It is "},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{"content":"noon"},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+			"[DONE]",
+		)))
+	}))
+	defer srv.Close()
+
+	p := New(Config{BaseURL: srv.URL, APIKey: "openai-key", Model: "gpt-4o-mini"})
+	reader, err := p.Stream(context.Background(), llm.ChatRequest{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text("time")}}},
+	})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+
+	var text strings.Builder
+	var finish llm.StreamEvent
+	for {
+		ev, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("next: %v", err)
+		}
+		if ev.Kind == llm.StreamTextDelta {
+			text.WriteString(ev.Text)
+		}
+		if ev.Kind == llm.StreamFinish {
+			finish = ev
+		}
+	}
+
+	if text.String() != "It is noon" {
+		t.Fatalf("text = %q, want %q", text.String(), "It is noon")
+	}
+	if len(finish.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %+v, want 1", finish.ToolCalls)
+	}
+	if finish.ToolCalls[0].Name != "get_time" || finish.ToolCalls[0].Arguments != `{"tz":"UTC"}` {
+		t.Fatalf("tool call = %+v", finish.ToolCalls[0])
+	}
+	if finish.FinishReason != "tool_calls" {
+		t.Fatalf("finish reason = %q", finish.FinishReason)
+	}
+	// The wire hit the OpenAI-compatible /chat/completions endpoint with the
+	// configured key and model.
+	if gotPath != "/chat/completions" {
+		t.Errorf("path = %q, want /chat/completions", gotPath)
+	}
+	if gotAuth != "Bearer openai-key" {
+		t.Errorf("auth = %q", gotAuth)
+	}
+	if gotBody["model"] != "gpt-4o-mini" {
+		t.Errorf("model = %v", gotBody["model"])
+	}
+}
+
+// TestAvailable verifies the cheap local availability check (dispatch-m8-2 §4):
+// API key present + base URL parseable, no network. A missing key or an
+// unparseable base URL makes the provider unavailable.
+func TestAvailable(t *testing.T) {
+	if !New(Config{APIKey: "k"}).Available() {
+		t.Error("key + default base URL must be available")
+	}
+	if !New(Config{APIKey: "k", BaseURL: "https://api.openai.com/v1"}).Available() {
+		t.Error("key + explicit base URL must be available")
+	}
+	if New(Config{}).Available() {
+		t.Error("empty key must be unavailable")
+	}
+	if New(Config{BaseURL: "https://api.openai.com/v1"}).Available() {
+		t.Error("empty key with a base URL must be unavailable")
+	}
+	for _, bad := range []string{":", "://", "not a url", "http://"} {
+		if New(Config{APIKey: "k", BaseURL: bad}).Available() {
+			t.Errorf("base URL %q must be unavailable", bad)
+		}
+	}
+}
