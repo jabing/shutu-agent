@@ -45,6 +45,7 @@ import (
 	"personal-agent/internal/terminal"
 	"personal-agent/internal/tools"
 	"personal-agent/internal/web"
+	"personal-agent/internal/webserver"
 )
 
 func main() {
@@ -364,6 +365,19 @@ func main() {
 	if app.evalEng != nil {
 		defer app.evalEng.Close()
 	}
+	// M10a: wire the unified web portal (ADR 2026-08-20-m10-web-portal.md) —
+	// the bearer-authenticated net/http server over the read-only store
+	// (sessions/events browsing + static vanilla-JS frontend) — when
+	// web_server.enabled (默认关 D10, no listener at all). An empty token fails
+	// closed at startup (no bare server). The deferred Close shuts the listener
+	// at shutdown so no port lingers.
+	if err := app.registerWebServer(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
+	if app.webserver != nil {
+		defer app.webserver.Close()
+	}
 	if err := app.startup(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
@@ -403,6 +417,10 @@ type app struct {
 	mcp        []mcp.Client      // nil when mcp disabled (D10); one live bridged client per configured server
 	fs         fs.FileService    // nil when fs disabled (D10)
 	web        *web.Engine       // nil when web disabled (D10)
+
+	// webserver is the M10a unified web portal (ADR 2026-08-20-m10-web-portal.md);
+	// nil when web_server disabled (D10).
+	webserver *webserver.Server
 
 	// evalEng is the task-evaluation engine (ADR 2026-08-20-eval-seam.md);
 	// nil when eval disabled (D10).
@@ -724,6 +742,11 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 			a.cfg.Web.SearchMaxResults, a.cfg.Web.SearchMaxQueries)
 	} else {
 		fmt.Println("web: disabled (web.enabled=false)")
+	}
+	if a.cfg.WebServer.Enabled {
+		fmt.Printf("web portal: enabled (%s)\n", a.cfg.WebServer.Addr)
+	} else {
+		fmt.Println("web portal: disabled (web_server.enabled=false)")
 	}
 	if a.cfg.Terminal.Enabled {
 		fmt.Printf("terminal: enabled (shell=%q, idle=%dms, timeout=%dms)\n",

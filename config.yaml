@@ -500,4 +500,13 @@ workflow:
   # layer); 0/absent ⇒ 4.
   max_concurrent: 4
 
+# Web 门户 (M10a, ADR 2026-08-20-m10-web-portal.md; 统一 webServer: dsh 式会话/
+# 事件浏览入口 + 后续 dashboard/KB 管理台). 默认关 D10: enabled=false 不启动
+# 监听. token 必填且只在此配置出现明文, 进程内只存 SHA-256 摘要; 空 token 且
+# enabled 时启动报错 (fail-closed 防裸奔). addr 默认本机 (个人门户不默认暴露).
+web_server:
+  enabled: false
+  addr: 127.0.0.1:8080
+  token: ""
+
 

@@ -1,0 +1,46 @@
+/* Personal Agent Portal — vanilla JS, no build step (M10a, ADR D-WEB-3). */
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --border: #2a2f3a;
+  --text: #e6e8ee;
+  --muted: #8b93a3;
+  --accent: #4f8cff;
+  --ok: #3fb950;
+  --err: #f85149;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.6 "Segoe UI", system-ui, sans-serif;
+}
+#app { max-width: 960px; margin: 0 auto; padding: 24px; }
+header { display: flex; align-items: baseline; gap: 16px; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 20px; }
+header h1 { font-size: 18px; margin: 0; }
+nav { display: flex; gap: 12px; }
+nav a { color: var(--muted); text-decoration: none; }
+nav a.active, nav a:hover { color: var(--accent); }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+input[type=text], input[type=password] {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; width: 100%; margin: 6px 0;
+}
+button {
+  background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+  padding: 8px 16px; cursor: pointer; font-size: 14px;
+}
+button:hover { filter: brightness(1.1); }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; }
+a.rowlink { color: var(--accent); text-decoration: none; }
+.muted { color: var(--muted); }
+.err { color: var(--err); }
+.event { font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; }
+.tag {
+  display: inline-block; padding: 1px 8px; border-radius: 10px;
+  font-size: 12px; background: #232936; color: var(--muted); margin-right: 8px;
+}
+.placeholder { text-align: center; color: var(--muted); padding: 40px 0; }

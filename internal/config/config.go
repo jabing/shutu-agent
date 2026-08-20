@@ -206,6 +206,7 @@ type Config struct {
 	Ralph      RalphConfig      `yaml:"ralph"`       // fresh-agent loop (D-GAP-3)
 	Workflow   WorkflowConfig   `yaml:"workflow"`    // task-DAG orchestration (D-GAP-2)
 	FsSearch   FsSearchConfig   `yaml:"fs_search"`   // file-content-search policy (D-GAP-1)
+	WebServer  WebServerConfig  `yaml:"web_server"`  // unified web portal (M10a)
 
 	// Mode selects the agent capability preset (D-MODE-1): minimal | standard
 	// | code; default standard. minimal is preset-first (D-MODE-6): 能力开关
@@ -297,6 +298,18 @@ type WorkflowConfig struct {
 	// MaxConcurrent is the ready-task concurrency cap the engine applies
 	// (D-GAP-2); <= 0 means the default 4.
 	MaxConcurrent int `yaml:"max_concurrent"` // default 4
+}
+
+// WebServerConfig is the unified web portal policy (ADR
+// 2026-08-20-m10-web-portal.md D-WEB-7). The portal is off by default (D10):
+// when Enabled is false the composition root never starts a listener. When
+// enabled, Token is required (fail-closed: empty token refuses to start rather
+// than serving bare); only its SHA-256 digest is retained by the server. minimal
+// 模式同样关闭 (D-MODE-2).
+type WebServerConfig struct {
+	Enabled bool   `yaml:"enabled"` // default false (D10)
+	Addr    string `yaml:"addr"`    // default 127.0.0.1:8080 (local-only personal portal)
+	Token   string `yaml:"token"`   // required when enabled; plaintext only in this config
 }
 
 // MultimodalConfig is the image-attachment policy (dispatch-m8-3 §3 / ADR
@@ -1203,6 +1216,12 @@ func applyDefaults(cfg *Config) {
 	if cfg.Workflow.MaxConcurrent <= 0 {
 		cfg.Workflow.MaxConcurrent = DefaultWorkflowMaxConcurrent
 	}
+	// M10a web portal defaults (ADR 2026-08-20-m10-web-portal.md): addr defaults
+	// to the local-only personal portal; token is left for the composition root
+	// to fail closed on when enabled.
+	if cfg.WebServer.Addr == "" {
+		cfg.WebServer.Addr = "127.0.0.1:8080"
+	}
 	// D-MODE-2 (ADR 2026-08-20-mode-presets.md): minimal 模式是预设优先 ——
 	// 只保留持久 shell + 文件编辑 + M1 基础只读；其余能力 cap 全关、白名单
 	// 整体重置为 minimal 集合。register* 的 D10 门读这些 Enabled, 因此注册面
@@ -1211,9 +1230,10 @@ func applyDefaults(cfg *Config) {
 	if cfg.Mode == ModeMinimal {
 		cfg.Terminal.Enabled = true
 		cfg.Fs.Enabled = true
-		cfg.FsSearch.Enabled = false // minimal 不含搜索 (D-MODE-2)
-		cfg.Ralph.Enabled = false    // minimal 不含 fresh-agent 循环 (D-MODE-2)
-		cfg.Workflow.Enabled = false // minimal 不含 workflow DAG 编排 (D-MODE-2)
+		cfg.FsSearch.Enabled = false  // minimal 不含搜索 (D-MODE-2)
+		cfg.Ralph.Enabled = false     // minimal 不含 fresh-agent 循环 (D-MODE-2)
+		cfg.Workflow.Enabled = false  // minimal 不含 workflow DAG 编排 (D-MODE-2)
+		cfg.WebServer.Enabled = false // minimal 不含 web 门户 (D-MODE-2)
 		cfg.KB.Enabled = false
 		cfg.Jobs.Enabled = false
 		cfg.Subagent.Enabled = false

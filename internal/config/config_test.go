@@ -2284,6 +2284,24 @@ func TestModeMinimalTerminalToolsRegistered(t *testing.T) {
 	}
 }
 
+// TestWebServerDefaults verifies the M10a defaults (ADR
+// 2026-08-20-m10-web-portal.md D-WEB-7): addr defaults to the local-only
+// personal portal and minimal mode disables the portal.
+func TestWebServerDefaults(t *testing.T) {
+	var cfg Config
+	cfg.Mode = ModeStandard
+	applyDefaults(&cfg)
+	if cfg.WebServer.Addr != "127.0.0.1:8080" {
+		t.Errorf("web_server.addr = %q, want default 127.0.0.1:8080", cfg.WebServer.Addr)
+	}
+	var minimal Config
+	minimal.Mode = ModeMinimal
+	applyDefaults(&minimal)
+	if minimal.WebServer.Enabled {
+		t.Error("minimal must disable web_server (D-MODE-2)")
+	}
+}
+
 // modeCapStates returns every capability master switch except kb (kb is
 // asserted per-test, e.g. it differs between an explicit kb.enabled and the
 // default), used to compare cap states across modes.
@@ -2294,6 +2312,7 @@ func modeCapStates(cfg Config) map[string]bool {
 		"fs_search":      cfg.FsSearch.Enabled,
 		"ralph":          cfg.Ralph.Enabled,
 		"workflow":       cfg.Workflow.Enabled,
+		"web_server":     cfg.WebServer.Enabled,
 		"jobs":           cfg.Jobs.Enabled,
 		"subagent":       cfg.Subagent.Enabled,
 		"web":            cfg.Web.Enabled,
