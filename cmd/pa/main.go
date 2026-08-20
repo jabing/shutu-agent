@@ -42,6 +42,7 @@ import (
 	"personal-agent/internal/store"
 	"personal-agent/internal/subagent"
 	"personal-agent/internal/tools"
+	"personal-agent/internal/web"
 )
 
 func main() {
@@ -272,6 +273,18 @@ func main() {
 	if app.fs != nil {
 		defer app.fs.Close()
 	}
+	// M7-2: wire the web seam — Engine + DeepSeek search provider (env key
+	// only) + HTTP fetch provider + the two web_* tools — when web.enabled
+	// (默认关闭, D10). config.applyDefaults already whitelisted web_search/
+	// web_fetch when web.enabled was true. registerWeb runs before
+	// registerInteracts so the sensitive-tool gate can wrap the web tools too.
+	// The Engine holds no closable resources, so there is no deferred Close.
+	// web/search-request is logged by the provider's OnRequest (D3); the web_*
+	// tools execute on the serial tool path (D5) — no background goroutine.
+	if err := app.registerWeb(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
 	// M6d-2: wire the interact seam — in-memory Provider + Engine + the two
 	// interact_* tools + the D3 event sink + the sensitive-tool gate — when
 	// interact.enabled (默认关闭, D10). config.applyDefaults already whitelisted
@@ -318,6 +331,7 @@ type app struct {
 	code       code.Engine       // nil when code disabled (D10)
 	mcp        []mcp.Client      // nil when mcp disabled (D10); one live bridged client per configured server
 	fs         fs.FileService    // nil when fs disabled (D10)
+	web        *web.Engine       // nil when web disabled (D10)
 
 	// approveInput feeds the sensitive-tool gate's y/n read (nil => os.Stdin).
 	// It exists so the wiring tests can inject canned approval answers; in the
@@ -603,6 +617,12 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 		}
 	} else {
 		fmt.Println("fs: disabled (fs.enabled=false)")
+	}
+	if a.cfg.Web.Enabled {
+		fmt.Printf("web: enabled (search_max_results=%d, search_max_queries=%d)\n",
+			a.cfg.Web.SearchMaxResults, a.cfg.Web.SearchMaxQueries)
+	} else {
+		fmt.Println("web: disabled (web.enabled=false)")
 	}
 }
 
