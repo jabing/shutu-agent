@@ -21,6 +21,9 @@ type SessionMeta struct {
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	EventCount int
+	// Title is the user-set title (renamed via the web sidebar, P2). When
+	// empty the UI falls back to the first-user-message inference.
+	Title string
 }
 
 // Store is the durable append-only event backend. The agent loop is strictly
@@ -40,6 +43,13 @@ type Store interface {
 	// ListSessions returns every session's metadata, most recently updated
 	// first.
 	ListSessions(ctx context.Context) ([]SessionMeta, error)
+	// SetSessionTitle stores a user-set title for a session. A non-empty title
+	// overrides the UI's first-user-message inference; an empty title clears the
+	// override and returns to inference. ErrNotFound when the id has no row.
+	SetSessionTitle(ctx context.Context, sessionID, title string) error
+	// DeleteSession removes a session and all of its events. ErrNotFound when
+	// the id has no row.
+	DeleteSession(ctx context.Context, sessionID string) error
 	// Close releases the backend's resources.
 	Close() error
 }

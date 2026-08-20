@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -23,7 +24,8 @@ const schema = `
 CREATE TABLE IF NOT EXISTS sessions (
     id         TEXT    NOT NULL PRIMARY KEY,
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    title      TEXT
 );
 CREATE TABLE IF NOT EXISTS events (
     session_id TEXT    NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -36,6 +38,22 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_session ON events (session_id, seq);
 `
+
+// migrateSchema brings pre-P2 databases (sessions without the title column)
+// forward. CREATE TABLE IF NOT EXISTS never alters an existing table, so the
+// column is added here; a "duplicate column" error simply means the database
+// is already current and is ignored.
+func migrateSchema(db *sql.DB) error {
+	if _, err := db.Exec(`ALTER TABLE sessions ADD COLUMN title TEXT`); err != nil {
+		// modernc reports duplicate column as an error; any failure other than
+		// "column already exists" is fatal.
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") &&
+			!strings.Contains(strings.ToLower(err.Error()), "already exists") {
+			return fmt.Errorf("store: migrate sessions.title: %w", err)
+		}
+	}
+	return nil
+}
 
 // SQLiteStore implements Store on one SQLite database file.
 type SQLiteStore struct {
@@ -67,6 +85,10 @@ func OpenSQLite(path string) (*SQLiteStore, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: init schema: %w", err)
+	}
+	if err := migrateSchema(db); err != nil {
+		db.Close()
+		return nil, err
 	}
 	return &SQLiteStore{db: db}, nil
 }
@@ -159,7 +181,7 @@ func (s *SQLiteStore) LoadSession(ctx context.Context, sessionID string) ([]sess
 // ListSessions returns every session's metadata, most recently updated first.
 func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT s.id, s.created_at, s.updated_at, COUNT(e.seq)
+		SELECT s.id, s.created_at, s.updated_at, s.title, COUNT(e.seq)
 		FROM sessions s LEFT JOIN events e ON e.session_id = s.id
 		GROUP BY s.id
 		ORDER BY s.updated_at DESC, s.created_at DESC`)
@@ -171,12 +193,14 @@ func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 	for rows.Next() {
 		var m SessionMeta
 		var created, updated int64
+		var title sql.NullString
 		var count int
-		if err := rows.Scan(&m.ID, &created, &updated, &count); err != nil {
+		if err := rows.Scan(&m.ID, &created, &updated, &title, &count); err != nil {
 			return nil, fmt.Errorf("store: scan session meta: %w", err)
 		}
 		m.CreatedAt = time.Unix(0, created).UTC()
 		m.UpdatedAt = time.Unix(0, updated).UTC()
+		m.Title = title.String
 		m.EventCount = count
 		metas = append(metas, m)
 	}
@@ -184,6 +208,35 @@ func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 		return nil, fmt.Errorf("store: read session metas: %w", err)
 	}
 	return metas, nil
+}
+
+// SetSessionTitle stores (or clears) the user-set title override.
+func (s *SQLiteStore) SetSessionTitle(ctx context.Context, sessionID, title string) error {
+	var tv any
+	if title != "" {
+		tv = title
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions SET title = ? WHERE id = ?`, tv, sessionID)
+	if err != nil {
+		return fmt.Errorf("store: set title %q: %w", sessionID, err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("%w: %q", ErrNotFound, sessionID)
+	}
+	return nil
+}
+
+// DeleteSession removes the session row; events cascade (ON DELETE CASCADE,
+// PRAGMA foreign_keys is ON at open).
+func (s *SQLiteStore) DeleteSession(ctx context.Context, sessionID string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, sessionID)
+	if err != nil {
+		return fmt.Errorf("store: delete session %q: %w", sessionID, err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("%w: %q", ErrNotFound, sessionID)
+	}
+	return nil
 }
 
 // Close releases the underlying database handle.

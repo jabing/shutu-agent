@@ -265,6 +265,7 @@ function finishAssistant(text, timeIso) {
     // replay path (snapshot with no streaming chunks): render the bubble fresh
     addAssistant(text, timeIso, true);
   }
+  if (streamActive) { streamActive = false; loadSessions(); }
   scrollToBottom(true);
 }
 
@@ -318,7 +319,25 @@ messagesEl.addEventListener("scroll", () => {
 });
 scrollBottomBtn.addEventListener("click", () => { scrollToBottom(true); });
 
-// ---- session list -----------------------------------------------------------
+// ---- session list (P2: dsh ui-workspace single-line rows) -------------------
+let searchQuery = "";
+let streamActive = false; // a streaming assistant turn is in flight
+
+// fmtShort: sidebar relative/compact time (dsh ui-workspace relativeTime).
+function fmtShort(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const now = new Date();
+  const diffMin = Math.round((now - d) / 60000);
+  if (diffMin < 1) return "刚刚";
+  if (diffMin < 60) return `${diffMin} 分钟前`;
+  const diffH = Math.round(diffMin / 60);
+  if (diffH < 24) return `${diffH} 小时前`;
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}/${d.getDate()}`;
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+}
+
 async function loadSessions() {
   let res;
   try {
@@ -326,6 +345,7 @@ async function loadSessions() {
   } catch (e) { if (e.message !== "unauthorized") console.error(e); return; }
   const list = await res.json();
   sessionList.textContent = "";
+  closeAnyMenu();
   if (!Array.isArray(list) || list.length === 0) {
     const li = document.createElement("li");
     li.className = "session-item";
@@ -334,16 +354,115 @@ async function loadSessions() {
     return;
   }
   list.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+  const q = searchQuery.trim().toLowerCase();
   for (const s of list) {
+    const hay = ((s.title || "") + " " + s.id).toLowerCase();
+    if (q && !hay.includes(q)) continue;
+    let state = s.blank ? "idle" : "done";
+    if (s.id === currentID && streamActive) state = "running";
     const li = document.createElement("li");
     li.className = "session-item" + (s.id === currentID ? " active" : "");
     li.dataset.id = s.id;
     li.innerHTML = `
+      <span class="si-dot" data-state="${state}"></span>
       <span class="si-title${s.blank ? " empty" : ""}">${esc(s.title || s.id)}</span>
-      <span class="si-meta">${fmtTime(s.updated_at)}${s.blank ? " · 空会话" : ""}</span>`;
-    li.addEventListener("click", () => switchSession(s.id));
+      <span class="si-time">${fmtShort(s.updated_at)}</span>
+      <button class="si-menu" title="会话操作">⋯</button>`;
+    li.addEventListener("click", (e) => {
+      if (e.target.closest(".si-menu")) return;
+      switchSession(s.id);
+    });
+    const menu = li.querySelector(".si-menu");
+    menu.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openMenu(li, s);
+    });
     sessionList.appendChild(li);
   }
+}
+
+let openMenuEl = null;
+function closeAnyMenu() {
+  if (openMenuEl) { openMenuEl.remove(); openMenuEl = null; }
+  document.querySelectorAll(".session-item.renaming").forEach((el) => el.classList.remove("renaming"));
+}
+document.addEventListener("click", (e) => { if (!e.target.closest(".si-pop")) closeAnyMenu(); });
+$("session-search").addEventListener("input", (e) => {
+  searchQuery = e.target.value;
+  loadSessions();
+});
+
+function openMenu(li, s) {
+  closeAnyMenu();
+  const pop = document.createElement("div");
+  pop.className = "si-pop";
+  pop.innerHTML = `
+    <button data-act="rename">✏️ 重命名</button>
+    <button data-act="delete" class="danger">🗑 删除会话</button>`;
+  pop.addEventListener("click", (e) => {
+    const act = e.target.dataset.act;
+    if (!act) return;
+    closeAnyMenu();
+    if (act === "rename") startRename(li, s);
+    if (act === "delete") deleteSession(s.id);
+  });
+  li.appendChild(pop);
+  openMenuEl = pop;
+}
+
+function startRename(li, s) {
+  li.classList.add("renaming");
+  const title = li.querySelector(".si-title");
+  const old = title.textContent;
+  const input = document.createElement("input");
+  input.className = "si-rename";
+  input.value = s.title || old;
+  li.replaceChild(input, title);
+  input.focus();
+  input.select();
+  let done = false;
+  const commit = async (save) => {
+    if (done) return;
+    done = true;
+    const val = save ? input.value.trim() : "";
+    if (save && val) {
+      try {
+        await api(`/api/sessions/${encodeURIComponent(s.id)}/title`, {
+          method: "PATCH", body: JSON.stringify({ title: val }),
+        });
+      } catch (e) { if (e.message !== "unauthorized") console.error(e); }
+    }
+    loadSessions();
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(true); }
+    if (e.key === "Escape") { e.preventDefault(); commit(false); }
+  });
+  input.addEventListener("blur", () => commit(true));
+  li.addEventListener("click", (e) => { if (e.target !== input) commit(true); });
+}
+
+async function deleteSession(id) {
+  const wasCurrent = id === currentID;
+  if (!confirm("确定删除这个会话吗？其所有消息将永久移除。")) return;
+  try {
+    await api(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+  } catch (e) { if (e.message !== "unauthorized") console.error(e); }
+  if (wasCurrent) {
+    if (sseAbort) { sseAbort.abort(); sseAbort = null; }
+    streamState = null;
+    runningNode = null;
+    localStorage.removeItem(KEY_CURRENT);
+    currentID = "";
+    messagesEl.querySelector(".messages-inner")?.remove();
+    curSessionEl.textContent = "";
+    heroEl.classList.remove("hidden");
+    composerText.disabled = false;
+    composerBox.classList.remove("disabled");
+    sendBtn.disabled = false;
+    updatePlaceholder();
+  }
+  loadSessions();
 }
 
 async function newSession() {
@@ -375,6 +494,7 @@ function openSession(id) {
   if (sseReconnect) { clearTimeout(sseReconnect); sseReconnect = null; }
   streamState = null;
   runningNode = null;
+  streamActive = false;
   messagesEl.querySelector(".messages-inner")?.remove();
   curSessionEl.textContent = id || "";
   heroEl.classList.toggle("hidden", !!id);
@@ -498,6 +618,8 @@ async function sendMessage() {
   try {
     addUserMsg(text, new Date().toISOString());
     addRunning();
+    streamActive = true;
+    loadSessions(); // blue running dot on the current row
     composerText.value = "";
     syncGrow();
     const res = await api(`/api/sessions/${encodeURIComponent(currentID)}/message`, {

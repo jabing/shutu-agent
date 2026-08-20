@@ -613,3 +613,77 @@ func TestSubagentsJobsAPI(t *testing.T) {
 		t.Fatalf("subagents no token → %d, want 401", rec.Code)
 	}
 }
+
+// TestSessionTitleDelete covers the P2 sidebar management API: rename
+// (PATCH /api/sessions/{id}/title) with override + clear, and delete
+// (DELETE /api/sessions/{id}) with cascade + 404 for unknown ids.
+func TestSessionTitleDelete(t *testing.T) {
+	srv, st := newTestServer(t, "tok")
+	seedSession(t, st, "s-1", []session.Event{
+		{Seq: 1, Type: "user/message", At: time.Now(), Version: 1, Data: mustData(t, map[string]any{"Text": "帮我写首诗"})},
+	})
+	h := srv.Handler()
+
+	// Inference title before any override.
+	rec := doReq(t, h, "GET", "/api/sessions", "tok")
+	var list []sessionView
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list) != 1 || list[0].Title != "帮我写首诗" {
+		t.Fatalf("inferred title = %q, want 帮我写首诗", list[0].Title)
+	}
+
+	// Rename overrides the inferred title.
+	body := strings.NewReader(`{"title":"我的新名字"}`)
+	req := httptest.NewRequest("PATCH", "/api/sessions/s-1/title", body)
+	req.Header.Set("Authorization", "Bearer tok")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH title → %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, "GET", "/api/sessions", "tok")
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list 2: %v", err)
+	}
+	if list[0].Title != "我的新名字" {
+		t.Fatalf("renamed title = %q, want 我的新名字", list[0].Title)
+	}
+
+	// Unknown id → 404.
+	req = httptest.NewRequest("PATCH", "/api/sessions/s-nope/title", strings.NewReader(`{"title":"x"}`))
+	req.Header.Set("Authorization", "Bearer tok")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("PATCH unknown → %d, want 404", rec.Code)
+	}
+
+	// Delete removes the session and its events.
+	req = httptest.NewRequest("DELETE", "/api/sessions/s-1", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE → %d, want 200", rec.Code)
+	}
+	rec = doReq(t, h, "GET", "/api/sessions", "tok")
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list 3: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("sessions after delete = %d, want 0", len(list))
+	}
+	// Events cascade-deleted: loading the session is now a 404.
+	if rec := doReq(t, h, "GET", "/api/sessions/s-1/events", "tok"); rec.Code != http.StatusNotFound {
+		t.Fatalf("events after delete → %d, want 404", rec.Code)
+	}
+	req = httptest.NewRequest("DELETE", "/api/sessions/s-1", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("DELETE unknown → %d, want 404", rec.Code)
+	}
+}

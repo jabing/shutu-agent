@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -105,6 +106,11 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	mux.Handle("POST /api/sessions", s.requireAuth(http.HandlerFunc(s.handleSessionCreate)))
 	mux.Handle("POST /api/sessions/{id}/resume", s.requireAuth(http.HandlerFunc(s.handleSessionResume)))
 	mux.Handle("POST /api/sessions/{id}/message", s.requireAuth(http.HandlerFunc(s.handleMessage)))
+	// M10 P2 (ADR D-WEB2-I): sidebar session management — rename (PATCH) and
+	// delete (DELETE). PATCH body is {"title": "..."}; an empty title clears the
+	// override back to first-user-message inference.
+	mux.Handle("PATCH /api/sessions/{id}/title", s.requireAuth(http.HandlerFunc(s.handleSessionTitle)))
+	mux.Handle("DELETE /api/sessions/{id}", s.requireAuth(http.HandlerFunc(s.handleSessionDelete)))
 	mux.Handle("GET /api/sessions/{id}/events/stream", s.requireAuth(http.HandlerFunc(s.handleEventStream)))
 	// M10 W2 (ADR D-WEB2-D): the read-only sanitized config view.
 	mux.Handle("GET /api/config", s.requireAuth(http.HandlerFunc(s.handleConfig)))
@@ -343,7 +349,10 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	out := make([]sessionView, 0, len(metas))
 	for _, m := range metas {
 		v := sessionView{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, EventCount: m.EventCount, Blank: m.EventCount == 0}
-		if m.EventCount > 0 {
+		if m.Title != "" {
+			// User-set title (P2 rename) wins over inference.
+			v.Title = boundRunes(m.Title, maxTitle)
+		} else if m.EventCount > 0 {
 			// The sidebar title is the first user message, bounded (a personal
 			// portal list is small; this is O(events of each session), same
 			// order as the existing stats rollup).
@@ -362,6 +371,43 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleSessionTitle implements PATCH /api/sessions/{id}/title (P2 sidebar
+// rename). The request body is {"title":"..."} (UTF-8, bounded); an empty title
+// clears the override back to inference.
+func (s *Server) handleSessionTitle(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct{ Title string }
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad request: " + err.Error()})
+		return
+	}
+	title := boundRunes(body.Title, maxTitle)
+	if err := s.store.SetSessionTitle(r.Context(), id, title); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "session not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id, "title": title})
+}
+
+// handleSessionDelete implements DELETE /api/sessions/{id} (P2 sidebar delete).
+// It removes the session and all of its events from the durable store.
+func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.store.DeleteSession(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "session not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 }
 
 // statsView is the /api/stats aggregate (D-WEB-5: a read-only in-memory rollup
