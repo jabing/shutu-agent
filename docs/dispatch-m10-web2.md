@@ -146,3 +146,95 @@ func (a *app) runTurn(ctx context.Context, text string, interactive bool) error 
 
 ## 报告（简短）
 提交 hash + go test 结果 + 偏离说明。不要贴代码。
+
+---
+
+# M10 升级 W4 派发：dsh 级工作区（认证已可选；思维链 + 会话模式 + 子代理/后台任务列表 + 设置全功能 + 精致 UI）
+
+> 前置已完成：W1（`5455efa` 交互核心+聊天工作台）、W2（`238a329` 设置+config API）、W3（`d317375` ctx 修复+recover+--web-only）、认证可选（`02d64a8`/`5de9ea2`，ADR D-WEB-2 变更 + D-WEB2-G/H）。本段实现 D-WEB2-H：dsh web 工作区全功能面。
+
+## 纪律
+- W4 分**两个提交**（各独立可验证）：
+  1. `W4a: 状态 API + events 扩展（/api/subagents、/api/jobs、reasoning/tool_name）`
+  2. `W4b: dsh 式工作区前端大重构（思维链 + 会话模式 + 侧栏 tabs + 设置全功能 + 精致 UI）`
+- loop.go 零改动（D4）；认证已可选（token 空直开，D-WEB2-G——不要加回强制登录）；只动 internal/webserver、cmd/pa、static/；零新依赖、CGO-free、gofmt。
+- 状态 API 只读 + **脱敏**（D7）：不暴露密钥、会话事件正文、完整输出；只给 id/状态/时间/标签/摘要。
+- 提交用 `git add` 明确列文件（config.yaml 保持 M 不动不提交）。
+
+## 现状（实施时通读）
+- `internal/webserver/webserver.go`：`Server{store, tokenHash, authOn, addr, srv, msgFn, sessFn, evSrc, cfgFn}` + `New(store, token, addr)`（token 空 → authOn=false 直开）+ `requireAuth`（authOn false 放行，panicSafeWriter recover）+ `Handlers()` getter + 路由（sessions/events/stats/kb/message/resume/config/SSE）。
+- `eventView{Seq,Type,Time,Summary}`（events API 每事件视图）；`summarize(ev)`（有界文本）。
+- 事件 Data 的 JSON tag 是公开契约（session.go）：`assistantMessageData{Text, ToolCalls, FinishReason, Reasoning json:"reasoning,omitempty"}`、`toolResultData{CallID, Name, Output, Spill}`、`toolErrorData{...}`——webserver 可自建同构 struct Unmarshal 提取（不依赖 session 内部类型）。
+- `cmd/pa/main.go` app 字段：`jobs *jobs.Local`（nil 当 jobs 关）、`subagents subagent.Runtime`（nil 当 subagent 关）、`currentID`。
+- `internal/jobs`：`(*Local).List(ctx, callerSession) ([]JobSnapshot, error)`；`JobSnapshot{ID, Kind, Label, OwnerSession, Status, Detail, StartedAt, FinishedAt, OutputLimitBytes}`。
+- `internal/subagent`：`Runtime.ListChildren(ctx, parentSessionID) ([]ChildSummary, error)`；ChildSummary 字段见 `internal/subagent/service.go`。
+- 前端 `static/{index.html,app.js,style.css}`：现为 dsh 式聊天工作台（侧栏会话 + 气泡 + 工具卡片 + SSE fetch 流 + 主题 + #/settings）；登录视图已按 D-WEB2-G 改为「默认直进，401 才提示」。
+
+## 提交 1：W4a 后端状态 API + events 扩展
+
+### 1. internal/webserver — events 扩展 + 两个状态路由 + 注入点
+- `eventView` 加字段：
+  - `Reasoning string \`json:"reasoning,omitempty"\``：仅 `assistant/message` 时从 Data 的 `reasoning` 提取（有界 `maxSummary` runes；空则省略）。
+  - `ToolName string \`json:"tool_name,omitempty"\``：`tool/result`、`tool/error` 时从 Data 的 `name` 提取（工具卡片标题）。
+  - `ToolOutput string \`json:"tool_output,omitempty"\``：`tool/result` 时从 Data 的 `output` 提取（有界 maxSummary；工具卡片展开内容，替代/补充 summary）。
+  - 实现：webserver 内自建 `type evAssistant struct{ Reasoning string \`json:"reasoning"\` }`、`type evTool struct{ Name, Output string }` 等，按 Type 分支 `json.Unmarshal(ev.Data, &x)` 提取。保持 `summarize` 行为不变（兼容）。
+- 新注入字段 + Setter：
+  - `subFn func(ctx context.Context) ([]map[string]any, error)` + `SetSubagentProvider(fn)`。
+  - `jobsFn func(ctx context.Context) ([]map[string]any, error)` + `SetJobsProvider(fn)`。
+  - 加入 `Handlers()` getter（Subagents / Jobs 字段）。
+- 新路由（requireAuth）：
+  - `GET /api/subagents` → subFn nil → 501；否则返回 `{"subagents": [...]}`。
+  - `GET /api/jobs` → jobsFn nil → 501；否则返回 `{"jobs": [...]}`。
+
+### 2. cmd/pa/webserver.go — 注入脱敏 providers
+- `registerWebServer` 加：
+  - `srv.SetSubagentProvider(a.webSubagents)`
+  - `srv.SetJobsProvider(a.webJobs)`
+- `webSubagents(ctx) ([]map[string]any, error)`：`if a.subagents == nil { return []map[string]any{}, nil }`（关 → 空数组）；`a.subagents.ListChildren(ctx, a.currentID)` → 每 ChildSummary 脱敏视图 `{id, name, status, created_at}`（字段名按 ChildSummary 实际字段映射；**不**含 prompt/输出）。ListChildren 错误 → 返回 err。
+- `webJobs(ctx) ([]map[string]any, error)`：`if a.jobs == nil { return []map[string]any{}, nil }`；`a.jobs.List(ctx, a.currentID)` → 每 JobSnapshot `{id, kind, label, status, detail, started_at, finished_at}`（**不**含 OwnerSession 细节、输出内容）。
+
+### 3. 测试（W4a）
+- `internal/webserver/webserver_test.go`：
+  - `TestEventsExtendedFields`：seed `assistant/message`（Data 含 reasoning）+ `tool/result`（Data 含 name/output）→ GET events → 断言 eventView 含 reasoning/tool_name/tool_output（有界）。
+  - `TestSubagentsJobsAPI`：注入 fake subFn/jobsFn → 200 返回数组；无 token（配置 token 时）401；nil → 501。
+- `cmd/pa`：`TestWebSubagentsJobsProviders`——a.subagents/a.jobs 为 nil → 空数组不报错；注入断言（Handlers().Subagents/Jobs 非 nil）。
+
+## 提交 2：W4b 前端 dsh 式工作区大重构（static/）
+
+### 布局（dsh web 工作区对齐）
+- **左侧面板**（~280px，可折叠）：三个 tab——**会话**（列表 + 新建/恢复/切换，当前高亮）/ **子代理**（GET /api/subagents 渲染：id/状态/时间，5s 轮询）/ **后台任务**（GET /api/jobs 渲染：id/kind/状态/时间，5s 轮询）。
+- **主聊天区**：消息流 + 底部输入框（Enter 发送）+ 空态引导。
+- **顶部栏**：当前会话 id、**会话模式徽标**（`/api/config` 的 mode：standard/minimal/code，badge 颜色区分；提示「改 config.yaml 重启生效」tooltip）、模型·provider（config API）、主题切换（深/浅）、⚙ 设置入口。
+- `#/chat/{id}` 默认工作台；`#/settings` 完整设置页；`#/kb` 占位保留。
+
+### 消息流全元素
+- `user/message` 右侧气泡（文本 + 时间戳）；`assistant/message` 左侧气泡（时间戳）。
+- **思维链**：`assistant/message` 的 `reasoning` 非空 → 折叠块「💭 思考过程」（点击展开，等宽/浅色块，有界）；流式期间若出现 reasoning 用同样折叠块。
+- **工具卡片**：`tool/result`/`tool/error` → 折叠卡片（标题 `<tool_name>` + 状态徽标；展开显示有界 output；error 红色）。
+- **流式**：`assistant/chunk` 逐字进当前 assistant 气泡（现有逻辑保留/增强）。
+- 时间戳格式化（HH:MM:SS）健壮（Invalid Date 守卫）。
+
+### 设置全功能（#/settings）
+- `/api/config` 分组渲染：模型/provider/mode / 19 个能力开关（enabled ✓/✗）/ web_server / tools 白名单（计数+列表）/ base_url；只读 + 「修改 config.yaml 后重启生效」提示；主题切换。
+
+### 视觉（精致深色，对齐 dsh 观感）
+- CSS 变量主题（--bg/--surface/--border/--text/--muted/--accent/--danger…），深色为默认；浅色变量同套。
+- 卡片/气泡圆角 + 细边框 + 柔和阴影；侧栏 tab 激活态；滚动条样式；工具卡片/思维链块 hover 态；输入框聚焦 ring；整体间距节奏统一。
+- 动画克制（气泡入场 fade/slide、流式光标、面板切换过渡）。
+- 零外部资源（无图标库/无字体 CDN；用 unicode 符号如 💭/⚙/🔍/+）。
+
+### 前端逻辑（app.js）
+- 复用现有 fetch 封装（api()）、SSE fetch 流解析（fetch+getReader，token 可选）、路由。
+- 新增：侧栏 tab 切换 + 子代理/任务轮询渲染（AbortController 防泄漏）、思维链/工具卡片渲染、mode 徽标、设置分组渲染。
+- 保持：默认直进（无 token 不弹登录；401 → showLogin）、主题记忆（localStorage）、会话新建/恢复/切换。
+
+## 验证（每提交后）
+- `go build ./...` + `go vet ./internal/webserver/ ./cmd/pa/` + `go test -count=1 -timeout 90s ./internal/webserver/ ./cmd/pa/ -run 'Events|Subagents|Jobs|Config|Web' -v` 全 PASS 后提交对应提交；两提交完成后全量 `go test -count=1 -timeout 90s ./...` 全绿确认。
+- 前端：无构建验证（静态文件直接读）；自查 DOM id 一致、无 JS 语法错误（可用 node --check 若环境有；无则人工核对）。
+
+## 环境
+- Go：`C:\Program Files\Go\bin\go.exe`；env（每个 go 命令都要设）：`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`；提交身份 `-c user.name='Personal Agent' -c user.email='dev@personal-agent.local'`；pwsh，workdir=`D:\dev-projects\Agent\personal-agent`。
+- **警告**：不要用 PowerShell Set-Content/Add-Content 改 UTF-8 文件（破坏编码）；改文件用文件编辑能力；误改坏删除重建。前端文件建议整文件重写时用文件编辑（write 全量）保证 UTF-8。
+
+## 报告（简短）
+两个提交 hash + go test 结果 + 前端改动要点 + 偏离说明。不要贴代码。
