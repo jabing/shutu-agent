@@ -53,6 +53,20 @@ dsh web 的核心功能面：实时对话（发消息 + 流式 assistant 输出 
 - vanilla JS 保持，零新依赖、无构建。
 - **SSE 认证接线（D-WEB2-B 续）**：浏览器 `EventSource` 不能设置 `Authorization` header（且 token 入 URL 有泄露面）→ **决策：前端用 `fetch` + `response.body.getReader()` 手动解析 SSE 帧（~30 行）**——token 只经 Authorization header，SSE 端点与普通 API 共用同一 `requireAuth` 中间件。
 
+### D-WEB2-G 认证改为默认直开，token 可选（用户拍板 2026-08-20）
+- 见 `2026-08-20-m10-web-portal.md` D-WEB-2 变更：`web_server.token` 为空 → 所有 API 放行（信任本机 `127.0.0.1`，与 dsh web 一致）；填了才走 bearer 校验。
+- 前端：**移除登录视图**（token 为空时直进工作区）；仅当后端实际要求认证（token 配置了）才提示输入 token（存 localStorage 附到 fetch）。
+
+### D-WEB2-H 工作区扩展为 dsh 级完整功能面（用户拍板 2026-08-20：要 dsh web 工作区的全部功能）
+- 对齐 dsh web 工作区：**左侧面板（可 tab：会话 / 子代理 / 后台任务）+ 主聊天区 + 顶部栏（会话模式 + 模型/provider + 主题）**。
+- **消息流全元素**：user/assistant 气泡 + **思维链（reasoning 折叠块，assistant/message 的 M8 reasoning 落库）** + 工具调用块（tool/result/error）+ 流式 chunk + 时间戳。
+- **顶部会话模式**：显示当前 `mode`（standard/minimal/code，来自 config）；切换提示「改 config.yaml 重启生效」（无热重载，诚实限制）。
+- **子代理列表**：只读展示活跃子代理（id/状态/创建时间/描述），数据来自 cmd/pa 子代理运行时状态（脱敏，D7）；**后台任务列表**：只读展示 jobs 引擎状态（id/状态/创建/结果摘要，脱敏，D7）。
+- **设置全功能**：模型 / provider / base_url / mode / 各 cap enabled / tools 白名单 / web addr（`GET /api/config` 扩展）+ 主题。
+- **会话管理**：新建 / 恢复 / 切换 +（可选）重命名 / 删除。
+- **视觉**：现代深色主题（CSS 变量 + 精致间距/卡片/动效），对齐 dsh 观感；vanilla JS 保持（零新依赖、无构建、单二进制）。
+- 后端只读状态 API（subagents / jobs）与 `GET /api/config` 扩展均走脱敏（不泄露密钥/敏感事件正文）。
+
 ## 理由
 
 1. **dsh 级工作台的核心是交互**：只读浏览（M10 现状）与 dsh 相差一个「对话面」。D-WEB2-A 让 web 发消息且**不改 loop**（D4 铁律保持）、**不破坏串行**（D5 turnMu），风险最小。
