@@ -1771,3 +1771,68 @@ func TestTerminalEnabledWhitelists(t *testing.T) {
 		}
 	}
 }
+
+// M-Eval: eval is off by default (D10), manual_fallback defaults to true
+// (absent ⇒ true via the pointer default — applyDefaults guarantees a non-nil
+// pointer), and the history cap defaults to 100 (dispatch-eval-3a §1).
+func TestEvalDefaults(t *testing.T) {
+	var cfg Config
+	applyDefaults(&cfg)
+	if cfg.Eval.Enabled {
+		t.Error("eval must be disabled by default (D10)")
+	}
+	if cfg.Eval.ManualFallback == nil {
+		t.Fatal("eval.manual_fallback must be non-nil after applyDefaults")
+	}
+	if !*cfg.Eval.ManualFallback {
+		t.Error("eval.manual_fallback must default to true (absent ⇒ true)")
+	}
+	if cfg.Eval.MaxRecords != DefaultEvalMaxRecords {
+		t.Errorf("eval.max_records = %d, want default %d", cfg.Eval.MaxRecords, DefaultEvalMaxRecords)
+	}
+}
+
+// M-Eval: eval.enabled is the single switch that whitelists the three eval_*
+// consumer tools; with eval disabled none of them is whitelisted (D10,
+// dispatch-eval-3a §1).
+func TestEvalEnabledWhitelists(t *testing.T) {
+	// Default (eval disabled): no eval tool in the whitelist.
+	var disabled Config
+	applyDefaults(&disabled)
+	for _, name := range evalToolNames {
+		if contains(disabled.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must not contain %q when eval disabled", disabled.Tools.Enabled, name)
+		}
+	}
+
+	// Enabled: all three eval_* tools enter the whitelist.
+	var enabled Config
+	enabled.Eval.Enabled = true
+	applyDefaults(&enabled)
+	for _, name := range evalToolNames {
+		if !contains(enabled.Tools.Enabled, name) {
+			t.Errorf("whitelist %v lacks %q after eval.enabled", enabled.Tools.Enabled, name)
+		}
+	}
+}
+
+// M-Eval: an explicit manual_fallback: false survives applyDefaults — the
+// pointer default only fills absent fields, so an explicit false means the
+// LLM-undecided verdict fails closed instead of routing to a human
+// (dispatch-eval-3a §1).
+func TestEvalManualFallbackExplicitFalse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("eval:\n  enabled: true\n  manual_fallback: false\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Eval.ManualFallback == nil {
+		t.Fatal("eval.manual_fallback must be non-nil after Load")
+	}
+	if *cfg.Eval.ManualFallback {
+		t.Error("eval.manual_fallback = true, want false (explicitly disabled)")
+	}
+}

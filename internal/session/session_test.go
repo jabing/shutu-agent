@@ -1851,3 +1851,47 @@ func TestNewUserMessageWithBlocksImageRefOnly(t *testing.T) {
 		t.Fatalf("derived content = %+v, want the image ref block", m.Content)
 	}
 }
+
+// Eval-3a: eval/run is an opaque log fact (ADR D-EVAL-5 / D3) — it appends
+// with the lean payload and DeriveHistory ignores it, so the turn/step
+// structure is unchanged (D4). The payload never carries the deliverable
+// output, only a lean summary.
+func TestEvalRunEventAppendsAndStaysOpaque(t *testing.T) {
+	l := New()
+	if _, err := l.Append(EventUserMessage, NewUserMessage("evaluate the deliverable")); err != nil {
+		t.Fatalf("append user: %v", err)
+	}
+	ev, err := l.Append(EventEvalRun, NewEvalRun("eval-1", "todo-7", "pass", "criteria met", "rule", 2))
+	if err != nil {
+		t.Fatalf("append eval/run: %v", err)
+	}
+	if ev.Type != EventEvalRun {
+		t.Fatalf("type = %q, want %q", ev.Type, EventEvalRun)
+	}
+	var d evalRunData
+	if err := json.Unmarshal(ev.Data, &d); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if d.ID != "eval-1" || d.TaskID != "todo-7" || d.Verdict != "pass" ||
+		d.Reason != "criteria met" || d.EvaluatorKind != "rule" || d.CriteriaCount != 2 {
+		t.Errorf("payload = %+v, want the lean eval/run summary", d)
+	}
+	if len(ev.Data) != len(mustMarshal(t, d)) {
+		t.Errorf("payload length %d, want the exact marshaled summary (no deliverable output)", len(ev.Data))
+	}
+
+	// DeriveHistory treats eval/run as opaque: only the user message derives.
+	msgs := l.DeriveHistory()
+	if len(msgs) != 1 || msgs[0].Role != llm.RoleUser {
+		t.Fatalf("derived %d messages, want 1 user message (eval/run opaque)", len(msgs))
+	}
+}
+
+func mustMarshal(t *testing.T, v any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return raw
+}

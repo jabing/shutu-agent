@@ -415,4 +415,22 @@ web:
 #   read_timeout_ms: 30000
 #   max_concurrent_sessions: 1
 
+# eval: task-evaluation capability (M-Eval; design.md §10 D2 / ADR
+# 2026-08-20-eval-seam.md D-EVAL-6). Off by default (D10): when disabled the
+# composition root creates no eval Engine, registers no eval_* tool and
+# whitelists nothing (默认关闭，不初始化). When enabled, eval_run judges a
+# deliverable output text against acceptance criteria (rule → llm → manual
+# dispatch, D-EVAL-3), eval_result reads one evaluation record, eval_list lists
+# the evaluation history, and each completed evaluation lands as an eval/run
+# log fact (D3). The engine-issued record ids follow the "eval-N" scheme.
+eval:
+  # Master switch. false ⇒ no eval Engine is created and the eval_* tools are
+  # neither registered nor whitelisted.
+  enabled: false
+  # LLM-undecided (manual) verdict route: true (default) asks a human, false
+  # fails closed. Absent ⇒ true; an explicit false is honored verbatim.
+  manual_fallback: true
+  # Evaluation-history cap (oldest records are evicted); 0/absent ⇒ 100.
+  max_records: 100
+
 

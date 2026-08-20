@@ -53,6 +53,14 @@ const (
 	EventTerminalStart = "terminal/start"
 	EventTerminalStop  = "terminal/stop"
 
+	// M-eval evaluation events (design.md §3 / ADR 2026-08-20-eval-seam.md
+	// D-EVAL-5): eval/run lands when an evaluation completes. It is log-only
+	// (D3): the model sees the deliverable and verdict through the eval_* tools'
+	// tool/result events, and DeriveHistory treats these types as opaque data,
+	// so adding them never changes the turn/step structure (D4). The payload is
+	// a lean summary — never the deliverable output (D-EVAL-5).
+	EventEvalRun = "eval/run"
+
 	// M5b subagent events (design.md §3 / ADR 2026-08-18-m5-agent-core.md
 	// 决策 ② / dispatch-m5b-2 §1): subagent/start lands when a delegation
 	// registers successfully, subagent/end when a child settles (observed on
@@ -665,6 +673,21 @@ func NewTerminalStart(id, owner string) any {
 // shell session closes (dispatch-m9-2 §3 / D3).
 func NewTerminalStop(id, reason string) any {
 	return terminalStopData{ID: id, Reason: reason}
+}
+
+// evalRunData is the eval/run payload (D-EVAL-5): a lean summary only.
+type evalRunData struct {
+	ID            string `json:"id"`
+	TaskID        string `json:"taskId,omitempty"`
+	Verdict       string `json:"verdict"`
+	Reason        string `json:"reason,omitempty"`
+	EvaluatorKind string `json:"evaluatorKind,omitempty"`
+	CriteriaCount int    `json:"criteriaCount"`
+}
+
+// NewEvalRun builds the eval/run payload (D-EVAL-5).
+func NewEvalRun(id, taskID, verdict, reason, kind string, criteriaCount int) any {
+	return evalRunData{ID: id, TaskID: taskID, Verdict: verdict, Reason: reason, EvaluatorKind: kind, CriteriaCount: criteriaCount}
 }
 
 // summaryHead returns a bounded, whitespace-compacted head of s for a log

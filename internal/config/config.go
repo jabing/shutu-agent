@@ -140,6 +140,13 @@ const (
 	DefaultTerminalReadIdleMS         = 500
 	DefaultTerminalReadTimeoutMS      = 30000
 	DefaultTerminalMaxConcurrent      = 1
+
+	// M-Eval eval defaults (dispatch-eval-3a §1 / ADR 2026-08-20-eval-seam.md
+	// D-EVAL-6): manual_fallback defaults to true (LLM undecided → human) and
+	// the evaluation-history cap to 100 when absent or non-positive. The
+	// capability itself is off by default (D10, bool 零值即关).
+	DefaultEvalManualFallback = true
+	DefaultEvalMaxRecords     = 100
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
@@ -170,6 +177,7 @@ type Config struct {
 	Web        WebConfig        `yaml:"web"`         // web search/fetch policy (M7)
 	LLM        LLMConfig        `yaml:"llm"`         // LLM provider selection (M8-2)
 	Terminal   TerminalConfig   `yaml:"terminal"`    // persistent-shell terminal (M9)
+	Eval       EvalConfig       `yaml:"eval"`        // task-evaluation seam (eval)
 }
 
 // LLMConfig is the LLM provider-selection policy (dispatch-m8-2 §5 / ADR
@@ -215,6 +223,24 @@ type TerminalConfig struct {
 	ReadIdleMS            int      `yaml:"read_idle_ms"`            // default 500
 	ReadTimeoutMS         int      `yaml:"read_timeout_ms"`         // default 30000
 	MaxConcurrentSessions int      `yaml:"max_concurrent_sessions"` // default 1 (single active owner, D5)
+}
+
+// EvalConfig is the task-evaluation policy (ADR 2026-08-20-eval-seam.md
+// D-EVAL-6). The capability is default off (D10): when Enabled is false the
+// composition root registers no eval_* tools and no /eval-status command.
+// ManualFallback is a pointer so an absent YAML field (→ the default true) is
+// distinguishable from an explicit false: the LLM-undecided (manual) verdict
+// routes to a human by default, and an explicit false makes it fail closed.
+// applyDefaults guarantees it is never nil, so the composition root reads it by
+// dereference.
+type EvalConfig struct {
+	Enabled bool `yaml:"enabled"` // default false (D10)
+	// ManualFallback is nil (absent) → the default true: an undecided verdict
+	// routes to a human; false (explicit) fails closed.
+	ManualFallback *bool `yaml:"manual_fallback"` // default true
+	// MaxRecords caps the evaluation history (oldest evicted); <= 0 means the
+	// default 100.
+	MaxRecords int `yaml:"max_records"` // default 100
 }
 
 // MultimodalConfig is the image-attachment policy (dispatch-m8-3 §3 / ADR
@@ -998,6 +1024,31 @@ func applyDefaults(cfg *Config) {
 			}
 		}
 	}
+	// M-Eval eval defaults (dispatch-eval-3a §1 / ADR 2026-08-20-eval-seam.md
+	// D-EVAL-6): manual_fallback is a pointer so an absent YAML field (→ the
+	// default true) is distinguishable from an explicit false (which means LLM
+	// undecided → fail); the history cap is 100; enabled defaults off (D10,
+	// bool 零值即关). Enabling eval whitelists its three consumer tools, so the
+	// single eval.enabled switch turns the whole capability on (mirrors
+	// kb/jobs/subagent/skill/schedule/plan/spill/interact/code/mcp/fs/web/
+	// terminal).
+	if cfg.Eval.ManualFallback == nil {
+		v := true
+		cfg.Eval.ManualFallback = &v
+	}
+	if cfg.Eval.MaxRecords <= 0 {
+		cfg.Eval.MaxRecords = DefaultEvalMaxRecords
+	}
+	// Enabling eval whitelists its three consumer tools as well, so the
+	// single eval.enabled switch turns the whole capability on; default off
+	// (D10).
+	if cfg.Eval.Enabled {
+		for _, name := range evalToolNames {
+			if !contains(cfg.Tools.Enabled, name) {
+				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+			}
+		}
+	}
 }
 
 // kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /
@@ -1079,6 +1130,13 @@ var webToolNames = []string{"web_search", "web_fetch"}
 // is enabled; keeping the names here makes the "terminal.enabled ⇒ 工具自动白名单"
 // rule a single, tested fact shared by applyDefaults and the composition root.
 var terminalToolNames = []string{"terminal_start", "terminal_write", "terminal_read", "terminal_signal", "terminal_stop"}
+
+// evalToolNames are the task-evaluation consumer tools (ADR
+// 2026-08-20-eval-seam.md D-EVAL-6). They are registered and whitelisted only
+// when eval is enabled; keeping the names here makes the "eval.enabled ⇒ 工具
+// 自动白名单" rule a single, tested fact shared by applyDefaults and the
+// composition root.
+var evalToolNames = []string{"eval_run", "eval_result", "eval_list"}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {
