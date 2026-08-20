@@ -33,6 +33,25 @@ llm:
     # Chat model (M8-2b).
     model: claude-sonnet-4-5
     # API key: ANTHROPIC_API_KEY environment variable only (M8-2b, 纪律 6).
+  # Exact-model input-modality capability declaration (M8-3, dispatch-m8-3 §3):
+  # "text" | "text,image". /llm-status shows it as the modalities line. This is
+  # the model's declared capability — when it lacks "image", image blocks must
+  # fail closed rather than be silently dropped (M8-3b enforces at serialize
+  # time).
+  model_input_modalities: text
+  # Image-attachment policy (M8-3, ADR 2026-08-20-m8-message-model.md 决策 M8-3).
+  # Default OFF (D10): when disabled the /attach command is unavailable and
+  # image blocks are never serialized. When enabled, /attach stores the image
+  # file under <data_dir>/attachments/ and the session log only ever carries
+  # the ImageRef reference (dsh 7078918 范式: 落库只存引用，请求时才转 data URL) —
+  # the image bytes never enter the log or this config.
+  multimodal:
+    # Master switch. false ⇒ no attachment store is created and /attach
+    # reports "multimodal disabled" (默认关闭 D10，不初始化).
+    enabled: false
+    # Single-image raw-byte cap applied by /attach (fail-closed over-limit);
+    # 0/absent ⇒ 10485760 (10 MiB).
+    max_image_bytes: 10485760
 
 # Directory for runtime data (the session database pa.db lives here).
 data_dir: data

@@ -1564,3 +1564,104 @@ func TestLoadLLMParsesSection(t *testing.T) {
 		t.Errorf("absent llm.openai.base_url = %q, want default %q", cfg2.LLM.OpenAI.BaseURL, DefaultOpenAIBaseURL)
 	}
 }
+
+// M8-3: an absent multimodal section means the capability is off by default
+// (D10), model_input_modalities defaults to "text", and max_image_bytes
+// defaults to 10MiB (dispatch-m8-3 §3).
+func TestLoadMultimodalDefaultsWhenAbsent(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LLM.Multimodal.Enabled {
+		t.Error("llm.multimodal must be disabled by default (D10)")
+	}
+	if cfg.LLM.ModelInputModalities != DefaultModelInputModalities {
+		t.Errorf("llm.model_input_modalities = %q, want default %q",
+			cfg.LLM.ModelInputModalities, DefaultModelInputModalities)
+	}
+	if cfg.LLM.Multimodal.MaxImageBytes != DefaultMultimodalMaxImageBytes {
+		t.Errorf("llm.multimodal.max_image_bytes = %d, want default %d",
+			cfg.LLM.Multimodal.MaxImageBytes, DefaultMultimodalMaxImageBytes)
+	}
+}
+
+// M8-3: an explicit multimodal section is honored (enabled, model_input_
+// modalities, max_image_bytes), while a non-positive max_image_bytes and an
+// empty model_input_modalities fall back to their defaults (校验非负, dispatch
+// -m8-3 §3).
+func TestLoadMultimodalParsesSectionAndFallsBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := `llm:
+  model_input_modalities: text,image
+  multimodal:
+    enabled: true
+    max_image_bytes: 2097152
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.LLM.Multimodal.Enabled {
+		t.Error("llm.multimodal.enabled should be true")
+	}
+	if cfg.LLM.ModelInputModalities != "text,image" {
+		t.Errorf("llm.model_input_modalities = %q, want text,image", cfg.LLM.ModelInputModalities)
+	}
+	if cfg.LLM.Multimodal.MaxImageBytes != 2097152 {
+		t.Errorf("llm.multimodal.max_image_bytes = %d, want 2097152", cfg.LLM.Multimodal.MaxImageBytes)
+	}
+
+	// Non-positive max_image_bytes / empty modalities fall back to defaults.
+	path2 := filepath.Join(t.TempDir(), "config2.yaml")
+	content2 := `llm:
+  multimodal:
+    enabled: true
+    max_image_bytes: 0
+`
+	if err := os.WriteFile(path2, []byte(content2), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg2.LLM.Multimodal.Enabled {
+		t.Error("llm.multimodal.enabled should stay true")
+	}
+	if cfg2.LLM.ModelInputModalities != DefaultModelInputModalities {
+		t.Errorf("absent llm.model_input_modalities = %q, want default %q",
+			cfg2.LLM.ModelInputModalities, DefaultModelInputModalities)
+	}
+	if cfg2.LLM.Multimodal.MaxImageBytes != DefaultMultimodalMaxImageBytes {
+		t.Errorf("llm.multimodal.max_image_bytes 0 = %d, want default %d",
+			cfg2.LLM.Multimodal.MaxImageBytes, DefaultMultimodalMaxImageBytes)
+	}
+}
+
+// M8-3: an explicit enabled:false keeps multimodal off even when other fields
+// are set (D10 gate stays closed).
+func TestLoadMultimodalExplicitDisabledStaysOff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := `llm:
+  multimodal:
+    enabled: false
+    max_image_bytes: 512
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LLM.Multimodal.Enabled {
+		t.Error("llm.multimodal.enabled = true, want false (explicitly disabled)")
+	}
+	if cfg.LLM.Multimodal.MaxImageBytes != 512 {
+		t.Errorf("llm.multimodal.max_image_bytes = %d, want 512 (explicit value kept)", cfg.LLM.Multimodal.MaxImageBytes)
+	}
+}

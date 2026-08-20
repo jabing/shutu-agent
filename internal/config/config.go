@@ -119,6 +119,14 @@ const (
 	DefaultOpenAIModel      = "gpt-4o-mini"
 	DefaultAnthropicBaseURL = "https://api.anthropic.com/v1"
 	DefaultAnthropicModel   = "claude-sonnet-4-5"
+
+	// M8-3 multimodal defaults (dispatch-m8-3 §3 / ADR
+	// 2026-08-20-m8-message-model.md 决策 M8-3): multimodal is off by default
+	// (D10); model_input_modalities defaults to "text" (the exact-model
+	// capability declaration); a single image's raw-byte cap defaults to
+	// 10 MiB (over-limit fails closed in internal/attachment).
+	DefaultModelInputModalities    = "text"
+	DefaultMultimodalMaxImageBytes = 10 * 1024 * 1024 // 10 MiB
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
@@ -167,6 +175,29 @@ type LLMConfig struct {
 	// Anthropic carries the Anthropic Messages provider parameters (base_url /
 	// model); the API key is ANTHROPIC_API_KEY from the environment (M8-2b).
 	Anthropic AnthropicProviderConfig `yaml:"anthropic"`
+	// ModelInputModalities is the exact-model capability declaration
+	// (dispatch-m8-3 §3): "text" | "text,image". Empty defaults to "text".
+	// /llm-status displays it as the modalities line.
+	ModelInputModalities string `yaml:"model_input_modalities"`
+	// Multimodal is the image-attachment policy (M8-3). Multimodal is off by
+	// default (D10): when disabled the composition root creates no attachment
+	// store, /attach is unavailable, and image blocks are never serialized.
+	Multimodal MultimodalConfig `yaml:"multimodal"`
+}
+
+// MultimodalConfig is the image-attachment policy (dispatch-m8-3 §3 / ADR
+// 2026-08-20-m8-message-model.md 决策 M8-3). Multimodal is off by default (D10):
+// when disabled the composition root creates no attachment store and /attach is
+// unavailable. Images are stored as files under <data_dir>/attachments/ and
+// only the ImageRef is logged (dsh 7078918 范式: 落库只存引用，请求时才转 data URL —
+// M8-3b serializes). The bytes never enter the session log or the config.
+type MultimodalConfig struct {
+	// Enabled gates the whole capability: false ⇒ /attach unavailable and
+	// image blocks are never serialized (D10).
+	Enabled bool `yaml:"enabled"`
+	// MaxImageBytes is the single-image raw-byte cap applied by SaveImage;
+	// <= 0 means the default 10 MiB (over-limit fails closed).
+	MaxImageBytes int `yaml:"max_image_bytes"`
 }
 
 // OpenAIProviderConfig is the OpenAI-compatible provider parameters
@@ -890,6 +921,16 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.LLM.Anthropic.Model == "" {
 		cfg.LLM.Anthropic.Model = DefaultAnthropicModel
+	}
+	// M8-3 multimodal defaults (dispatch-m8-3 §3): model_input_modalities 缺省
+	// "text"；multimodal.max_image_bytes 缺省 10MiB（非正值钳到默认，校验非负: 负值
+	// 永远不会到达接线层）。multimodal.enabled 缺省 false（D10，bool 零值即关，无需
+	// 额外处理）。
+	if cfg.LLM.ModelInputModalities == "" {
+		cfg.LLM.ModelInputModalities = DefaultModelInputModalities
+	}
+	if cfg.LLM.Multimodal.MaxImageBytes <= 0 {
+		cfg.LLM.Multimodal.MaxImageBytes = DefaultMultimodalMaxImageBytes
 	}
 }
 
