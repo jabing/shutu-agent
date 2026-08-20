@@ -36,7 +36,7 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 
 **2026-08-20 路线图决策**：用户拍板四项列为候选（见 §4）：**pwsh persistent PTY**（dsh rc.8 新增 `tool-pwsh-persistent`，owner-scoped 持久 shell，cwd/env/函数跨调用保留）、**多 LLM provider**（必做）、**deepseek reasoning 回传**（依附多 provider：跨 provider 重编码会话时需要，`llm.Message` 需带 `reasoning_content` 落库并回传）、**多模态**（必要；dsh `7078918` 范式：落库只存 `ImageAttachmentRef`、data URL 仅请求时存在、20MiB 上限、模型能力按 exact-model `inputModalities` 声明）。**组织判断**：多 provider + reasoning 回传 + 多模态三件都改 `llm.Message` 消息模型与 wire 层，打包为 **M8 消息模型升级** 一次设计，避免改三次；persistent PTY 独立为 **M9**。
 
-**2026-08-20 Web 门户决策（翻转"Web 延后"）**：用户拍板——知识库 Web 管理界面 + dsh web 功能都需要，目标是完整的个人工作台（知识库查询、真实解决问题、业务数据查询、写脚本、dashboard 可视化）。**翻转** M1 `design.md:19`"第一版就做 Web UI → REPL 先磨循环"、M3 dispatch"Web 明确不做"、M6 ADR"remote API/SDK 暂缓"三条历史决策。落地形态（见 §4 候选）：**KB 全量**（dsh-knowledge 核心功能层，不含 web 层——web 层由本项目自建）+ **M10 Web 门户**（webServer 基础设施 → 知识库 Web 管理台 → dashboard 工作台）。dsh-knowledge 的 web 层依赖 DSH `webServer`/Client Slots 平台，本项目无此平台，故**借鉴其功能面、用 Go 标准库自建**（零新依赖）。
+**2026-08-20 Web 门户决策（翻转"Web 延后"）**：用户拍板——知识库 Web 管理界面 + dsh web 功能都需要，目标是完整的个人工作台（知识库查询、真实解决问题、业务数据查询、写脚本、dashboard 可视化）。**翻转** M1 `design.md:19`"第一版就做 Web UI → REPL 先磨循环"、M3 dispatch"Web 明确不做"、M6 ADR"remote API/SDK 暂缓"三条历史决策。落地形态（见 §4 候选）：**KB 全量**（dsh-knowledge 核心功能层，不含 web 层——web 层由本项目自建）+ **M10 Web 门户**（webServer 基础设施 → 知识库 Web 管理台 → dashboard 工作台）。dsh-knowledge 的 web 层依赖 DSH `webServer`/Client Slots 平台，本项目无此平台，故**借鉴其功能面、用 Go 标准库自建**（零新依赖）。**用户定序（同日）**：先把 Agent 部分（M7 web 搜索 → M8 消息模型升级 → M9 persistent PTY）完成，再做 KB 全量（内容层），最后 M10 Web 门户（呈现层，管理台依赖 KB 全量）。
 
 ## 4. 路线图
 
@@ -63,17 +63,18 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 | **M6e 代码沙箱** | `code` 接口（沙箱 Provider）+ 本地子进程隔离实现 + `code_run` 工具 + `code/*` 事件 + config | 模型生成代码在受控沙箱执行（超时/配额/默认无网络）；补强 M3 `run_command`；默认关闭 | ✅ 2026-08-19 验收通过（M6e-1 `a66d33e`+`24d7f1c`；M6e-2 `be9ecf2`+`e850820`+`cf2590f`+`cb39660`） |
 | **M6f 工具生态** | `mcp` 接口（MCP 客户端，JSON-RPC 自实现优先）+ `fs`/workspace 统一封装 + 工具 + `mcp/*` 事件 + config | 外部工具/服务经 MCP 接入；文件操作统一封装；默认关闭 | ✅ 2026-08-19 验收通过（M6f-1 `764261c`+`4e474f2`；M6f-2 `29ea541`+`ef92769`+`0e025fc`+`a5a9494`；M6f-3 `8526f59`+`c3a74a0`+`9e09d9e`+`f20ae3b`） |
 
-### 候选里程碑（未定序，2026-08-20）
+### 候选里程碑（2026-08-20，执行顺序：Agent 部分优先 → 内容层 → 呈现层）
 
-> 依赖关系：KB 全量 → M10 管理台（多库/挂载/标签/条目管理是其展示前提）；M8 打包 多 provider + reasoning 回传 + 多模态（同改 `llm.Message` 消息模型与 wire 层）；M9 持久 PTY 经 jobs（M5a）owner-fenced 承载；M10 用 Go 标准库 `net/http` 自建（零新依赖），借鉴 dsh-knowledge web 层功能面。
+> **用户定序（2026-08-20）**：先把 Agent 部分（M7 → M8 → M9）完成，再做 KB 全量（内容层），最后 M10 Web 门户（呈现层，其管理台依赖 KB 全量）。
+> 依赖关系：M8 打包 多 provider + reasoning 回传 + 多模态（同改 `llm.Message` 消息模型与 wire 层）；M9 持久 PTY 经 jobs（M5a）owner-fenced 承载；M10 用 Go 标准库 `net/http` 自建（零新依赖），借鉴 dsh-knowledge web 层功能面；M10b 管理台以 KB 全量为展示前提。
 
-| 候选 | 交付物 | 验收标准（达标才算完成） | 状态 |
-|---|---|---|---|
-| **KB 全量**（dsh-knowledge 核心功能层，不含其 web 层） | 多知识库（各自说明/默认标签/提取要求）+ 会话/项目挂载（继承/覆盖/关闭）+ 包含/排除标签 + 全局"严谨/主动"回写策略 + 直写协调（create/update/conflict/skip、同主题合并留版本、完全重复跳过、疑似冲突转审核）+ 条目 List/Delete/Markdown 导出 + `/kb-ingest` 文档摄入（含 web 页面）+ `knowledge_search`/`read`/`base_create`/`base_update` 工具 + 事件 + config | 多库/挂载/标签生效；回写策略与直写协调正确；摄入文档可检索；条目可管理；默认关闭（D10）；零新依赖 | ⬜ 候选 |
-| **M7 web 搜索** | `web` 接缝三件套（web service + WebSearchProvider 注册表 + `web_search`/`web_fetch` 工具）+ `web/*` 事件 + config；**DeepSeek 官方搜索 provider**（照搬 dsh `web-search-deepseek`：Anthropic 兼容 Messages API `POST /anthropic/v1/messages` + `web_search_20250305` server tool，复用 `DEEPSEEK_API_KEY`，解析结构化 `web_search_tool_result`）；多查询一步到位（seam 单查询契约 + 消费者侧扇出/去重/round-robin 合并，借鉴 rc.8） | 真实搜索返回结构化结果与来源；`web/*` 事件落库（D3）；按 D7 校验；默认关闭（D10）；零新依赖 | ⬜ 候选 |
-| **M8 消息模型升级**（多 provider + reasoning 回传 + 多模态） | ① `llm.Message` 从 string Content 升级为 content parts（text / image ref / reasoning），assistant 消息支持 `reasoning_content` 落库（D3 新事件类型）并回传；② LLM provider 注册表 + config 选择（deepseek / OpenAI 兼容 / Anthropic Messages——与 M7 复用 Anthropic 兼容 HTTP 客户端）；③ 多模态：user 图片走文件路径→落库只存引用→请求时转 `image_url` data URL（dsh `7078918` 范式：20MiB 上限、最老替换占位符、PNG/JPEG/WebP/GIF、模型能力按 exact-model `inputModalities` 声明） | 可在 config 切换 provider 且会话历史跨 provider 重编码正确（reasoning 签名保留）；图片输入可被模型读取；`llm.Message` 相关 D3 事件类型新增且旧会话回放不受影响（D8）；默认关闭 | ⬜ 候选 |
-| **M9 persistent PTY** | `terminals` 注册表（owner-fenced，经 jobs 承载，D5 串行访问）+ 持久 `pwsh` 工具（cwd/`$env:`/函数/登录态跨调用保留）+ `terminal/*` 事件 + config | 多步操作共享 shell 状态；超时关闭重置；输出上限；默认关闭（D10） | ⬜ 候选 |
-| **M10 Web 门户**（webServer 基础设施 → 知识库管理台 → dashboard 工作台） | **M10a webServer 基础设施**：Go 标准库 `net/http` HTTP 服务 + 静态资源 + JSON API 路由 + bearer 认证（Token 存 SHA-256 摘要，dsh-knowledge 一致）+ 会话/事件浏览 API；**M10b 知识库 Web 管理台**：三栏文档界面（README/facts/decisions 视图）+ 条目搜索/维护 + 回写 AI 候选审核 + 客户端令牌管理（借鉴 dsh-knowledge `web/` 功能面，vanilla JS 静态前端）；**M10c dashboard 工作台**：知识库/会话/工具/搜索统计可视化 + 工作台入口（业务数据查询走已有 fs/code_run/MCP/kb/web 能力） | webServer 可服务静态页与 JSON API 且认证生效；管理台可浏览/检索/维护知识库条目并审核回写候选；dashboard 展示统计图表；默认关闭（D10）；零新依赖 | ⬜ 候选 |
+| 阶段 | 候选 | 交付物 | 验收标准（达标才算完成） | 状态 |
+|---|---|---|---|---|
+| **① Agent 部分** | **M7 web 搜索** | `web` 接缝三件套（web service + WebSearchProvider 注册表 + `web_search`/`web_fetch` 工具）+ `web/*` 事件 + config；**DeepSeek 官方搜索 provider**（照搬 dsh `web-search-deepseek`：Anthropic 兼容 Messages API `POST /anthropic/v1/messages` + `web_search_20250305` server tool，复用 `DEEPSEEK_API_KEY`，解析结构化 `web_search_tool_result`）；多查询一步到位（seam 单查询契约 + 消费者侧扇出/去重/round-robin 合并，借鉴 rc.8） | 真实搜索返回结构化结果与来源；`web/*` 事件落库（D3）；按 D7 校验；默认关闭（D10）；零新依赖 | ⬜ 候选 |
+| **① Agent 部分** | **M8 消息模型升级**（多 provider + reasoning 回传 + 多模态） | ① `llm.Message` 从 string Content 升级为 content parts（text / image ref / reasoning），assistant 消息支持 `reasoning_content` 落库（D3 新事件类型）并回传；② LLM provider 注册表 + config 选择（deepseek / OpenAI 兼容 / Anthropic Messages——与 M7 复用 Anthropic 兼容 HTTP 客户端）；③ 多模态：user 图片走文件路径→落库只存引用→请求时转 `image_url` data URL（dsh `7078918` 范式：20MiB 上限、最老替换占位符、PNG/JPEG/WebP/GIF、模型能力按 exact-model `inputModalities` 声明） | 可在 config 切换 provider 且会话历史跨 provider 重编码正确（reasoning 签名保留）；图片输入可被模型读取；`llm.Message` 相关 D3 事件类型新增且旧会话回放不受影响（D8）；默认关闭 | ⬜ 候选 |
+| **① Agent 部分** | **M9 persistent PTY** | `terminals` 注册表（owner-fenced，经 jobs 承载，D5 串行访问）+ 持久 `pwsh` 工具（cwd/`$env:`/函数/登录态跨调用保留）+ `terminal/*` 事件 + config | 多步操作共享 shell 状态；超时关闭重置；输出上限；默认关闭（D10） | ⬜ 候选 |
+| **② 内容层** | **KB 全量**（dsh-knowledge 核心功能层，不含其 web 层） | 多知识库（各自说明/默认标签/提取要求）+ 会话/项目挂载（继承/覆盖/关闭）+ 包含/排除标签 + 全局"严谨/主动"回写策略 + 直写协调（create/update/conflict/skip、同主题合并留版本、完全重复跳过、疑似冲突转审核）+ 条目 List/Delete/Markdown 导出 + `/kb-ingest` 文档摄入（含 web 页面）+ `knowledge_search`/`read`/`base_create`/`base_update` 工具 + 事件 + config | 多库/挂载/标签生效；回写策略与直写协调正确；摄入文档可检索；条目可管理；默认关闭（D10）；零新依赖 | ⬜ 候选 |
+| **③ 呈现层** | **M10 Web 门户**（webServer 基础设施 → 知识库管理台 → dashboard 工作台） | **M10a webServer 基础设施**：Go 标准库 `net/http` HTTP 服务 + 静态资源 + JSON API 路由 + bearer 认证（Token 存 SHA-256 摘要，dsh-knowledge 一致）+ 会话/事件浏览 API；**M10b 知识库 Web 管理台**：三栏文档界面（README/facts/decisions 视图）+ 条目搜索/维护 + 回写 AI 候选审核 + 客户端令牌管理（借鉴 dsh-knowledge `web/` 功能面，vanilla JS 静态前端）；**M10c dashboard 工作台**：知识库/会话/工具/搜索统计可视化 + 工作台入口（业务数据查询走已有 fs/code_run/MCP/kb/web 能力） | webServer 可服务静态页与 JSON API 且认证生效；管理台可浏览/检索/维护知识库条目并审核回写候选；dashboard 展示统计图表；默认关闭（D10）；零新依赖 | ⬜ 候选 |
 
 
 
