@@ -31,6 +31,14 @@ type Config struct {
 	BaseURL string
 	APIKey  string
 	Model   string
+	// SupportsImages is the model's input-modality capability declaration,
+	// passed from config llm.model_input_modalities by the composition root
+	// (dispatch-m8-3b §4.1). false (the default) means an image request fails
+	// closed inside the shared OpenAI-compatible client.
+	SupportsImages bool
+	// MaxRequestImageBytes is the per-request image byte budget (dispatch-m8-3b
+	// §4.1); non-positive uses the default 20MiB.
+	MaxRequestImageBytes int
 }
 
 // openaiProvider is an llm.Provider delegating the OpenAI-compatible SSE wire
@@ -51,9 +59,11 @@ func New(cfg Config) *openaiProvider {
 	}
 	return &openaiProvider{
 		c: deepseek.New(deepseek.Config{
-			BaseURL: cfg.BaseURL,
-			APIKey:  cfg.APIKey,
-			Model:   cfg.Model,
+			BaseURL:              cfg.BaseURL,
+			APIKey:               cfg.APIKey,
+			Model:                cfg.Model,
+			SupportsImages:       cfg.SupportsImages,
+			MaxRequestImageBytes: cfg.MaxRequestImageBytes,
 		}),
 	}
 }

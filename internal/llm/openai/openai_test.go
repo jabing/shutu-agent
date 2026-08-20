@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -128,5 +130,59 @@ func TestAvailable(t *testing.T) {
 		if New(Config{APIKey: "k", BaseURL: bad}).Available() {
 			t.Errorf("base URL %q must be unavailable", bad)
 		}
+	}
+}
+
+// TestStreamImageRequestThroughOpenAI verifies the M8-3b image path goes
+// through the openai provider end to end (dispatch-m8-3b §7: openai 委托
+// deepseek 后由 deepseek 测试覆盖，openai 补一个带图走通): with SupportsImages=true an
+// image request serializes as a parts array with the image_url data URL.
+func TestStreamImageRequestThroughOpenAI(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pic.png")
+	if err := os.WriteFile(path, []byte("pngbytes"), 0o600); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(sse(`{"choices":[{"delta":{},"finish_reason":"stop"}]}`, "[DONE]")))
+	}))
+	defer srv.Close()
+
+	p := New(Config{BaseURL: srv.URL, APIKey: "k", SupportsImages: true})
+	reader, err := p.Stream(context.Background(), llm.ChatRequest{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{
+			{Kind: llm.BlockImage, Image: llm.ImageRef{MediaType: "image/png", Bytes: 8, Path: path}},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	for {
+		_, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("next: %v", err)
+		}
+	}
+	msgs, _ := gotBody["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages = %v", gotBody["messages"])
+	}
+	content, _ := msgs[0].(map[string]any)["content"].([]any)
+	if len(content) != 1 {
+		t.Fatalf("content = %v, want 1 image_url part", msgs[0])
+	}
+	img, _ := content[0].(map[string]any)
+	if img["type"] != "image_url" {
+		t.Fatalf("part type = %v", img["type"])
+	}
+	iu, _ := img["image_url"].(map[string]any)
+	if url, _ := iu["url"].(string); !strings.HasPrefix(url, "data:image/png;base64,") {
+		t.Fatalf("data URL = %q, want the data:image/png;base64, prefix", url)
 	}
 }

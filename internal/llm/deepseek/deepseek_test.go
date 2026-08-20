@@ -360,7 +360,10 @@ func TestToWireMessageReasoning(t *testing.T) {
 			llm.Text("Here is the answer."),
 		},
 	}
-	w := toWireMessage(asst)
+	w, err := toWireMessage(asst)
+	if err != nil {
+		t.Fatalf("toWireMessage: %v", err)
+	}
 	if w.ReasoningContent != "step by step, then answer" {
 		t.Fatalf("reasoning_content = %q, want the joined reasoning text", w.ReasoningContent)
 	}
@@ -373,7 +376,10 @@ func TestToWireMessageReasoning(t *testing.T) {
 		Role:    llm.RoleUser,
 		Content: []llm.ContentBlock{{Kind: llm.BlockReasoning, Text: "x"}, llm.Text("hi")},
 	}
-	wu := toWireMessage(usr)
+	wu, err := toWireMessage(usr)
+	if err != nil {
+		t.Fatalf("toWireMessage: %v", err)
+	}
 	if wu.ReasoningContent != "" {
 		t.Fatalf("user message must not carry reasoning_content, got %q", wu.ReasoningContent)
 	}
