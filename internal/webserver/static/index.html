@@ -35,7 +35,25 @@
           <input id="session-search" type="search" placeholder="搜索会话…" autocomplete="off" spellcheck="false">
         </div>
         <ul id="session-list" class="session-list"></ul>
+        <!-- P4: runs panel (subagents + background jobs), anchored above the
+             sidebar foot. Global snapshot view — dsh renders these as popover
+             triggers; here they live in the sidebar (P4-spec §7). -->
+        <div id="runs-panel" class="runs-panel hidden">
+          <div class="runs-head">
+            <span class="runs-title">运行状态</span>
+            <button id="runs-refresh" class="runs-refresh" title="刷新">↻</button>
+          </div>
+          <div class="runs-section">
+            <div class="runs-sec-title">子代理</div>
+            <div id="runs-subs" class="runs-body" aria-live="polite"></div>
+          </div>
+          <div class="runs-section">
+            <div class="runs-sec-title">后台任务</div>
+            <div id="runs-jobs" class="runs-body" aria-live="polite"></div>
+          </div>
+        </div>
         <nav class="sidebar-foot">
+          <button id="runs-tab" class="foot-tab" title="子代理与后台任务">🧩 运行</button>
           <a href="#/settings" title="设置">⚙ 设置</a>
           <a href="#/kb" title="知识库">📚 知识库</a>
         </nav>

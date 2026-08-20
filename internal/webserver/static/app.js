@@ -720,6 +720,158 @@ async function route() {
 }
 window.addEventListener("hashchange", () => route());
 
+// ---- P4: runs panel (subagents + background jobs, dsh ui-subagent / ui-jobs)
+// ----------------------------------------------------------------------------
+const runsPanel = $("runs-panel"), runsTab = $("runs-tab"),
+      runsSubs = $("runs-subs"), runsJobs = $("runs-jobs"), runsRefresh = $("runs-refresh");
+let runsOpen = false, runsPollTimer = null, runsClockTimer = null, runsBusy = false;
+
+const JOB_STATUS_WORDS = {
+  running: "运行中", stopping: "正在停止", completed: "已完成", killed: "已取消", failed: "已失败",
+};
+function jobDotState(status) {
+  if (status === "running") return "running";
+  if (status === "stopping" || status === "killed") return "warning";
+  if (status === "failed") return "error";
+  return "done"; // completed / unknown
+}
+function fmtDuration(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  if (h > 0) return `${h}小时${m}分`;
+  if (m > 0) return `${m}分${sec}秒`;
+  return `${sec}秒`;
+}
+
+function toggleRuns(force) {
+  const next = force !== undefined ? force : !runsOpen;
+  if (next === runsOpen) return;
+  runsOpen = next;
+  runsPanel.classList.toggle("hidden", !runsOpen);
+  runsTab.classList.toggle("active", runsOpen);
+  if (runsOpen) {
+    loadRuns();
+    startRunsTimers();
+  } else {
+    stopRunsTimers();
+  }
+}
+function startRunsTimers() {
+  stopRunsTimers();
+  // 1s live duration clock (only matters while a job is live; cheap enough)
+  runsClockTimer = setInterval(() => {
+    document.querySelectorAll(".run-duration[data-live]").forEach((el) => {
+      const start = Number(el.dataset.start);
+      if (start) el.textContent = fmtDuration(Date.now() - start);
+    });
+  }, 1000);
+  // 10s list refresh; paused while the tab is hidden
+  runsPollTimer = setInterval(() => {
+    if (document.visibilityState !== "hidden") loadRuns();
+  }, 10000);
+}
+function stopRunsTimers() {
+  if (runsClockTimer) { clearInterval(runsClockTimer); runsClockTimer = null; }
+  if (runsPollTimer) { clearInterval(runsPollTimer); runsPollTimer = null; }
+}
+
+// orderedJobs mirrors dsh ui-jobs ordered(): live (running/stopping) first by
+// startedAt ascending, then settled by finishedAt descending.
+function orderedJobs(jobs) {
+  const live = [], settled = [];
+  for (const j of jobs) {
+    if (j.status === "running" || j.status === "stopping") live.push(j);
+    else settled.push(j);
+  }
+  live.sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
+  settled.sort((a, b) => new Date(b.finished_at) - new Date(a.finished_at));
+  return live.concat(settled);
+}
+
+function renderSubagents(list) {
+  if (!Array.isArray(list)) return;
+  runsSubs.textContent = "";
+  if (list.length === 0) {
+    runsSubs.innerHTML = `<div class="runs-empty">暂无子代理</div>`;
+    return;
+  }
+  const rows = [...list].sort((a, b) => (b.running ? 1 : 0) - (a.running ? 1 : 0));
+  for (const s of rows) {
+    const row = document.createElement("div");
+    row.className = "run-row";
+    const state = s.running ? "running" : "done";
+    row.innerHTML = `
+      <span class="p4-dot" data-state="${state}"></span>
+      <span class="run-label" title="${esc(s.id || "")}">${esc(s.label || s.id || "")}</span>
+      <span class="run-sub">${s.running ? "正在运行" : "当前未运行"}</span>`;
+    runsSubs.appendChild(row);
+  }
+}
+
+function renderJobs(list) {
+  if (!Array.isArray(list)) return;
+  runsJobs.textContent = "";
+  if (list.length === 0) {
+    runsJobs.innerHTML = `<div class="runs-empty">暂无后台任务</div>`;
+    return;
+  }
+  for (const j of orderedJobs(list)) {
+    const isLive = j.status === "running" || j.status === "stopping";
+    const start = new Date(j.started_at).getTime();
+    const dur = isLive
+      ? (start ? fmtDuration(Date.now() - start) : "")
+      : (j.finished_at ? fmtDuration(new Date(j.finished_at) - start) : "");
+    const row = document.createElement("div");
+    row.className = "run-row" + (isLive ? "" : " settled");
+    row.innerHTML = `
+      <span class="p4-dot" data-state="${jobDotState(j.status)}"></span>
+      ${j.kind ? `<span class="run-kind">${esc(j.kind)}</span>` : ""}
+      <span class="run-label" title="${esc(j.label || j.id || "")}">${esc(j.label || j.id || "")}</span>
+      <span class="run-sub" title="${esc(j.detail || "")}">${esc(j.detail || JOB_STATUS_WORDS[j.status] || j.status)}</span>
+      <span class="run-duration"${isLive && start ? ` data-live data-start="${start}"` : ""}>${dur}</span>`;
+    runsJobs.appendChild(row);
+  }
+}
+
+async function loadRuns() {
+  if (runsBusy) return;
+  runsBusy = true;
+  runsRefresh.classList.add("spinning");
+  // Show loading placeholders on the first open only.
+  if (!runsSubs.dataset.loaded) { runsSubs.innerHTML = `<div class="runs-loading">正在加载子代理…</div>`; runsJobs.innerHTML = `<div class="runs-loading">正在加载任务…</div>`; }
+  try {
+    const [subsRes, jobsRes] = await Promise.all([api("/api/subagents"), api("/api/jobs")]);
+    const subs = subsRes.status === 501 ? [] : await subsRes.json();
+    const jobs = jobsRes.status === 501 ? [] : await jobsRes.json();
+    runsSubs.dataset.loaded = "1"; runsJobs.dataset.loaded = "1";
+    renderSubagents(subs);
+    renderJobs(jobs);
+  } catch (e) {
+    if (e.message === "unauthorized") { toggleRuns(false); }
+    const msg = e.message || "未知错误";
+    if (!runsSubs.dataset.loaded) {
+      runsSubs.innerHTML = `<div class="runs-error">加载失败：${esc(msg)}<button class="runs-retry">重试</button></div>`;
+      runsSubs.querySelector(".runs-retry").addEventListener("click", () => loadRuns());
+    }
+    if (!runsJobs.dataset.loaded) {
+      runsJobs.innerHTML = `<div class="runs-error">加载失败：${esc(msg)}<button class="runs-retry">重试</button></div>`;
+      runsJobs.querySelector(".runs-retry").addEventListener("click", () => loadRuns());
+    }
+  } finally {
+    runsBusy = false;
+    runsRefresh.classList.remove("spinning");
+  }
+}
+
+runsTab.addEventListener("click", (e) => { e.stopPropagation(); toggleRuns(); });
+runsRefresh.addEventListener("click", (e) => { e.stopPropagation(); loadRuns(); });
+runsPanel.addEventListener("click", (e) => e.stopPropagation());
+document.addEventListener("click", (e) => { if (!e.target.closest("#runs-panel, #runs-tab")) toggleRuns(false); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") stopRunsTimers();
+  else if (runsOpen) startRunsTimers();
+});
+
 // ---- boot ------------------------------------------------------------------------
 function boot() {
   hideLogin();
