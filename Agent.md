@@ -36,6 +36,8 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 
 **2026-08-20 路线图决策**：用户拍板四项列为候选（见 §4）：**pwsh persistent PTY**（dsh rc.8 新增 `tool-pwsh-persistent`，owner-scoped 持久 shell，cwd/env/函数跨调用保留）、**多 LLM provider**（必做）、**deepseek reasoning 回传**（依附多 provider：跨 provider 重编码会话时需要，`llm.Message` 需带 `reasoning_content` 落库并回传）、**多模态**（必要；dsh `7078918` 范式：落库只存 `ImageAttachmentRef`、data URL 仅请求时存在、20MiB 上限、模型能力按 exact-model `inputModalities` 声明）。**组织判断**：多 provider + reasoning 回传 + 多模态三件都改 `llm.Message` 消息模型与 wire 层，打包为 **M8 消息模型升级** 一次设计，避免改三次；persistent PTY 独立为 **M9**。
 
+**2026-08-20 Web 门户决策（翻转"Web 延后"）**：用户拍板——知识库 Web 管理界面 + dsh web 功能都需要，目标是完整的个人工作台（知识库查询、真实解决问题、业务数据查询、写脚本、dashboard 可视化）。**翻转** M1 `design.md:19`"第一版就做 Web UI → REPL 先磨循环"、M3 dispatch"Web 明确不做"、M6 ADR"remote API/SDK 暂缓"三条历史决策。落地形态（见 §4 候选）：**KB 全量**（dsh-knowledge 核心功能层，不含 web 层——web 层由本项目自建）+ **M10 Web 门户**（webServer 基础设施 → 知识库 Web 管理台 → dashboard 工作台）。dsh-knowledge 的 web 层依赖 DSH `webServer`/Client Slots 平台，本项目无此平台，故**借鉴其功能面、用 Go 标准库自建**（零新依赖）。
+
 ## 4. 路线图
 
 | 里程碑 | 交付物 | 验收标准（达标才算完成） | 状态 |
@@ -63,14 +65,15 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 
 ### 候选里程碑（未定序，2026-08-20）
 
-> 依赖关系：M8 打包 多 provider + reasoning 回传 + 多模态（同改 `llm.Message` 消息模型与 wire 层）；M9 持久 PTY 经 jobs（M5a）owner-fenced 承载。
+> 依赖关系：KB 全量 → M10 管理台（多库/挂载/标签/条目管理是其展示前提）；M8 打包 多 provider + reasoning 回传 + 多模态（同改 `llm.Message` 消息模型与 wire 层）；M9 持久 PTY 经 jobs（M5a）owner-fenced 承载；M10 用 Go 标准库 `net/http` 自建（零新依赖），借鉴 dsh-knowledge web 层功能面。
 
 | 候选 | 交付物 | 验收标准（达标才算完成） | 状态 |
 |---|---|---|---|
-| **KB 最小集补全** | `/kb-ingest` 文档摄入（含 web 页面）+ 条目 List/Delete/Markdown 导出；CLI 命令 + 事件 + config | 文档可摄入并被检索；条目可查看/删除/导出；默认关闭 | ⬜ 候选 |
+| **KB 全量**（dsh-knowledge 核心功能层，不含其 web 层） | 多知识库（各自说明/默认标签/提取要求）+ 会话/项目挂载（继承/覆盖/关闭）+ 包含/排除标签 + 全局"严谨/主动"回写策略 + 直写协调（create/update/conflict/skip、同主题合并留版本、完全重复跳过、疑似冲突转审核）+ 条目 List/Delete/Markdown 导出 + `/kb-ingest` 文档摄入（含 web 页面）+ `knowledge_search`/`read`/`base_create`/`base_update` 工具 + 事件 + config | 多库/挂载/标签生效；回写策略与直写协调正确；摄入文档可检索；条目可管理；默认关闭（D10）；零新依赖 | ⬜ 候选 |
 | **M7 web 搜索** | `web` 接缝三件套（web service + WebSearchProvider 注册表 + `web_search`/`web_fetch` 工具）+ `web/*` 事件 + config；**DeepSeek 官方搜索 provider**（照搬 dsh `web-search-deepseek`：Anthropic 兼容 Messages API `POST /anthropic/v1/messages` + `web_search_20250305` server tool，复用 `DEEPSEEK_API_KEY`，解析结构化 `web_search_tool_result`）；多查询一步到位（seam 单查询契约 + 消费者侧扇出/去重/round-robin 合并，借鉴 rc.8） | 真实搜索返回结构化结果与来源；`web/*` 事件落库（D3）；按 D7 校验；默认关闭（D10）；零新依赖 | ⬜ 候选 |
 | **M8 消息模型升级**（多 provider + reasoning 回传 + 多模态） | ① `llm.Message` 从 string Content 升级为 content parts（text / image ref / reasoning），assistant 消息支持 `reasoning_content` 落库（D3 新事件类型）并回传；② LLM provider 注册表 + config 选择（deepseek / OpenAI 兼容 / Anthropic Messages——与 M7 复用 Anthropic 兼容 HTTP 客户端）；③ 多模态：user 图片走文件路径→落库只存引用→请求时转 `image_url` data URL（dsh `7078918` 范式：20MiB 上限、最老替换占位符、PNG/JPEG/WebP/GIF、模型能力按 exact-model `inputModalities` 声明） | 可在 config 切换 provider 且会话历史跨 provider 重编码正确（reasoning 签名保留）；图片输入可被模型读取；`llm.Message` 相关 D3 事件类型新增且旧会话回放不受影响（D8）；默认关闭 | ⬜ 候选 |
 | **M9 persistent PTY** | `terminals` 注册表（owner-fenced，经 jobs 承载，D5 串行访问）+ 持久 `pwsh` 工具（cwd/`$env:`/函数/登录态跨调用保留）+ `terminal/*` 事件 + config | 多步操作共享 shell 状态；超时关闭重置；输出上限；默认关闭（D10） | ⬜ 候选 |
+| **M10 Web 门户**（webServer 基础设施 → 知识库管理台 → dashboard 工作台） | **M10a webServer 基础设施**：Go 标准库 `net/http` HTTP 服务 + 静态资源 + JSON API 路由 + bearer 认证（Token 存 SHA-256 摘要，dsh-knowledge 一致）+ 会话/事件浏览 API；**M10b 知识库 Web 管理台**：三栏文档界面（README/facts/decisions 视图）+ 条目搜索/维护 + 回写 AI 候选审核 + 客户端令牌管理（借鉴 dsh-knowledge `web/` 功能面，vanilla JS 静态前端）；**M10c dashboard 工作台**：知识库/会话/工具/搜索统计可视化 + 工作台入口（业务数据查询走已有 fs/code_run/MCP/kb/web 能力） | webServer 可服务静态页与 JSON API 且认证生效；管理台可浏览/检索/维护知识库条目并审核回写候选；dashboard 展示统计图表；默认关闭（D10）；零新依赖 | ⬜ 候选 |
 
 
 
@@ -155,3 +158,4 @@ go run ./cmd/pa       # 启动 REPL（M1 后可用，需 DEEPSEEK_API_KEY）
 | `mcp`/`fs`（M6f） | `../deepseek-harness/packages/{mcp,fs,workspace}/` | MCP 客户端、文件/工作区封装 |
 | `web`（M7 候选） | `../deepseek-harness/packages/web/{web,web-search-deepseek,web-fetch-http,tool-web}/` | web 接缝三件套、DeepSeek 搜索 provider（Anthropic 兼容 Messages API + `web_search_20250305`）、fetch-http provider、`web_search`/`web_fetch` 工具与多查询扇出 |
 | `terminals`/persistent shell（M9 候选） | `../deepseek-harness/packages/shell/{tool-pwsh-persistent,tool-bash-persistent}/` + `packages/terminal/{terminal,terminal-bash,tool-terminal}/` | owner-scoped 持久 shell（`ctx.terminals`）、状态保留/超时重置/输出上限、Windows ConPTY 与回显/信号限制 |
+| `webServer`/Web 管理台（M10 候选） | `../dsh-knowledge/src/web.ts` + `../dsh-knowledge/web/`（静态管理台）+ `../dsh-knowledge/src/{management-proxy,api,connection,service-settings}.ts` + dsh `packages/host/webserver/` | 静态资源服务 + JSON API 路由 + bearer 认证（SHA-256 摘要）、知识库三栏文档界面、条目维护/候选审核/令牌管理、认证 HTTP API 形态 |
