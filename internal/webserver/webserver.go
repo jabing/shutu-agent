@@ -32,6 +32,10 @@ var staticFS embed.FS
 // exposes (防超大载荷 / 防泄露完整日志正文, D-WEB-4).
 const maxSummary = 200
 
+// maxTitle is the rune cap on the session-list title (first user message, M10
+// W4 D-WEB2-H).
+const maxTitle = 80
+
 // Server is the M10 web portal: a net/http server over the read-only session
 // store. Authentication is optional (D-WEB-2 change, user decision 2026-08-20):
 // when token == "" every API route is open to the local machine (the
@@ -319,11 +323,15 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // sessionView is the API's minimal owned session metadata (no store refs).
+// M10 W4 (D-WEB2-H) adds the session-list fields the dsh-style sidebar needs:
+// title (first user message, bounded) and blank (no events yet).
 type sessionView struct {
 	ID         string    `json:"id"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 	EventCount int       `json:"event_count"`
+	Title      string    `json:"title,omitempty"`
+	Blank      bool      `json:"blank"`
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -334,7 +342,24 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]sessionView, 0, len(metas))
 	for _, m := range metas {
-		out = append(out, sessionView{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, EventCount: m.EventCount})
+		v := sessionView{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, EventCount: m.EventCount, Blank: m.EventCount == 0}
+		if m.EventCount > 0 {
+			// The sidebar title is the first user message, bounded (a personal
+			// portal list is small; this is O(events of each session), same
+			// order as the existing stats rollup).
+			if evs, err := s.store.LoadSession(r.Context(), m.ID); err == nil {
+				for _, ev := range evs {
+					if ev.Type == "user/message" {
+						var d struct{ Text string }
+						if json.Unmarshal(ev.Data, &d) == nil {
+							v.Title = boundRunes(d.Text, maxTitle)
+							break
+						}
+					}
+				}
+			}
+		}
+		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
