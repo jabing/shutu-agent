@@ -7,8 +7,9 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <!-- Login view (public shell): the token never leaves the browser's
-       Authorization header (ADR D-WEB2-B). -->
+  <!-- Login view (public shell): only shown when the backend actually answers
+       401 (a web_server.token is configured). The token never leaves the
+       Authorization header (ADR D-WEB2-B / D-WEB2-G). -->
   <div id="login" class="login hidden">
     <form class="login-card" id="login-form">
       <h1>Personal Agent</h1>
@@ -19,34 +20,61 @@
     </form>
   </div>
 
-  <!-- Chat workspace (the single main view, ADR D-WEB2-F): sidebar with the
-       session list + new button, main area with the chat stream + composer. -->
+  <!-- dsh-style three-column workspace (ADR D-WEB2-F / D-WEB2-I): the frame is
+       grid( sidebar | center | details ); the sidebar collapses to a 56px rail
+       below 1024px; details stays mounted at 0 width. -->
   <div id="workspace" class="workspace hidden">
-    <aside class="sidebar">
-      <div class="sidebar-head">
-        <div class="brand">Personal Agent</div>
-        <button id="new-session" class="btn-new" title="新建会话">+ 新建</button>
-      </div>
-      <ul id="session-list" class="session-list"></ul>
-      <nav class="sidebar-foot">
-        <a href="#/settings">⚙ 设置</a>
-        <a href="#/kb">📚 知识库</a>
-      </nav>
-    </aside>
-    <main class="main">
-      <header class="topbar">
-        <span id="cur-session" class="cur-session muted" title="当前会话"></span>
-        <span class="spacer"></span>
-        <span id="model-label" class="muted"></span>
-        <a class="btn-icon top-link" href="#/settings" title="设置">⚙</a>
-        <button id="theme-toggle" class="btn-icon" title="切换主题">☀️</button>
-      </header>
-      <div id="messages" class="messages"></div>
-      <div class="composer">
-        <textarea id="input" rows="1" placeholder="发送消息…（Enter 发送，Shift+Enter 换行）"></textarea>
-        <button id="send" class="btn">发送</button>
-      </div>
-    </main>
+    <div id="frame" class="frame" data-sidebar-collapsed="false" data-details-collapsed="true">
+      <!-- Sidebar column: session list (P1) + new button + foot nav. -->
+      <section class="col-sidebar" aria-label="会话侧栏">
+        <div class="sidebar-head">
+          <div class="brand" id="brand">Personal&nbsp;Agent</div>
+          <button id="new-session" class="btn-new" title="新建会话">＋ 新建</button>
+        </div>
+        <ul id="session-list" class="session-list"></ul>
+        <nav class="sidebar-foot">
+          <a href="#/settings" title="设置">⚙ 设置</a>
+          <a href="#/kb" title="知识库">📚 知识库</a>
+        </nav>
+      </section>
+
+      <!-- Center column: topbar + message stream + composer. -->
+      <main class="col-center" aria-label="对话">
+        <header class="topbar">
+          <span id="cur-session" class="cur-session" title="当前会话"></span>
+          <span id="mode-badge" class="mode-badge hidden" title="会话模式：改 config.yaml 重启生效"></span>
+          <span class="spacer"></span>
+          <span id="model-label" class="muted"></span>
+          <a id="settings-link" class="btn-icon" href="#/settings" title="设置">⚙</a>
+          <button id="theme-toggle" class="btn-icon" title="切换主题">☀️</button>
+        </header>
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <!-- Empty-state hero (探索未至之境) shown when there is no current
+             session or the current session has no events. -->
+        <div id="hero" class="hero hidden">
+          <div class="hero-inner">
+            <h1 class="hero-title">探索未至之境</h1>
+            <p class="hero-sub muted">预览版</p>
+          </div>
+          <div class="hero-glow" aria-hidden="true"></div>
+        </div>
+        <!-- Composer card: auto-growing textarea + round send button. -->
+        <div class="composer-card">
+          <div class="composer">
+            <div class="grow-wrap">
+              <textarea id="composer-text" rows="1" placeholder="给智能体发消息…"></textarea>
+              <div class="mirror" aria-hidden="true"></div>
+            </div>
+            <button id="composer-send" class="send-btn" title="发送" aria-label="发送">➤</button>
+          </div>
+        </div>
+        <button id="scroll-bottom" class="scroll-bottom hidden" title="回到底部">↓</button>
+      </main>
+
+      <!-- Details column: reserved for the tool-call details panel (P1 keeps 0
+           width; data not ready → stays mounted but invisible). -->
+      <section class="col-details" aria-label="详情"></section>
+    </div>
   </div>
 
   <!-- Settings page (M10 W2, ADR D-WEB2-D): read-only sanitized config view
