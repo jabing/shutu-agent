@@ -1,14 +1,15 @@
-// llm.go — the M8-2 composition-root LLM wiring (dispatch-m8-2 §6). This is
-// where the multi-provider registry is built and the selected provider is
-// injected into the REPL: registerLLM registers the deepseek provider (always;
-// DEEPSEEK_API_KEY env-only) and the openai provider (only when OPENAI_API_KEY
-// is present), resolves cfg.LLM.Provider against the registry (unknown id ⇒
-// fail-closed startup error, no silent fallback), and injects the selected
-// provider into a.llm — the single llm.LLM that the loop, compaction, subagent
-// and kb extraction all consume (D2). The registry is kept on app.llmReg for
-// /llm-status, which reports provider/model/modalities in the /kb-status style.
-// The loop's turn/step structure is untouched (D4): the loop keeps calling
-// a.llm.Stream and never sees the registry.
+// llm.go — the M8-2 composition-root LLM wiring (dispatch-m8-2 §6 / M8-2b §3).
+// This is where the multi-provider registry is built and the selected provider
+// is injected into the REPL: registerLLM registers the deepseek provider
+// (always; DEEPSEEK_API_KEY env-only), the openai provider (only when
+// OPENAI_API_KEY is present), and the anthropic provider (only when
+// ANTHROPIC_API_KEY is present, M8-2b), resolves cfg.LLM.Provider against the
+// registry (unknown id ⇒ fail-closed startup error, no silent fallback), and
+// injects the selected provider into a.llm — the single llm.LLM that the loop,
+// compaction, subagent and kb extraction all consume (D2). The registry is
+// kept on app.llmReg for /llm-status, which reports provider/model/modalities
+// in the /kb-status style. The loop's turn/step structure is untouched (D4):
+// the loop keeps calling a.llm.Stream and never sees the registry.
 package main
 
 import (
@@ -18,6 +19,7 @@ import (
 
 	"personal-agent/internal/config"
 	"personal-agent/internal/llm"
+	"personal-agent/internal/llm/anthropic"
 	"personal-agent/internal/llm/deepseek"
 	"personal-agent/internal/llm/openai"
 )
@@ -59,6 +61,20 @@ func (a *app) registerLLM() error {
 		}
 	}
 
+	// The anthropic provider is registered only when its credential is present
+	// (ANTHROPIC_API_KEY env-only, dispatch-m8-2b §3). Its parameters come from
+	// llm.anthropic.base_url/model (defaults https://api.anthropic.com/v1 /
+	// claude-sonnet-4-5, dispatch-m8-2b §3).
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		if err := reg.Register(anthropic.New(anthropic.Config{
+			APIKey:  key,
+			BaseURL: a.cfg.LLM.Anthropic.BaseURL,
+			Model:   a.cfg.LLM.Anthropic.Model,
+		})); err != nil {
+			return fmt.Errorf("pa: register anthropic provider: %w", err)
+		}
+	}
+
 	// Select by cfg.LLM.Provider; an unknown id is a fail-closed startup error
 	// (dispatch-m8-2 §5/§6).
 	p, err := reg.Get(a.cfg.LLM.Provider)
@@ -92,6 +108,8 @@ func llmCredentialEnv(id string) string {
 		return "DEEPSEEK_API_KEY"
 	case "openai":
 		return "OPENAI_API_KEY"
+	case "anthropic":
+		return "ANTHROPIC_API_KEY"
 	default:
 		return "the provider's API key environment variable"
 	}
@@ -124,11 +142,15 @@ func (a *app) llmStatus() error {
 }
 
 // llmProviderModel returns the configured model for provider id: the legacy
-// top-level model for deepseek, llm.openai.model for openai (dispatch-m8-2 §5:
-// top-level model/base_url stay as the deepseek default configuration).
+// top-level model for deepseek, llm.openai.model for openai, llm.anthropic.model
+// for anthropic (dispatch-m8-2 §5 / M8-2b §3: top-level model/base_url stay as
+// the deepseek default configuration).
 func llmProviderModel(cfg config.Config, id string) string {
-	if id == "openai" {
+	switch id {
+	case "openai":
 		return cfg.LLM.OpenAI.Model
+	case "anthropic":
+		return cfg.LLM.Anthropic.Model
 	}
 	return cfg.Model
 }

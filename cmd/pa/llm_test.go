@@ -14,6 +14,7 @@ import (
 func TestRegisterLLMDefaultDeepseekRegression(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
 	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	a := &app{
 		cfg: config.Config{
 			Model: "deepseek-chat",
@@ -55,6 +56,7 @@ func TestRegisterLLMDefaultDeepseekRegression(t *testing.T) {
 func TestRegisterLLMRegistersOpenaiWhenKeyPresent(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "dk")
 	t.Setenv("OPENAI_API_KEY", "ok")
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	a := &app{
 		cfg: config.Config{
 			Model: "deepseek-chat",
@@ -91,6 +93,7 @@ func TestRegisterLLMRegistersOpenaiWhenKeyPresent(t *testing.T) {
 // silently falling back.
 func TestRegisterLLMUnknownProviderFailsClosed(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	a := &app{cfg: config.Config{LLM: config.LLMConfig{Provider: "nope"}}}
 	if err := a.registerLLM(); err == nil {
 		t.Fatal("unknown llm.provider must fail closed at startup")
@@ -109,6 +112,7 @@ func TestRegisterLLMUnknownProviderFailsClosed(t *testing.T) {
 func TestRegisterLLMSelectedProviderUnavailableFailsClosed(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	a := &app{cfg: config.Config{LLM: config.LLMConfig{Provider: "deepseek"}}}
 	if err := a.registerLLM(); err == nil {
 		t.Fatal("selected deepseek with no DEEPSEEK_API_KEY must fail closed at startup")
@@ -162,6 +166,7 @@ func TestLLMStatusOutput(t *testing.T) {
 func TestLLMStatusShowsUnavailableProvider(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "openai-key")
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	a := &app{
 		cfg: config.Config{
 			Model: "deepseek-chat",
@@ -198,5 +203,96 @@ func TestLLMStatusWithoutRegistry(t *testing.T) {
 	})
 	if !strings.Contains(out, "no provider registry") {
 		t.Errorf("output = %q, want the no-registry report", out)
+	}
+}
+
+// TestRegisterLLMRegistersAnthropicWhenKeyPresent verifies the anthropic
+// registration gate (dispatch-m8-2b §3): when ANTHROPIC_API_KEY is present the
+// anthropic provider is registered too and can be selected.
+func TestRegisterLLMRegistersAnthropicWhenKeyPresent(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "dk")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "ak")
+	a := &app{
+		cfg: config.Config{
+			Model: "deepseek-chat",
+			LLM: config.LLMConfig{
+				Provider:  "anthropic",
+				Anthropic: config.AnthropicProviderConfig{BaseURL: "https://api.anthropic.com/v1", Model: "claude-sonnet-4-5"},
+			},
+		},
+	}
+	if err := a.registerLLM(); err != nil {
+		t.Fatalf("registerLLM: %v", err)
+	}
+	ids := make([]string, 0, 2)
+	for _, p := range a.llmReg.List() {
+		ids = append(ids, p.ID())
+	}
+	if len(ids) != 2 || ids[0] != "deepseek" || ids[1] != "anthropic" {
+		t.Fatalf("registered providers = %v, want [deepseek anthropic]", ids)
+	}
+	sel, err := a.llmReg.Get("anthropic")
+	if err != nil {
+		t.Fatalf("Get anthropic: %v", err)
+	}
+	if !sel.Available() {
+		t.Fatal("anthropic must be available with ANTHROPIC_API_KEY set")
+	}
+	if a.llm != sel {
+		t.Fatal("a.llm must be the selected anthropic provider")
+	}
+}
+
+// TestRegisterLLMAnthropicNotRegisteredWithoutKey verifies the anthropic
+// registration gate is key-gated (dispatch-m8-2b §3): without ANTHROPIC_API_KEY
+// the anthropic provider is not registered, so selecting it fails closed.
+func TestRegisterLLMAnthropicNotRegisteredWithoutKey(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "dk")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	a := &app{
+		cfg: config.Config{
+			Model: "deepseek-chat",
+			LLM:   config.LLMConfig{Provider: "anthropic"},
+		},
+	}
+	if err := a.registerLLM(); err == nil {
+		t.Fatal("selecting anthropic with no ANTHROPIC_API_KEY must fail closed")
+	} else if !strings.Contains(err.Error(), "no such provider") {
+		t.Errorf("err = %q, want the no-such-provider error", err)
+	}
+}
+
+// TestLLMStatusShowsAnthropic verifies /llm-status includes the anthropic
+// provider when registered (dispatch-m8-2b §3: /llm-status 自动涵盖 via the
+// registry listing).
+func TestLLMStatusShowsAnthropic(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "dk")
+	t.Setenv("ANTHROPIC_API_KEY", "ak")
+	a := &app{
+		cfg: config.Config{
+			Model: "deepseek-chat",
+			LLM: config.LLMConfig{
+				Provider:  "anthropic",
+				Anthropic: config.AnthropicProviderConfig{BaseURL: "https://api.anthropic.com/v1", Model: "claude-sonnet-4-5"},
+			},
+		},
+	}
+	if err := a.registerLLM(); err != nil {
+		t.Fatalf("registerLLM: %v", err)
+	}
+	out := captureStdout(func() {
+		if err := a.llmStatus(); err != nil {
+			t.Errorf("llmStatus: %v", err)
+		}
+	})
+	if !strings.Contains(out, "* anthropic: available (model=claude-sonnet-4-5)") {
+		t.Errorf("output missing selected anthropic line: %q", out)
+	}
+	if !strings.Contains(out, "deepseek: available (model=deepseek-chat)") {
+		t.Errorf("output missing deepseek line: %q", out)
+	}
+	if !strings.Contains(out, "modalities: text") {
+		t.Errorf("output missing modalities line: %q", out)
 	}
 }

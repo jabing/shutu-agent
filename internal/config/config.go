@@ -107,12 +107,13 @@ const (
 	DefaultWebDeepSeekMaxTokens     = 4096
 	DefaultWebDeepSeekMaxUses       = 5
 
-	// M8-2 LLM-provider defaults (dispatch-m8-2 §5): the default provider is
-	// "deepseek" (regression: behavior identical to before M8-2); openai
-	// defaults to base_url https://api.openai.com/v1 and model gpt-4o-mini
-	// (both configurable). anthropic is an M8-2b placeholder — parsed and
-	// defaulted here so the config can switch providers, but not consumed this
-	// milestone (M8-2b finalizes its wire defaults).
+	// M8-2 LLM-provider defaults (dispatch-m8-2 §5 / M8-2b §3): the default
+	// provider is "deepseek" (regression: behavior identical to before M8-2);
+	// openai defaults to base_url https://api.openai.com/v1 and model
+	// gpt-4o-mini (both configurable); anthropic defaults to base_url
+	// https://api.anthropic.com/v1 and model claude-sonnet-4-5 (both
+	// configurable, consumed by M8-2b — these must stay in sync with the
+	// internal/llm/anthropic package defaults).
 	DefaultLLMProvider      = "deepseek"
 	DefaultOpenAIBaseURL    = "https://api.openai.com/v1"
 	DefaultOpenAIModel      = "gpt-4o-mini"
@@ -163,10 +164,8 @@ type LLMConfig struct {
 	// OpenAI carries the OpenAI-compatible provider parameters (base_url /
 	// model); the API key is OPENAI_API_KEY from the environment.
 	OpenAI OpenAIProviderConfig `yaml:"openai"`
-	// Anthropic carries the Anthropic provider parameters (base_url / model);
-	// it is an M8-2b placeholder — parsed and defaulted here but not consumed
-	// this milestone. The API key will be ANTHROPIC_API_KEY from the
-	// environment (M8-2b).
+	// Anthropic carries the Anthropic Messages provider parameters (base_url /
+	// model); the API key is ANTHROPIC_API_KEY from the environment (M8-2b).
 	Anthropic AnthropicProviderConfig `yaml:"anthropic"`
 }
 
@@ -179,9 +178,10 @@ type OpenAIProviderConfig struct {
 }
 
 // AnthropicProviderConfig is the Anthropic Messages provider parameters
-// (dispatch-m8-2 §5). M8-2b uses it; this milestone only parses and defaults
-// it. BaseURL defaults to https://api.anthropic.com/v1; the API key will be
-// ANTHROPIC_API_KEY (env-only).
+// (dispatch-m8-2b §3; ADR 2026-08-20-m8-message-model.md 决策 M8-2). BaseURL
+// defaults to https://api.anthropic.com/v1, Model to claude-sonnet-4-5; the
+// API key is ANTHROPIC_API_KEY (env-only, 纪律 6). The defaults must stay in
+// sync with the internal/llm/anthropic package defaults.
 type AnthropicProviderConfig struct {
 	BaseURL string `yaml:"base_url"`
 	Model   string `yaml:"model"`

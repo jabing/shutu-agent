@@ -28,10 +28,9 @@ llm:
     model: gpt-4o-mini
     # API key: OPENAI_API_KEY environment variable only (纪律 6).
   anthropic:
-    # Anthropic Messages API base URL (M8-2b consumes it; this milestone only
-    # parses it).
+    # Anthropic Messages API base URL (M8-2b); "/messages" is appended.
     base_url: https://api.anthropic.com/v1
-    # Chat model (M8-2b placeholder).
+    # Chat model (M8-2b).
     model: claude-sonnet-4-5
     # API key: ANTHROPIC_API_KEY environment variable only (M8-2b, 纪律 6).
 
