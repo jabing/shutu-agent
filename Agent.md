@@ -45,6 +45,8 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 
 **2026-08-20 M7 完成（web 搜索，ADR `docs/decisions/2026-08-20-m7-web-search.md`）**：用户拍板"开始"。分两 half 派发实施（dispatch-m7 / dispatch-m7-2），控制面验收通过（vet 0 / build 0 / 22 包 test 全绿；loop.go 未动、go.mod 零 diff、零新依赖）。交付：`internal/web` 接缝（SearchProvider/FetchProvider 接口 + Engine 注册表/选择/返回路径 maxResults 截断 + 8 个 WebError sentinel）+ **DeepSeek 官方搜索 provider**（Anthropic 兼容 Messages API 非流式 POST + `web_search_20250305` server tool + 解析 `web_search_tool_result` blocks + citationSnippets + url 去重 + 无 result block fail-closed，复用 `DEEPSEEK_API_KEY` env-only）+ **HttpFetchProvider**（URL 校验、同源重定向、超时、字节/字符上限、content-type 分类、UTF-8）+ **轻量 HTML→Markdown**（零依赖手写扫描器）+ `web_search`（多查询**顺序扇出** D5、round-robin 合并、去重、截断、D7 maxItems）+ `web_fetch` + `web/search-request` 事件（D3，OnRequest 派发前落库 secret-free）+ config（`web.enabled` 默认关 D10，白名单自动追加）。**遗留**：真实 key 冒烟待用户 rotate `DEEPSEEK_API_KEY` 后执行（离线单测已覆盖 provider 全部行为）。
 
+**2026-08-20 编译期插件边界确认（架构方向）**：用户拍板——**不做运行时插件能力**（D4 保持：薄核心、Go 接口 + 注册表、无插件系统；硬事实：Go `buildmode=plugin` 不支持 Windows），**后续新增能力一律走编译期接缝**（Service 定义 + Provider 后端 + Tool 消费方三件套），知识库、数据连接分析等未来能力都以此方式扩展，不影响后期功能扩展。外部工具生态经 MCP（M6f ✅）进程外接入；知识库换检索后端经 D9 Provider 接缝。数据连接分析（sqlite/CSV/HTTP API 数据源 + 查询/分析工具）定位为未来独立接缝候选（`data` 接缝，或经 MCP server 接入），不属本决策的运行时插件范畴。
+
 ## 4. 路线图
 
 | 里程碑 | 交付物 | 验收标准（达标才算完成） | 状态 |
