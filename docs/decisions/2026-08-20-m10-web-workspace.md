@@ -67,6 +67,12 @@ dsh web 的核心功能面：实时对话（发消息 + 流式 assistant 输出 
 - **视觉**：现代深色主题（CSS 变量 + 精致间距/卡片/动效），对齐 dsh 观感；vanilla JS 保持（零新依赖、无构建、单二进制）。
 - 后端只读状态 API（subagents / jobs）与 `GET /api/config` 扩展均走脱敏（不泄露密钥/敏感事件正文）。
 
+### D-WEB2-I 逐页移植 dsh web 源码（用户指示 2026-08-20）
+- 用户指示：参照 dsh web 源码（`D:\dev-projects\Agent\deepseek-harness\packages\client\ui-*`，只读参照）**逐页移植**到 personal-agent。
+- 页面移植清单：P1 工作台布局 + 聊天核心页（ui-layout AppFrame 三栏 + ui-conversation 消息流/思维链/工具卡片/输入栏）→ P2 侧栏 + 会话管理（ui-sidebar）→ P3 设置 + 模型选择（ui-settings* + ui-model-selection）→ P4 子代理 + 后台任务（ui-subagent + ui-jobs）→ P5 主题 + 反馈 + 附件（ui-theme token + ui-message-feedback + ui-attachment）。
+- **架构排除**（personal-agent 无 Cordis/Slots/运行时插件，用户已拍板）：ui-slots、ui-settings-plugins、ui-settings-plugin-inventory、ui-renderer 动态机制、ui-commands popup 服务面、ui-permission-presets、ui-directory-picker-*。
+- 移植 = 页面结构/布局/功能/视觉/中文文案对齐 dsh；实现语言 vanilla JS + Go 后端（React 代码不照搬，零依赖纪律保持）。每页一个提交；先研究产出移植规格（`.web-port/`）再实现。
+
 ## 理由
 
 1. **dsh 级工作台的核心是交互**：只读浏览（M10 现状）与 dsh 相差一个「对话面」。D-WEB2-A 让 web 发消息且**不改 loop**（D4 铁律保持）、**不破坏串行**（D5 turnMu），风险最小。

@@ -238,3 +238,37 @@ func (a *app) runTurn(ctx context.Context, text string, interactive bool) error 
 
 ## 报告（简短）
 两个提交 hash + go test 结果 + 前端改动要点 + 偏离说明。不要贴代码。
+
+---
+
+# W4-REV 逐页移植 dsh web 工作台（用户指示 2026-08-20：参照 `D:\dev-projects\Agent\deepseek-harness` 源码逐页复制）
+
+> **取代上面的原 W4 契约。** dsh web 源码位置：`D:\dev-projects\Agent\deepseek-harness\packages\client\<ui-*>\src\client\`（400 个源码文件已检出，**只读参照，绝不修改**）。dsh web 是三栏工作台：`ui-layout/AppFrame.tsx`（sidebar | conversation | details，可拖拽 + 窄屏自动折叠）+ 各 `ui-*` 模块。移植原则：**页面结构/布局/功能/视觉/中文文案对齐 dsh**，实现语言为 vanilla JS + Go 后端（React 代码不照搬——架构零依赖纪律）。
+
+## 页面移植清单（逐页）
+
+| 页 | dsh 源码 | personal-agent 移植内容 | 后端依赖 |
+|---|---|---|---|
+| **P1 工作台布局 + 聊天核心页** | `ui-layout/AppFrame.tsx` + `ui-conversation/src/client/{chat/*, skeleton/*, queue/*}` | 三栏框架（可拖拽/窄屏折叠）+ 会话消息流（MessageItem/ReasoningRow/ToolNode/ContextMeter/EmptyHero）+ 输入栏（InputBar/自动增高/Enter 发送）+ 队列 dock + 会话顶栏 | sessions/events(+reasoning/tool)/message/resume/SSE（已就绪 + 下方 W4a 扩展） |
+| **P2 侧栏 + 会话管理** | `ui-sidebar` + `ui-conversation/src/client/stores.ts` | 左侧会话栏（列表/新建/恢复/切换/标题/时间，当前高亮） | sessions 列表 |
+| **P3 设置 + 模型选择** | `ui-settings` + `ui-settings-general` + `ui-settings-models` + `ui-model-selection` | 设置页（模型/provider/mode/caps/tools/web）+ 模型选择器 | /api/config（已就绪，可扩展） |
+| **P4 子代理 + 后台任务** | `ui-subagent` + `ui-jobs` | 子代理列表 + 后台任务列表（状态徽标/时间） | /api/subagents + /api/jobs（下方 W4a） |
+| **P5 主题 + 反馈 + 附件** | `ui-theme/src/styles`（--dsw-* token）+ `ui-message-feedback` + `ui-attachment` | 深/浅主题 token 对齐 + 消息反馈按钮 + 图片/附件显示 | token 对齐前端；feedback 需新 API（可选）；attachment 需 events 含图片 |
+
+**架构排除**（personal-agent 无 Cordis/Slots/运行时插件，用户已拍板）：`ui-slots`、`ui-settings-plugins`、`ui-settings-plugin-inventory`、`ui-renderer` 动态机制、`ui-commands` popup 服务面、`ui-permission-presets`、`ui-directory-picker-*`（依赖沙箱 FS 服务）。
+
+## 前置：W4a 后端（events 扩展 + 子代理/任务 API）
+按上面「提交 1：W4a」实施（eventView 加 reasoning/tool_name/tool_output；`GET /api/subagents` + `GET /api/jobs` 注入 provider nil→501；cmd/pa webSubagents/webJobs 脱敏）。
+
+## 实施纪律（每页）
+- **每页一个提交**（`P1: …`…`P5: …`），提交前 `go build ./...` + `go test -count=1 -timeout 90s ./...` 全绿（后端如有改动）+ 前端自查（DOM id 一致、无 JS 语法错）。
+- 先由**研究规格**驱动：读 dsh 对应 `ui-*` 源码 → 产出该页移植规格（布局/DOM 层级/组件外观/交互/中文文案/数据需求）→ 再写 vanilla JS。规格进 `D:\dev-projects\Agent\personal-agent\.web-port/`（供控制器验收与后续页复用）。
+- 视觉：CSS 变量主题对齐 dsh `--dsw-*` token 语义（见 `ui-theme/src/styles/`）；零外部资源（无图标库/字体 CDN，unicode 符号）；产品文案中文。
+- loop.go 零改动（D4）；认证默认直开已生效（D-WEB2-G，不要加回登录）；`config.yaml` 保持 M 不提交；零新依赖；CGO-free；gofmt。
+
+## 环境
+- Go：`C:\Program Files\Go\bin\go.exe`；env（每个 go 命令都要设）：`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`；提交身份 `-c user.name='Personal Agent' -c user.email='dev@personal-agent.local'`；pwsh，workdir=`D:\dev-projects\Agent\personal-agent`。
+- **警告**：不要用 PowerShell Set-Content/Add-Content 改 UTF-8 文件（破坏编码）；前端文件整文件重写用文件编辑（write 全量）保证 UTF-8；中文产品文案保持 UTF-8。
+
+## 报告（简短）
+每页提交 hash + go test 结果 + 移植要点 + 偏离说明。不要贴代码。
