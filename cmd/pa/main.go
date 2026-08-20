@@ -41,6 +41,7 @@ import (
 	"personal-agent/internal/spill"
 	"personal-agent/internal/store"
 	"personal-agent/internal/subagent"
+	"personal-agent/internal/terminal"
 	"personal-agent/internal/tools"
 	"personal-agent/internal/web"
 )
@@ -285,6 +286,20 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pa:", err)
 		os.Exit(1)
 	}
+	// M9: wire the persistent-terminal seam — the single active session +
+	// the five terminal_* tools + the /term REPL + the D3 event sink — when
+	// terminal.enabled (默认关 D10). config.applyDefaults already whitelisted
+	// the terminal_* names when terminal.enabled was true. The deferred
+	// cleanup closes the active session at shutdown so no child process leaks.
+	if err := app.registerTerminal(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if app.termSess != nil {
+			app.termSess.Close()
+		}
+	}()
 	// M6d-2: wire the interact seam — in-memory Provider + Engine + the two
 	// interact_* tools + the D3 event sink + the sensitive-tool gate — when
 	// interact.enabled (默认关闭, D10). config.applyDefaults already whitelisted
@@ -340,6 +355,13 @@ type app struct {
 	mcp        []mcp.Client      // nil when mcp disabled (D10); one live bridged client per configured server
 	fs         fs.FileService    // nil when fs disabled (D10)
 	web        *web.Engine       // nil when web disabled (D10)
+
+	// M9 persistent terminal (dispatch-m9-2): the single active session and
+	// the shared terminal_* tool bundle. Nil when terminal disabled (D10) or
+	// no session started; termOwner fences access to the starting session.
+	termSess  *terminal.Session
+	termOwner string
+	termTools *terminal.TerminalTools
 
 	// approveInput feeds the sensitive-tool gate's y/n read (nil => os.Stdin).
 	// It exists so the wiring tests can inject canned approval answers; in the
@@ -535,6 +557,8 @@ func (a *app) command(ctx context.Context, line string) error {
 		return a.llmStatus()
 	case "/attach":
 		return a.attachCommand(ctx, fields[1:])
+	case "/term":
+		return a.termCommand(ctx, fields[1:])
 	case "/compact":
 		return a.compactCommand(ctx, fields[1:])
 	default:
@@ -553,6 +577,7 @@ func (a *app) printHelp() {
   /kb-reindex       rebuild the knowledge-base FTS index
   /llm-status       LLM provider status (provider / model / modalities)
   /attach <path>    attach an image file as a multimodal user message (M8-3)
+  /term <start|write|read|signal|stop>  persistent-shell terminal (M9)
   /compact          compact the session now (fold old context into a summary)
   /compact region <start> <end>  compact only the given surface event range
   /help             show this command table
@@ -644,6 +669,12 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 			a.cfg.Web.SearchMaxResults, a.cfg.Web.SearchMaxQueries)
 	} else {
 		fmt.Println("web: disabled (web.enabled=false)")
+	}
+	if a.cfg.Terminal.Enabled {
+		fmt.Printf("terminal: enabled (shell=%q, idle=%dms, timeout=%dms)\n",
+			a.cfg.Terminal.Shell, a.cfg.Terminal.ReadIdleMS, a.cfg.Terminal.ReadTimeoutMS)
+	} else {
+		fmt.Println("terminal: disabled (terminal.enabled=false)")
 	}
 }
 
