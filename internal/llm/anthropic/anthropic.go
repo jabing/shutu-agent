@@ -13,12 +13,14 @@ package anthropic
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"personal-agent/internal/llm"
@@ -40,6 +42,11 @@ const (
 	// maxErrorBody bounds the non-2xx error body read (dispatch-m8-2b §2.3,
 	// 1 MiB).
 	maxErrorBody = 1 << 20
+	// defaultMaxRequestImageBytes is the per-request image byte budget applied
+	// by New when Config.MaxRequestImageBytes is non-positive (dispatch-m8-3b
+	// §4.2: 默认 20MiB). Over-budget images are offloaded (oldest replaced by
+	// the placeholder) inside Stream.
+	defaultMaxRequestImageBytes = 20 * 1024 * 1024 // 20 MiB
 	// noOutputPlaceholder is emitted for a user message whose content is empty
 	// after conversion (Anthropic rejects empty content, dispatch-m8-2b §2.1
 	// rule 5, 照 dsh 同款).
@@ -65,6 +72,16 @@ type Config struct {
 	// copies it with a no-redirect CheckRedirect, never mutating the caller's
 	// shared client.
 	HTTPClient *http.Client
+	// SupportsImages is the model's input-modality capability declaration,
+	// passed from config llm.model_input_modalities by the composition root
+	// (dispatch-m8-3b §4.2). false (the default) means an image request fails
+	// closed inside Stream — the image is never silently dropped.
+	SupportsImages bool
+	// MaxRequestImageBytes is the per-request image byte budget
+	// (dispatch-m8-3b §4.2): images whose cumulative bytes exceed it are
+	// offloaded inside Stream (oldest replaced by the OffloadedImageText
+	// placeholder). Non-positive uses the default 20MiB.
+	MaxRequestImageBytes int
 }
 
 // anthropicProvider is the llm.Provider implementing the Anthropic Messages
@@ -75,6 +92,9 @@ type anthropicProvider struct {
 	model     string
 	maxTokens int
 	client    *http.Client
+
+	supportsImages       bool
+	maxRequestImageBytes int
 }
 
 // New returns an anthropicProvider with defaults applied (base URL, model,
@@ -92,12 +112,17 @@ func New(cfg Config) *anthropicProvider {
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = http.DefaultClient
 	}
+	if cfg.MaxRequestImageBytes <= 0 {
+		cfg.MaxRequestImageBytes = defaultMaxRequestImageBytes
+	}
 	return &anthropicProvider{
-		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:    cfg.APIKey,
-		model:     cfg.Model,
-		maxTokens: cfg.MaxTokens,
-		client:    cfg.HTTPClient,
+		baseURL:              strings.TrimRight(cfg.BaseURL, "/"),
+		apiKey:               cfg.APIKey,
+		model:                cfg.Model,
+		maxTokens:            cfg.MaxTokens,
+		client:               cfg.HTTPClient,
+		supportsImages:       cfg.SupportsImages,
+		maxRequestImageBytes: cfg.MaxRequestImageBytes,
 	}
 }
 
@@ -125,11 +150,31 @@ func (p *anthropicProvider) Available() bool {
 // decoded per §2.2. ctx cancellation runs through the HTTP request and the
 // body reads.
 func (p *anthropicProvider) Stream(ctx context.Context, req llm.ChatRequest) (llm.StreamReader, error) {
+	// M8-3b image fail-closed check FIRST (dispatch-m8-3b §3): a model that
+	// does not declare image input must error on an image request, never
+	// silently drop it. The check runs before offload so offloading cannot
+	// mask an image.
+	if !p.supportsImages {
+		for _, m := range req.Messages {
+			if m.HasImage() {
+				return nil, fmt.Errorf("%s: model does not support image input (model_input_modalities=text)", p.ID())
+			}
+		}
+	}
+	// M8-3b: apply the request image-byte budget (over-budget images, oldest
+	// first, are replaced by the OffloadedImageText placeholder) before
+	// serialization.
+	msgs := llm.OffloadRequestImages(req.Messages, p.maxRequestImageBytes)
+
+	messages, err := toWireMessages(msgs)
+	if err != nil {
+		return nil, err
+	}
 	body := requestBody{
 		Model:     p.model,
 		MaxTokens: p.maxTokens,
-		System:    extractSystem(req.Messages),
-		Messages:  toWireMessages(req.Messages),
+		System:    extractSystem(msgs),
+		Messages:  messages,
 		Tools:     toWireTools(req.Tools),
 		Stream:    true,
 	}
@@ -257,10 +302,10 @@ func extractSystem(msgs []llm.Message) string {
 }
 
 // toWireMessages serializes a chat history into the Messages API "messages"
-// array (dispatch-m8-2b §2.1 rules 2–5):
+// array (dispatch-m8-2b §2.1 rules 2–5 / M8-3b §4.2):
 //   - RoleSystem messages are extracted to the top-level system field
 //     (extractSystem) and never enter the array;
-//   - user messages become text blocks (M8-3 adds image blocks);
+//   - user messages become text blocks (M8-3b adds image blocks);
 //   - assistant messages keep their block order — reasoning blocks become
 //     thinking blocks before text blocks (dsh 范式), and ToolCalls become
 //     tool_use blocks with the parsed arguments JSON;
@@ -269,7 +314,7 @@ func extractSystem(msgs []llm.Message) string {
 //     results merge into one message, dispatch-m8-2b §2.1 rule 4);
 //   - a user message whose content is empty after conversion gets the
 //     "(no output)" placeholder (Anthropic rejects empty content, rule 5).
-func toWireMessages(msgs []llm.Message) []wireMessage {
+func toWireMessages(msgs []llm.Message) ([]wireMessage, error) {
 	var out []wireMessage
 	var pendingToolResults []map[string]any
 	flushToolResults := func() {
@@ -291,30 +336,65 @@ func toWireMessages(msgs []llm.Message) []wireMessage {
 			})
 		case llm.RoleUser:
 			flushToolResults()
-			out = append(out, wireMessage{Role: "user", Content: textBlocks(m.Content)})
+			blocks, err := textBlocks(m.Content)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, wireMessage{Role: "user", Content: blocks})
 		case llm.RoleAssistant:
 			flushToolResults()
 			out = append(out, wireMessage{Role: "assistant", Content: assistantBlocks(m)})
 		}
 	}
 	flushToolResults()
-	return out
+	return out, nil
 }
 
-// textBlocks converts a user message's content parts to text blocks
-// (dispatch-m8-2b §2.1 rule 2: this milestone only text → {"type":"text"}).
-// An empty result yields the "(no output)" placeholder (rule 5).
-func textBlocks(blocks []llm.ContentBlock) []map[string]any {
+// textBlocks converts a user message's content parts to wire blocks
+// (dispatch-m8-2b §2.1 rule 2, M8-3b §4.2): BlockText → {"type":"text"},
+// BlockImage → {"type":"image","source":{"type":"base64","media_type",...,
+// "data":<base64>}} (reading the image bytes at the ImageRef path at request
+// time; a read failure is an error — fail-closed, 不静默丢图). An empty result
+// yields the "(no output)" placeholder (rule 5).
+func textBlocks(blocks []llm.ContentBlock) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(blocks))
 	for _, b := range blocks {
-		if b.Kind == llm.BlockText {
+		switch b.Kind {
+		case llm.BlockText:
 			out = append(out, map[string]any{"type": "text", "text": b.Text})
+		case llm.BlockImage:
+			data, err := imageBase64(b.Image)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, map[string]any{
+				"type": "image",
+				"source": map[string]any{
+					"type":       "base64",
+					"media_type": b.Image.MediaType,
+					"data":       data,
+				},
+			})
 		}
 	}
 	if len(out) == 0 {
 		out = append(out, map[string]any{"type": "text", "text": noOutputPlaceholder})
 	}
-	return out
+	return out, nil
+}
+
+// imageBase64 reads the image bytes at ref.Path and base64-encodes them for an
+// Anthropic image block source (dispatch-m8-3b §4.2). The bytes are read only
+// at request-serialization time and are never logged or kept in memory (dsh
+// 7078918 范式). A read failure returns an error (fail-closed, 不静默丢图). llm
+// does not depend on attachment — the provider reads the file directly from
+// the ImageRef path (M8-3a 单向依赖纪律).
+func imageBase64(ref llm.ImageRef) (string, error) {
+	data, err := os.ReadFile(ref.Path)
+	if err != nil {
+		return "", fmt.Errorf("anthropic: read image %s: %w", ref.Path, err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
 }
 
 // assistantBlocks serializes an assistant message's content in order
