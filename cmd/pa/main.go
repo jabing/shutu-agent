@@ -30,7 +30,6 @@ import (
 	"personal-agent/internal/jobs"
 	"personal-agent/internal/kb"
 	"personal-agent/internal/llm"
-	"personal-agent/internal/llm/deepseek"
 	"personal-agent/internal/loop"
 	"personal-agent/internal/mcp"
 	"personal-agent/internal/plan"
@@ -48,12 +47,6 @@ import (
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to the configuration file")
 	flag.Parse()
-
-	apiKey := os.Getenv("DEEPSEEK_API_KEY")
-	if apiKey == "" {
-		fmt.Fprintln(os.Stderr, "pa: DEEPSEEK_API_KEY is not set (API keys only ever come from the environment)")
-		os.Exit(1)
-	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -102,13 +95,6 @@ func main() {
 	}
 	promptBuilder.SetTools(func() []llm.ToolSchema { return reg.Specs() })
 
-	client := deepseek.New(deepseek.Config{
-		APIKey:     apiKey,
-		BaseURL:    cfg.BaseURL,
-		Model:      cfg.Model,
-		MaxRetries: 2,
-	})
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -117,7 +103,14 @@ func main() {
 		store:  st,
 		reg:    reg,
 		prompt: promptBuilder,
-		llm:    client,
+	}
+	// M8-2: registerLLM builds the provider registry and injects the selected
+	// provider into a.llm — the single llm.LLM the loop, compaction, subagent
+	// and kb extraction all consume (D2). It must run before registerSubagent /
+	// registerCompaction / registerKB, which read a.llm at wiring time.
+	if err := app.registerLLM(); err != nil {
+		fmt.Fprintln(os.Stderr, "pa:", err)
+		os.Exit(1)
 	}
 	// M4b: wire the knowledge base seam — provider + kb_* tools + catalog —
 	// when kb.enabled (默认关闭, D10). kb.registerKB appends the kb_* tool names
@@ -315,6 +308,10 @@ type app struct {
 	reg    *tools.Registry
 	prompt *prompt.Builder
 	llm    llm.LLM
+	// llmReg is the M8-2 provider registry (dispatch-m8-2 §6): registerLLM
+	// builds it and injects the selected provider into llm; /llm-status reads
+	// it. Non-nil only after registerLLM succeeds.
+	llmReg *llm.Registry
 	kb     kb.KB // nil when kb disabled (D10)
 
 	currentID string
@@ -523,6 +520,8 @@ func (a *app) command(ctx context.Context, line string) error {
 		return a.kbStatus(ctx)
 	case "/kb-reindex":
 		return a.kbReindex(ctx)
+	case "/llm-status":
+		return a.llmStatus()
 	case "/compact":
 		return a.compactCommand(ctx, fields[1:])
 	default:
@@ -539,6 +538,7 @@ func (a *app) printHelp() {
   /resume <id>      resume an existing session by id
   /kb-status        knowledge-base status (entries / db size / recent writes)
   /kb-reindex       rebuild the knowledge-base FTS index
+  /llm-status       LLM provider status (provider / model / modalities)
   /compact          compact the session now (fold old context into a summary)
   /compact region <start> <end>  compact only the given surface event range
   /help             show this command table
@@ -546,6 +546,8 @@ func (a *app) printHelp() {
   anything else     send to the agent as a message
 
 startup:  pa [--config <path>]   config defaults to config.yaml`)
+	fmt.Printf("llm: provider=%s model=%s modalities=text\n",
+		a.cfg.LLM.Provider, llmProviderModel(a.cfg, a.cfg.LLM.Provider))
 	fmt.Printf("enabled tools: %s\n", strings.Join(a.cfg.Tools.Enabled, ", "))
 	if a.cfg.KB.Enabled {
 		fmt.Printf("knowledge base: enabled (db=%s, recall_limit=%d, catalog=%v)\n",
