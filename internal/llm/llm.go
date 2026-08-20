@@ -27,6 +27,12 @@ type ToolSchema struct {
 // ChatRequest is a single model request: conversation history plus the tools
 // the model may call on this step.
 type ChatRequest struct {
+	// Provider selects the provider to route to; empty means the default
+	// (decided by the composition root). The loop never sets it — it calls the
+	// injected provider's Stream with the default — so this is reserved for
+	// future explicit routing (M8-2b / tool-layer direct provider calls,
+	// dispatch-m8-2 §2).
+	Provider string
 	Model    string
 	Messages []Message
 	Tools    []ToolSchema
