@@ -301,4 +301,57 @@ fs:
   # resolved to its absolute form at startup.
   root: ""
 
+# Web search/fetch capability (M7; design.md §10 D2 / ADR
+# 2026-08-20-m7-web-search.md / dispatch-m7-2). Off by default (D10): when
+# disabled the composition root creates no Engine, registers no web_* tool and
+# whitelists nothing (默认关闭，不初始化). When enabled, web_search runs one or
+# more DeepSeek-native searches (the API key comes from the DEEPSEEK_API_KEY
+# environment variable only — never from this file) and web_fetch retrieves a
+# specific HTTP(S) URL (following only same-origin redirects, no cookies or
+# ambient credentials). web.enabled is the single switch for both search and
+# fetch — there is no separate search_enabled/fetch_enabled switch
+# (dispatch-m7-2 §6: 按 dsh {search:true, fetch:true} 语义简化为总开关). Search
+# requests are logged as web/search-request facts (D3) by the provider's
+# OnRequest; tool results go through tool/result. Both tools execute on the
+# serial tool path (D5).
+web:
+  # Master switch. false ⇒ no Engine/provider is created and the web_* tools
+  # are neither registered nor whitelisted (默认关闭 D10，不初始化).
+  enabled: false
+  # Source cap for a single search and for the merged multi-query result;
+  # 0/absent ⇒ 8.
+  search_max_results: 8
+  # Query-count cap for one web_search call (schema maxItems); 0/absent ⇒ 4.
+  search_max_queries: 4
+  # Outer budget for one web_search call in ms (all queries share it);
+  # 0/absent ⇒ 30000.
+  search_timeout_ms: 30000
+  # Outer budget for one web_fetch call in ms; 0/absent ⇒ 30000.
+  fetch_timeout_ms: 30000
+  # Cap on the model-facing web_fetch body in chars (truncated with a
+  # "[truncated: showing first N chars]" notice); 0/absent ⇒ 200000.
+  fetch_max_output_chars: 200000
+  # Cap on the fetched response body in bytes; 0/absent ⇒ 2097152 (2 MiB).
+  fetch_max_response_bytes: 2097152
+  # Cap on the request URL length; 0/absent ⇒ 2048.
+  fetch_max_url_bytes: 2048
+  # Cap on same-origin redirect hops; 0/absent ⇒ 5.
+  fetch_max_redirects: 5
+  # User-Agent header for web_fetch; empty/absent ⇒ "personal-agent/0.1 (M7)".
+  fetch_user_agent: personal-agent/0.1 (M7)
+  # DeepSeek search-provider parameters (M7-1). The API key is read from the
+  # DEEPSEEK_API_KEY environment variable only; an absent key makes the search
+  # provider unavailable (web_search returns a credential error).
+  deepseek:
+    # Anthropic-compatible Messages API base URL (/messages is appended).
+    base_url: https://api.deepseek.com/anthropic/v1
+    # Search request model.
+    model: deepseek-v4-flash
+    # anthropic-version header.
+    api_version: 2023-06-01
+    # Search request max_tokens; 0/absent ⇒ 4096.
+    max_tokens: 4096
+    # web_search server tool max_uses per request; 0/absent ⇒ 5.
+    max_uses: 5
+
 
