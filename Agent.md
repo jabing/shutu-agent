@@ -28,7 +28,9 @@ Go 实现、借鉴 DeepSeek Harness 架构的个人 Agent：薄核心（会话�
 
 **2026-08-19**：M5 核心能力启动（用户拍板"必须、先实现"；ADR `2026-08-18-m5-agent-core.md` 定稿四段决策）。**M5 四段全部完成并通过验收**（每段由控制会话亲自 vet/test/build 验收、对照 D1–D10 审 diff）：M5a 后台任务（M5a-1 `34bf1e8`+`5f3abd4`、M5a-2 `4c0a25e`+`dbe07fc`+`b1d3535`+`6d91af7`）→ M5b 子代理（`55f1b63`+`34c302c`+`8a3f648`、`8c7f1b3`+`070039e`+`27adaca`+`e8dcec0`+`78fd6a6`）→ M5c 上下文压缩（`76c41db`、`2188b4d`+`0ffa4e4`+`4669c2e`、`a5219ac`、`c4b5e88`+`e9b2b9c`）→ M5d 技能（`b2d93fc`+`453b288`+`0c38de5`+`400e06c`+`75d892c`、`cb09853`+`17cfe10`+`935ffdc`+`6859000`+`07a82ce`）。
 
-**2026-08-19（续）**：与 dsh 差距评估——M5 后除知识库/Web 接口外，个人 Agent 的实质能力缺口为：定时调度、任务规划、长期记忆、人工审批（任务类）+ 代码沙箱、工具生态/fs 封装（代码类）。用户拍板"需要补全"→ 定稿 **M6 能力补全六段**（ADR `2026-08-19-m6-agent-full.md`）：M6a 定时调度 → M6b 任务规划 → M6c 长期记忆 → M6d 人工审批 → M6e 代码沙箱 → M6f 工具生态。全部接缝挂薄核心（D4）、默认关（D10）、零新依赖（M6f MCP 自实现 JSON-RPC over stdio）。**M6 六段全部完成并通过验收**（M6a `85cd9a3`…`3fb43fd`；M6b `e006a9e`…`512896f`；M6c `b087b22`…`717ed92`；M6d `6d32daa`…`0118169`；M6e `a66d33e`…`cb39660`；M6f `764261c`…`f20ae3b`）。**下一步候选**：① 真实端到端冒烟（pa.exe 全链路，迄今仅单元测试验证——最大未知）；② 知识库最小集补全（/kb-ingest 文档摄入 + 条目 List/Delete/Markdown 导出）→ 全量 dsh-knowledge。
+**2026-08-19（续）**：与 dsh 差距评估——M5 后除知识库/Web 接口外，个人 Agent 的实质能力缺口为：定时调度、任务规划、长期记忆、人工审批（任务类）+ 代码沙箱、工具生态/fs 封装（代码类）。用户拍板"需要补全"→ 定稿 **M6 能力补全六段**（ADR `2026-08-19-m6-agent-full.md`）：M6a 定时调度 → M6b 任务规划 → M6c 长期记忆 → M6d 人工审批 → M6e 代码沙箱 → M6f 工具生态。全部接缝挂薄核心（D4）、默认关（D10）、零新依赖（M6f MCP 自实现 JSON-RPC over stdio）。**M6 六段全部完成并通过验收**（M6a `85cd9a3`…`3fb43fd`；M6b `e006a9e`…`512896f`；M6c `b087b22`…`717ed92`；M6d `6d32daa`…`0118169`；M6e `a66d33e`…`cb39660`；M6f `764261c`…`f20ae3b`）。
+
+**2026-08-20 冒烟**：真实端到端冒烟（pa.exe 全链路，用户拍板"①"）。A. 无 API key 启动正确报错退出（env-only 约束生效）；发现 `data/pa.db` 留存 M4 时期的真实运行会话（4 轮对话 + `kb/extract`/`kb/recall`/`kb/add`/`tool/result`，D1 落库曾实测）。B. 真实对话（DeepSeek 流式）成功——/help 完整命令表 + 中文回答，会话 332→375 事件落库、重启恢复（resumed session）验证通过。C. 临时 config 启用 fs：模型真实调用 `fs_write` 创建 `smoke-c.txt` + `fs_read` 读回，`fs/write`/`fs/read`/`tool/result` 事件全部落库（工具注册→白名单→D3 事件→D7 校验→执行→落库整链路实测）。冒烟产物已清理（`.smoke/`、`pa-smoke.exe`、`smoke-c.txt`），工作树干净。**下一步候选**：知识库最小集补全（/kb-ingest 文档摄入 + 条目 List/Delete/Markdown 导出）→ 全量 dsh-knowledge。
 
 ## 4. 路线图
 
