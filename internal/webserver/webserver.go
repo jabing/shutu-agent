@@ -57,6 +57,14 @@ type Server struct {
 	// token or any key); the webserver only forwards the provider's map. nil
 	// (the default) makes the API answer 501.
 	cfgFn func() map[string]any
+
+	// M10 W4 (ADR D-WEB2-H): optional read-only providers for the subagent and
+	// background-job panels (GET /api/subagents, GET /api/jobs). Both are nil
+	// until a Setter is called; a nil provider makes its API answer 501. Each
+	// returns sanitized view maps (id/status/timestamps only — no prompts,
+	// outputs or session content).
+	subFn  func(ctx context.Context) ([]map[string]any, error)
+	jobsFn func(ctx context.Context) ([]map[string]any, error)
 }
 
 // New validates the wiring and builds the portal handler. token is optional:
@@ -96,6 +104,9 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	mux.Handle("GET /api/sessions/{id}/events/stream", s.requireAuth(http.HandlerFunc(s.handleEventStream)))
 	// M10 W2 (ADR D-WEB2-D): the read-only sanitized config view.
 	mux.Handle("GET /api/config", s.requireAuth(http.HandlerFunc(s.handleConfig)))
+	// M10 W4 (ADR D-WEB2-H): the read-only subagent and background-job panels.
+	mux.Handle("GET /api/subagents", s.requireAuth(http.HandlerFunc(s.handleSubagents)))
+	mux.Handle("GET /api/jobs", s.requireAuth(http.HandlerFunc(s.handleJobs)))
 	s.srv = &http.Server{
 		Addr:              addr,
 		Handler:           mux,
@@ -159,19 +170,40 @@ func (s *Server) SetConfigProvider(fn func() map[string]any) {
 	s.cfgFn = fn
 }
 
+// SetSubagentProvider wires the read-only subagent panel (GET /api/subagents,
+// M10 W4, ADR D-WEB2-H). The provider returns sanitized child-agent views
+// (id/status/timestamps only). Called by the composition root; nil makes the
+// API answer 501.
+func (s *Server) SetSubagentProvider(fn func(ctx context.Context) ([]map[string]any, error)) {
+	s.subFn = fn
+}
+
+// SetJobsProvider wires the read-only background-job panel (GET /api/jobs, M10
+// W4, ADR D-WEB2-H). The provider returns sanitized job views (id/kind/status/
+// timestamps only — no outputs). Called by the composition root; nil makes the
+// API answer 501.
+func (s *Server) SetJobsProvider(fn func(ctx context.Context) ([]map[string]any, error)) {
+	s.jobsFn = fn
+}
+
 // InteractiveHandlers is a snapshot of the currently injected interactive
 // wiring (M10 W1, ADR D-WEB2). The composition root reads it in its wiring
 // tests; nil fields mean the corresponding API answers 501.
 type InteractiveHandlers struct {
-	Message func(ctx context.Context, sessionID, text string) error
-	Session func(ctx context.Context, action, id string) (string, error)
-	Event   func(sessionID string, sink func(session.Event)) func()
-	Config  func() map[string]any
+	Message  func(ctx context.Context, sessionID, text string) error
+	Session  func(ctx context.Context, action, id string) (string, error)
+	Event    func(sessionID string, sink func(session.Event)) func()
+	Config   func() map[string]any
+	Subagents func(ctx context.Context) ([]map[string]any, error)
+	Jobs      func(ctx context.Context) ([]map[string]any, error)
 }
 
 // Handlers returns the current interactive wiring.
 func (s *Server) Handlers() InteractiveHandlers {
-	return InteractiveHandlers{Message: s.msgFn, Session: s.sessFn, Event: s.evSrc, Config: s.cfgFn}
+	return InteractiveHandlers{
+		Message: s.msgFn, Session: s.sessFn, Event: s.evSrc, Config: s.cfgFn,
+		Subagents: s.subFn, Jobs: s.jobsFn,
+	}
 }
 
 // panicSafeWriter tracks whether a response has started so a deferred recover
@@ -359,12 +391,57 @@ func (s *Server) handleKBStub(w http.ResponseWriter, r *http.Request) {
 }
 
 // eventView is one event's bounded public summary (D-WEB-4: data is never
-// exposed wholesale).
+// exposed wholesale). M10 W4 (D-WEB2-H) adds the fields the dsh-style message
+// stream needs: the assistant's reasoning chain (思维链), the tool-card title
+// and its bounded output.
 type eventView struct {
-	Seq     uint64    `json:"seq"`
-	Type    string    `json:"type"`
-	Time    time.Time `json:"time"`
-	Summary string    `json:"summary"`
+	Seq        uint64    `json:"seq"`
+	Type       string    `json:"type"`
+	Time       time.Time `json:"time"`
+	Summary    string    `json:"summary"`
+	Reasoning  string    `json:"reasoning,omitempty"`   // assistant/message 的思维链（有界）
+	ToolName   string    `json:"tool_name,omitempty"`   // tool/result、tool/error 的工具名
+	ToolOutput string    `json:"tool_output,omitempty"` // tool/result 的有界输出
+}
+
+// toEventView builds the public view for one event (bounded summary + the W4
+// extra fields).
+func toEventView(ev session.Event) eventView {
+	v := eventView{Seq: ev.Seq, Type: ev.Type, Time: ev.At, Summary: summarize(ev)}
+	v.Reasoning, v.ToolName, v.ToolOutput = extraFields(ev)
+	return v
+}
+
+// extraFields extracts the W4 per-type fields from an event's Data blob by
+// unmarshalling only the leaf JSON keys the known types carry. Unknown types
+// yield empty strings (前端忽略)。
+func extraFields(ev session.Event) (reasoning, toolName, toolOutput string) {
+	switch ev.Type {
+	case "assistant/message":
+		var d struct {
+			Reasoning string `json:"reasoning"`
+		}
+		if json.Unmarshal(ev.Data, &d) == nil {
+			reasoning = boundRunes(d.Reasoning, maxSummary)
+		}
+	case "tool/result":
+		var d struct {
+			Name   string `json:"name"`
+			Output string `json:"output"`
+		}
+		if json.Unmarshal(ev.Data, &d) == nil {
+			toolName = d.Name
+			toolOutput = boundRunes(d.Output, maxSummary)
+		}
+	case "tool/error":
+		var d struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(ev.Data, &d) == nil {
+			toolName = d.Name
+		}
+	}
+	return reasoning, toolName, toolOutput
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -380,7 +457,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]eventView, 0, len(events))
 	for _, ev := range events {
-		out = append(out, eventView{Seq: ev.Seq, Type: ev.Type, Time: ev.At, Summary: summarize(ev)})
+		out = append(out, toEventView(ev))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -498,11 +575,49 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 // writeSSEEvent writes one SSE frame for an event and returns. Writes to a
 // disconnected client fail silently (the handler exits on context cancellation).
 func writeSSEEvent(w http.ResponseWriter, ev session.Event) {
-	b, err := json.Marshal(eventView{Seq: ev.Seq, Type: ev.Type, Time: ev.At, Summary: summarize(ev)})
+	b, err := json.Marshal(toEventView(ev))
 	if err != nil {
 		return
 	}
 	fmt.Fprintf(w, "id: %d\ndata: %s\n\n", ev.Seq, b)
+}
+
+// handleSubagents implements GET /api/subagents (M10 W4, ADR D-WEB2-H): the
+// read-only panel for active sub-agents. An unwired provider answers 501; the
+// provider's sanitized views are forwarded verbatim.
+func (s *Server) handleSubagents(w http.ResponseWriter, r *http.Request) {
+	if s.subFn == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "subagent provider not wired"})
+		return
+	}
+	items, err := s.subFn(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if items == nil {
+		items = []map[string]any{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"subagents": items})
+}
+
+// handleJobs implements GET /api/jobs (M10 W4, ADR D-WEB2-H): the read-only
+// panel for background jobs. An unwired provider answers 501; the provider's
+// sanitized views are forwarded verbatim.
+func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
+	if s.jobsFn == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "jobs provider not wired"})
+		return
+	}
+	items, err := s.jobsFn(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if items == nil {
+		items = []map[string]any{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": items})
 }
 
 // summarize extracts a bounded, safe one-line summary for an event by

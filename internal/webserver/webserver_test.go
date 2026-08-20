@@ -543,3 +543,73 @@ func mustData(t *testing.T, v any) json.RawMessage {
 	}
 	return b
 }
+
+// TestEventsExtendedFields verifies the M10 W4 (D-WEB2-H) event fields: the
+// assistant reasoning chain and the tool-card title/output are extracted from
+// the event Data (bounded), and absent on other types.
+func TestEventsExtendedFields(t *testing.T) {
+	srv, st := newTestServer(t, "tok")
+	seedSession(t, st, "s-1", []session.Event{
+		{Seq: 1, Type: "assistant/message", At: time.Now(), Version: 1,
+			Data: mustData(t, map[string]any{"Text": "答案", "Reasoning": "先想两步再回答"})},
+		{Seq: 2, Type: "tool/result", At: time.Now(), Version: 1,
+			Data: mustData(t, map[string]any{"Name": "get_time", "Output": "2026-08-20 12:00"})},
+		{Seq: 3, Type: "user/message", At: time.Now(), Version: 1,
+			Data: mustData(t, map[string]any{"Text": "hi"})},
+	})
+	rec := doReq(t, srv.Handler(), "GET", "/api/sessions/s-1/events", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("events → %d, want 200", rec.Code)
+	}
+	var evs []eventView
+	if err := json.Unmarshal(rec.Body.Bytes(), &evs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(evs) != 3 {
+		t.Fatalf("events = %d, want 3", len(evs))
+	}
+	if evs[0].Reasoning != "先想两步再回答" {
+		t.Fatalf("assistant/message reasoning = %q, want the chain", evs[0].Reasoning)
+	}
+	if evs[1].ToolName != "get_time" || evs[1].ToolOutput != "2026-08-20 12:00" {
+		t.Fatalf("tool/result tool_name/tool_output = %q/%q, want get_time/2026-08-20 12:00", evs[1].ToolName, evs[1].ToolOutput)
+	}
+	if evs[2].Reasoning != "" || evs[2].ToolName != "" || evs[2].ToolOutput != "" {
+		t.Fatalf("user/message must carry no extended fields, got %+v", evs[2])
+	}
+}
+
+// TestSubagentsJobsAPI verifies the M10 W4 (D-WEB2-H) status panels: a wired
+// provider answers its sanitized list; a nil provider answers 501; with a
+// configured token the route stays behind requireAuth.
+func TestSubagentsJobsAPI(t *testing.T) {
+	srv, _ := newTestServer(t, "tok")
+	srv.SetSubagentProvider(func(ctx context.Context) ([]map[string]any, error) {
+		return []map[string]any{{"id": "a-1", "label": "task", "running": true}}, nil
+	})
+	srv.SetJobsProvider(func(ctx context.Context) ([]map[string]any, error) {
+		return []map[string]any{{"id": "job-1", "kind": "workflow", "label": "wf", "status": "running"}}, nil
+	})
+	h := srv.Handler()
+
+	rec := doReq(t, h, "GET", "/api/subagents", "tok")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "a-1") {
+		t.Fatalf("subagents → %d %q, want 200 with a-1", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, "GET", "/api/jobs", "tok")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "job-1") {
+		t.Fatalf("jobs → %d %q, want 200 with job-1", rec.Code, rec.Body.String())
+	}
+
+	// Unwired providers → 501; auth still applies when a token is configured.
+	srv2, _ := newTestServer(t, "tok")
+	if rec := doReq(t, srv2.Handler(), "GET", "/api/subagents", "tok"); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("subagents nil → %d, want 501", rec.Code)
+	}
+	if rec := doReq(t, srv2.Handler(), "GET", "/api/jobs", "tok"); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("jobs nil → %d, want 501", rec.Code)
+	}
+	if rec := doReq(t, h, "GET", "/api/subagents", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("subagents no token → %d, want 401", rec.Code)
+	}
+}

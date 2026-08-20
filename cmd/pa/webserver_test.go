@@ -128,3 +128,34 @@ func TestRegisterWebServerEnabledServes(t *testing.T) {
 		t.Fatalf("static index with token -> %d, want 200", code)
 	}
 }
+
+// TestWebSubagentsJobsProviders verifies the M10 W4 (D-WEB2-H) injection: the
+// composition root wires both status providers into the webserver, and a
+// disabled capability (app without jobs/subagents) answers an empty list
+// rather than an error.
+func TestWebSubagentsJobsProviders(t *testing.T) {
+	a, st := makeWebServerApp(t, true, "tok")
+	defer st.Close()
+	if err := a.registerWebServer(); err != nil {
+		t.Fatalf("registerWebServer: %v", err)
+	}
+	defer a.webserver.Close()
+	h := a.webserver.Handlers()
+	if h.Subagents == nil || h.Jobs == nil {
+		t.Fatal("registerWebServer must wire SetSubagentProvider + SetJobsProvider")
+	}
+	out, err := h.Subagents(context.Background())
+	if err != nil {
+		t.Fatalf("webSubagents: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("subagents = %#v, want empty (disabled)", out)
+	}
+	out, err = h.Jobs(context.Background())
+	if err != nil {
+		t.Fatalf("webJobs: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("jobs = %#v, want empty (disabled)", out)
+	}
+}

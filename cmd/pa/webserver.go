@@ -122,6 +122,11 @@ func (a *app) registerWebServer() error {
 	// M10 W2 (ADR D-WEB2-D): inject the sanitized config view. webConfig never
 	// exposes web_server.token or any key — the webserver only forwards it.
 	srv.SetConfigProvider(a.webConfig)
+	// M10 W4 (ADR D-WEB2-H): inject the read-only subagent and background-job
+	// panels. Each provider returns sanitized views (id/status/timestamps only);
+	// a disabled capability answers an empty list, never an error.
+	srv.SetSubagentProvider(a.webSubagents)
+	srv.SetJobsProvider(a.webJobs)
 	a.webserver = srv
 	go func() {
 		if err := srv.Serve(); err != nil {
@@ -216,4 +221,48 @@ func (a *app) webConfig() map[string]any {
 		"tools_enabled_count": len(enabled),
 		"tools_enabled":       tools,
 	}
+}
+
+// webSubagents returns the sanitized active sub-agent views for GET
+// /api/subagents (ADR D-WEB2-H): only id/label/running — never prompts or
+// outputs. A disabled subagent capability answers an empty list, not an error.
+func (a *app) webSubagents(ctx context.Context) ([]map[string]any, error) {
+	if a.subagents == nil {
+		return []map[string]any{}, nil
+	}
+	children, err := a.subagents.ListChildren(ctx, a.currentID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(children))
+	for _, c := range children {
+		out = append(out, map[string]any{"id": c.ID, "label": c.Label, "running": c.Running})
+	}
+	return out, nil
+}
+
+// webJobs returns the sanitized background-job views for GET /api/jobs (ADR
+// D-WEB2-H): id/kind/label/status/detail/started_at/finished_at — never outputs
+// or owner-session internals. A disabled jobs capability answers an empty list.
+func (a *app) webJobs(ctx context.Context) ([]map[string]any, error) {
+	if a.jobs == nil {
+		return []map[string]any{}, nil
+	}
+	snaps, err := a.jobs.List(ctx, a.currentID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(snaps))
+	for _, j := range snaps {
+		item := map[string]any{
+			"id": j.ID, "kind": j.Kind, "label": j.Label,
+			"status": j.Status, "detail": j.Detail,
+			"started_at": j.StartedAt,
+		}
+		if j.FinishedAt != nil {
+			item["finished_at"] = *j.FinishedAt
+		}
+		out = append(out, item)
+	}
+	return out, nil
 }
