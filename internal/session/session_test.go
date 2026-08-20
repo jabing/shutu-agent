@@ -60,11 +60,11 @@ func TestDeriveHistoryBasicConversation(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("derived %d messages, want 2", len(msgs))
 	}
-	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "what time is it" {
+	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "what time is it" {
 		t.Fatalf("msg0 = %+v", msgs[0])
 	}
 	// chunks fold away; the authoritative assistant/message wins
-	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Let me check" {
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Text() != "Let me check" {
 		t.Fatalf("msg1 = %+v", msgs[1])
 	}
 }
@@ -89,7 +89,7 @@ func TestDeriveHistoryToolRoundTrip(t *testing.T) {
 		t.Fatalf("tool call = %+v", asst.ToolCalls[0])
 	}
 	tool := msgs[2]
-	if tool.Role != llm.RoleTool || tool.ToolCallID != "call_1" || tool.Content != "file contents" {
+	if tool.Role != llm.RoleTool || tool.ToolCallID != "call_1" || tool.Text() != "file contents" {
 		t.Fatalf("tool msg = %+v", tool)
 	}
 }
@@ -110,8 +110,8 @@ func TestDeriveHistoryToolErrorBecomesToolMessage(t *testing.T) {
 	if tool.Role != llm.RoleTool || tool.ToolCallID != "call_2" {
 		t.Fatalf("tool msg = %+v", tool)
 	}
-	if tool.Content != "Error: no such file" {
-		t.Fatalf("tool error content = %q", tool.Content)
+	if tool.Text() != "Error: no such file" {
+		t.Fatalf("tool error content = %q", tool.Text())
 	}
 }
 
@@ -381,8 +381,8 @@ func TestToolResultSpillRecordsLocator(t *testing.T) {
 		t.Fatalf("spill record = %+v", d.Spill)
 	}
 	msgs := l.DeriveHistory()
-	if msgs[2].Content != "head...[truncated; see spill]" {
-		t.Fatalf("derived tool content = %q", msgs[2].Content)
+	if msgs[2].Text() != "head...[truncated; see spill]" {
+		t.Fatalf("derived tool content = %q", msgs[2].Text())
 	}
 }
 
@@ -651,7 +651,7 @@ func TestCompactionEventsAppendAndReplay(t *testing.T) {
 	if _, err := fresh.Append(EventUserMessage, NewUserMessage("hello")); err != nil {
 		t.Fatalf("append user/message: %v", err)
 	}
-	if msgs := fresh.DeriveHistory(); len(msgs) != 1 || msgs[0].Content != "hello" {
+	if msgs := fresh.DeriveHistory(); len(msgs) != 1 || msgs[0].Text() != "hello" {
 		t.Fatalf("DeriveHistory with interleaved compaction/* events = %+v, want just the user message", msgs)
 	}
 }
@@ -835,10 +835,10 @@ func TestScheduleEventsMixedWithConversationDeriveOnlyConversation(t *testing.T)
 	if len(msgs) != 2 {
 		t.Fatalf("derived %d messages, want 2 (conversation only): %+v", len(msgs), msgs)
 	}
-	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "set up a reminder" {
+	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "set up a reminder" {
 		t.Fatalf("msg0 = %+v", msgs[0])
 	}
-	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Done." {
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Text() != "Done." {
 		t.Fatalf("msg1 = %+v", msgs[1])
 	}
 	// D1: the schedule rows stay physically in the log.
@@ -868,13 +868,13 @@ func TestDeriveHistoryReplaceFoldsSummaryPlusTail(t *testing.T) {
 	if len(msgs) != 3 {
 		t.Fatalf("derived %d messages, want 3: %+v", len(msgs), msgs)
 	}
-	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "summarized" {
+	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "summarized" {
 		t.Fatalf("msg0 = %+v, want user summary", msgs[0])
 	}
-	if msgs[1].Role != llm.RoleUser || msgs[1].Content != "new question" {
+	if msgs[1].Role != llm.RoleUser || msgs[1].Text() != "new question" {
 		t.Fatalf("msg1 = %+v, want unshadowed tail user", msgs[1])
 	}
-	if msgs[2].Role != llm.RoleAssistant || msgs[2].Content != "new answer" {
+	if msgs[2].Role != llm.RoleAssistant || msgs[2].Text() != "new answer" {
 		t.Fatalf("msg2 = %+v, want unshadowed tail assistant", msgs[2])
 	}
 	// D1: shadowed events are still physically in the log.
@@ -895,11 +895,11 @@ func TestDeriveHistoryWithoutReplaceUnchanged(t *testing.T) {
 	l.Append(EventToolResult, NewToolResult("call_x", "get_time", "12:00", nil))
 
 	want := []llm.Message{
-		{Role: llm.RoleUser, Content: "a"},
-		{Role: llm.RoleAssistant, Content: "A"},
-		{Role: llm.RoleUser, Content: "b"},
-		{Role: llm.RoleAssistant, Content: "B", ToolCalls: []llm.ToolCall{{ID: "call_x", Name: "get_time", Arguments: `{}`}}},
-		{Role: llm.RoleTool, ToolCallID: "call_x", Content: "12:00"},
+		{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text("a")}},
+		{Role: llm.RoleAssistant, Content: []llm.ContentBlock{llm.Text("A")}},
+		{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text("b")}},
+		{Role: llm.RoleAssistant, Content: []llm.ContentBlock{llm.Text("B")}, ToolCalls: []llm.ToolCall{{ID: "call_x", Name: "get_time", Arguments: `{}`}}},
+		{Role: llm.RoleTool, ToolCallID: "call_x", Content: []llm.ContentBlock{llm.Text("12:00")}},
 	}
 	if msgs := l.DeriveHistory(); !reflect.DeepEqual(msgs, want) {
 		t.Fatalf("derived = %+v, want %+v (no replace marker must not change folding)", msgs, want)
@@ -923,13 +923,13 @@ func TestDeriveHistoryReplaceShadowingMixedEvents(t *testing.T) {
 	if len(msgs) != 3 {
 		t.Fatalf("derived %d messages, want 3: %+v", len(msgs), msgs)
 	}
-	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "compacted 1-4" {
+	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "compacted 1-4" {
 		t.Fatalf("msg0 = %+v, want summary over mixed shadowed events", msgs[0])
 	}
-	if msgs[1].Role != llm.RoleUser || msgs[1].Content != "continue" {
+	if msgs[1].Role != llm.RoleUser || msgs[1].Text() != "continue" {
 		t.Fatalf("msg1 = %+v, want tail user", msgs[1])
 	}
-	if msgs[2].Role != llm.RoleAssistant || msgs[2].Content != "continuing" {
+	if msgs[2].Role != llm.RoleAssistant || msgs[2].Text() != "continuing" {
 		t.Fatalf("msg2 = %+v, want tail assistant", msgs[2])
 	}
 }
@@ -945,10 +945,10 @@ func TestDeriveHistoryReplaceEmptySummaryPreserved(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("derived %d messages, want 2: %+v", len(msgs), msgs)
 	}
-	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "" {
+	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "" {
 		t.Fatalf("msg0 = %+v, want preserved empty summary user message", msgs[0])
 	}
-	if msgs[1].Role != llm.RoleUser || msgs[1].Content != "new" {
+	if msgs[1].Role != llm.RoleUser || msgs[1].Text() != "new" {
 		t.Fatalf("msg1 = %+v, want tail user", msgs[1])
 	}
 }
@@ -1008,7 +1008,7 @@ func TestNewUserMessageReplaceJSONRoundTrip(t *testing.T) {
 		t.Fatalf("restore: %v", err)
 	}
 	msgs := fresh.DeriveHistory()
-	if len(msgs) != 1 || msgs[0].Role != llm.RoleUser || msgs[0].Content != "s" {
+	if len(msgs) != 1 || msgs[0].Role != llm.RoleUser || msgs[0].Text() != "s" {
 		t.Fatalf("round-trip derived = %+v, want [user s]", msgs)
 	}
 }
@@ -1121,10 +1121,10 @@ func TestPlanEventsMixedWithConversationDeriveOnlyConversation(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("derived %d messages, want 2 (conversation only): %+v", len(msgs), msgs)
 	}
-	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "plan the release" {
+	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "plan the release" {
 		t.Fatalf("msg0 = %+v", msgs[0])
 	}
-	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Created goal-1." {
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Text() != "Created goal-1." {
 		t.Fatalf("msg1 = %+v", msgs[1])
 	}
 	// D1: the plan rows stay physically in the log.
@@ -1241,10 +1241,10 @@ func TestSpillEventsMixedWithConversationDeriveOnlyConversation(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("derived %d messages, want 2 (conversation only): %+v", len(msgs), msgs)
 	}
-	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "remember this for me" {
+	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "remember this for me" {
 		t.Fatalf("msg0 = %+v", msgs[0])
 	}
-	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Remembered." {
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Text() != "Remembered." {
 		t.Fatalf("msg1 = %+v", msgs[1])
 	}
 	// D1: the spill rows stay physically in the log.
@@ -1352,10 +1352,10 @@ func TestInteractEventsMixedWithConversationDeriveOnlyConversation(t *testing.T)
 	if len(msgs) != 2 {
 		t.Fatalf("derived %d messages, want 2 (conversation only): %+v", len(msgs), msgs)
 	}
-	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "run the report" {
+	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "run the report" {
 		t.Fatalf("msg0 = %+v", msgs[0])
 	}
-	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Done." {
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Text() != "Done." {
 		t.Fatalf("msg1 = %+v", msgs[1])
 	}
 	// D1: the interact rows stay physically in the log.
@@ -1443,10 +1443,10 @@ func TestCodeRunEventMixedWithConversationDeriveOnlyConversation(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("derived %d messages, want 2 (conversation only): %+v", len(msgs), msgs)
 	}
-	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "run a quick script" {
+	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "run a quick script" {
 		t.Fatalf("msg0 = %+v", msgs[0])
 	}
-	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Ran it." {
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Text() != "Ran it." {
 		t.Fatalf("msg1 = %+v", msgs[1])
 	}
 	// D1: the code/run rows stay physically in the log.
@@ -1546,10 +1546,10 @@ func TestMcpEventsMixedWithConversationDeriveOnlyConversation(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("derived %d messages, want 2 (conversation only): %+v", len(msgs), msgs)
 	}
-	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "list the tools" {
+	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "list the tools" {
 		t.Fatalf("msg0 = %+v", msgs[0])
 	}
-	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Listed 2 tools." {
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Text() != "Listed 2 tools." {
 		t.Fatalf("msg1 = %+v", msgs[1])
 	}
 	// D1: the mcp rows stay physically in the log.
@@ -1649,14 +1649,144 @@ func TestFsEventsMixedWithConversationDeriveOnlyConversation(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("derived %d messages, want 2 (conversation only): %+v", len(msgs), msgs)
 	}
-	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "read notes.txt" {
+	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "read notes.txt" {
 		t.Fatalf("msg0 = %+v", msgs[0])
 	}
-	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Read it." {
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Text() != "Read it." {
 		t.Fatalf("msg1 = %+v", msgs[1])
 	}
 	// D1: the fs rows stay physically in the log.
 	if got := len(l.Events()); got != 4 {
 		t.Fatalf("log events = %d, want 4 (append-only)", got)
+	}
+}
+
+// TestDeriveHistoryAssistantReasoningFoldsBeforeText verifies the M8 fold
+// contract for a new-format assistant/message: the logged reasoning folds into
+// a reasoning block placed before the text block, Message.Text() excludes it,
+// and Message.Reasoning() recovers it (dispatch-m8 §5).
+func TestDeriveHistoryAssistantReasoningFoldsBeforeText(t *testing.T) {
+	l := New()
+	l.Append(EventUserMessage, NewUserMessage("what is 2+2"))
+	l.Append(EventAssistantMessage, NewAssistantMessage("It is 4.", nil, "stop", "Carry the two. Add the units."))
+
+	msgs := l.DeriveHistory()
+	if len(msgs) != 2 {
+		t.Fatalf("derived %d messages, want 2: %+v", len(msgs), msgs)
+	}
+	asst := msgs[1]
+	if asst.Role != llm.RoleAssistant {
+		t.Fatalf("asst role = %q", asst.Role)
+	}
+	if len(asst.Content) != 2 {
+		t.Fatalf("asst content = %+v, want [reasoning text]", asst.Content)
+	}
+	if asst.Content[0].Kind != llm.BlockReasoning || asst.Content[0].Text != "Carry the two. Add the units." {
+		t.Fatalf("block 0 = %+v, want the reasoning block first", asst.Content[0])
+	}
+	if asst.Content[1].Kind != llm.BlockText || asst.Content[1].Text != "It is 4." {
+		t.Fatalf("block 1 = %+v, want the text block after", asst.Content[1])
+	}
+	if asst.Text() != "It is 4." {
+		t.Fatalf("Text() = %q, want the text only (reasoning excluded)", asst.Text())
+	}
+	if asst.Reasoning() != "Carry the two. Add the units." {
+		t.Fatalf("Reasoning() = %q, want the reasoning text", asst.Reasoning())
+	}
+}
+
+// TestDeriveHistoryAssistantReasoningSurvivesReplay verifies the M8 reasoning
+// round-trip through the durable sink + restart replay (D1/D8): the logged
+// reasoning stays in the assistant/message row and folds back identically after
+// a fresh log is rebuilt from the persisted events.
+func TestDeriveHistoryAssistantReasoningSurvivesReplay(t *testing.T) {
+	var persisted []Event
+	l := New()
+	l.SetSink(func(ev Event) error {
+		persisted = append(persisted, ev)
+		return nil
+	})
+	l.Append(EventUserMessage, NewUserMessage("plan it"))
+	l.Append(EventAssistantMessage, NewAssistantMessage("Done.", nil, "stop", "First consider the constraints."))
+
+	fresh := New()
+	if err := fresh.Restore(persisted); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	msgs := fresh.DeriveHistory()
+	if len(msgs) != 2 {
+		t.Fatalf("derived %d messages, want 2: %+v", len(msgs), msgs)
+	}
+	asst := msgs[1]
+	if asst.Text() != "Done." || asst.Reasoning() != "First consider the constraints." {
+		t.Fatalf("replayed assistant = %+v, want text+reasoning preserved", asst)
+	}
+	if asst.Content[0].Kind != llm.BlockReasoning {
+		t.Fatalf("replayed assistant block 0 = %+v, want reasoning first", asst.Content[0])
+	}
+}
+
+// TestDeriveHistoryUserContentBlocksReserved verifies the M8-3 reservation: a
+// user/message carrying content blocks (images, M8-3) folds those blocks as-is,
+// while a plain text-only user/message still folds into a single text block
+// (dispatch-m8 §4/§5).
+func TestDeriveHistoryUserContentBlocksReserved(t *testing.T) {
+	l := New()
+	// Plain text-only user message → single text block.
+	l.Append(EventUserMessage, NewUserMessage("hello"))
+	// A user message with explicit content blocks (M8-3 reservation; not
+	// written by this milestone's helpers, but folded correctly if present).
+	raw := `{"text":"","content":[{"Kind":"image","Image":{"ID":"att-1","MediaType":"image/png","Path":"/tmp/a.png"}}]}`
+	if _, err := l.Append(EventUserMessage, json.RawMessage(raw)); err != nil {
+		t.Fatalf("append blocks user/message: %v", err)
+	}
+
+	msgs := l.DeriveHistory()
+	if len(msgs) != 2 {
+		t.Fatalf("derived %d messages, want 2: %+v", len(msgs), msgs)
+	}
+	if msgs[0].Content[0].Kind != llm.BlockText || msgs[0].Text() != "hello" {
+		t.Fatalf("msg0 = %+v, want a single text block", msgs[0])
+	}
+	if len(msgs[1].Content) != 1 || msgs[1].Content[0].Kind != llm.BlockImage {
+		t.Fatalf("msg1 content = %+v, want the reserved image block folded as-is", msgs[1].Content)
+	}
+	if !msgs[1].HasImage() {
+		t.Fatal("user message with an image block must report HasImage")
+	}
+}
+
+// TestDeriveHistoryOldFormatReplayNoRegression verifies the D8 old-format
+// replay contract: legacy logs whose user/message and assistant/message rows
+// carry only plain text (no content/reasoning fields) fold into single text
+// blocks and reproduce the old string behavior exactly (dispatch-m8 §5/§6).
+func TestDeriveHistoryOldFormatReplayNoRegression(t *testing.T) {
+	// Old-format rows: pure strings, no content/reasoning keys at all.
+	old := []Event{
+		{Seq: 1, Type: EventUserMessage, At: time.Now().UTC(), Version: 1, Data: json.RawMessage(`{"text":"what time is it"}`)},
+		{Seq: 2, Type: EventAssistantChunk, At: time.Now().UTC(), Version: 1, Data: json.RawMessage(`{"text":"Let "}`)},
+		{Seq: 3, Type: EventAssistantChunk, At: time.Now().UTC(), Version: 1, Data: json.RawMessage(`{"text":"me check"}`)},
+		{Seq: 4, Type: EventAssistantMessage, At: time.Now().UTC(), Version: 1, Data: json.RawMessage(`{"text":"Let me check","toolCalls":null,"finishReason":"stop"}`)},
+		{Seq: 5, Type: EventToolResult, At: time.Now().UTC(), Version: 1, Data: json.RawMessage(`{"callId":"c1","name":"get_time","output":"12:00"}`)},
+	}
+	l := New()
+	if err := l.Restore(old); err != nil {
+		t.Fatalf("restore old-format events: %v", err)
+	}
+	msgs := l.DeriveHistory()
+	if len(msgs) != 3 {
+		t.Fatalf("derived %d messages, want 3: %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "what time is it" {
+		t.Fatalf("old user = %+v, want the plain string preserved", msgs[0])
+	}
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Text() != "Let me check" || msgs[1].Reasoning() != "" {
+		t.Fatalf("old assistant = %+v, want text preserved with no reasoning", msgs[1])
+	}
+	if len(msgs[1].Content) != 1 || msgs[1].Content[0].Kind != llm.BlockText {
+		t.Fatalf("old assistant content = %+v, want a single text block (D8)", msgs[1].Content)
+	}
+	if msgs[2].Role != llm.RoleTool || msgs[2].Text() != "12:00" {
+		t.Fatalf("old tool = %+v, want the plain output preserved", msgs[2])
 	}
 }

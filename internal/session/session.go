@@ -332,7 +332,7 @@ func derive(events []Event) []llm.Message {
 							last = i
 						}
 					}
-					summary := llm.Message{Role: llm.RoleUser, Content: d.Text}
+					summary := llm.Message{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text(d.Text)}}
 					if first >= 0 {
 						head := out[:first]
 						tail := out[last+1:]
@@ -350,15 +350,30 @@ func derive(events []Event) []llm.Message {
 				// malformed range (negative Start or End < Start): no shadowing,
 				// keep the message as a plain user turn.
 			}
-			out = append(out, tagged{msg: llm.Message{Role: llm.RoleUser, Content: d.Text}, seq: ev.Seq})
+			// M8: prefer the logged content blocks (M8-3 reservation); old
+			// logs carry only text, which folds back into a single text block
+			// (D8, old-format replay).
+			content := d.Content
+			if len(content) == 0 {
+				content = []llm.ContentBlock{llm.Text(d.Text)}
+			}
+			out = append(out, tagged{msg: llm.Message{Role: llm.RoleUser, Content: content}, seq: ev.Seq})
 		case EventAssistantMessage:
 			var d assistantMessageData
 			if json.Unmarshal(ev.Data, &d) != nil {
 				continue
 			}
+			// M8: reasoning is folded as a reasoning block before the text
+			// block (dsh order: reasoning first, text after). Old logs carry
+			// no reasoning, so they fold to a single text block (D8).
+			content := make([]llm.ContentBlock, 0, 2)
+			if d.Reasoning != "" {
+				content = append(content, llm.ContentBlock{Kind: llm.BlockReasoning, Text: d.Reasoning})
+			}
+			content = append(content, llm.Text(d.Text))
 			out = append(out, tagged{msg: llm.Message{
 				Role:      llm.RoleAssistant,
-				Content:   d.Text,
+				Content:   content,
 				ToolCalls: d.ToolCalls,
 			}, seq: ev.Seq})
 		case EventToolResult:
@@ -369,7 +384,7 @@ func derive(events []Event) []llm.Message {
 			out = append(out, tagged{msg: llm.Message{
 				Role:       llm.RoleTool,
 				ToolCallID: d.CallID,
-				Content:    d.Output,
+				Content:    []llm.ContentBlock{llm.Text(d.Output)},
 			}, seq: ev.Seq})
 		case EventToolError:
 			var d toolErrorData
@@ -379,7 +394,7 @@ func derive(events []Event) []llm.Message {
 			out = append(out, tagged{msg: llm.Message{
 				Role:       llm.RoleTool,
 				ToolCallID: d.CallID,
-				Content:    "Error: " + d.Error,
+				Content:    []llm.ContentBlock{llm.Text("Error: " + d.Error)},
 			}, seq: ev.Seq})
 		}
 	}
@@ -395,8 +410,9 @@ func derive(events []Event) []llm.Message {
 // New* helpers below so model-visible inputs cannot be logged ad hoc.
 
 type userMessageData struct {
-	Text      string          `json:"text"`
-	SurfaceOp *SurfaceReplace `json:"surfaceOp,omitempty"` // set by compaction summaries (M5c)
+	Text      string             `json:"text"`
+	Content   []llm.ContentBlock `json:"content,omitempty"`   // M8-3 reservation: content blocks (images); not written this milestone
+	SurfaceOp *SurfaceReplace    `json:"surfaceOp,omitempty"` // set by compaction summaries (M5c)
 }
 
 // surfaceReplaceOp is the only SurfaceReplace operation currently defined: the
@@ -420,6 +436,7 @@ type assistantChunkData struct {
 
 type assistantMessageData struct {
 	Text         string         `json:"text"`
+	Reasoning    string         `json:"reasoning,omitempty"` // assistant reasoning (M8, D3): folded to a reasoning block on derive
 	ToolCalls    []llm.ToolCall `json:"toolCalls,omitempty"`
 	FinishReason string         `json:"finishReason,omitempty"`
 }
@@ -464,9 +481,16 @@ func NewUserMessageReplace(text string, start, end int64) any {
 func NewAssistantChunk(text string) any { return assistantChunkData{Text: text} }
 
 // NewAssistantMessage builds the authoritative assistant/message payload that
-// closes a step.
-func NewAssistantMessage(text string, toolCalls []llm.ToolCall, finishReason string) any {
-	return assistantMessageData{Text: text, ToolCalls: toolCalls, FinishReason: finishReason}
+// closes a step. reasoning is optional (M8): when non-empty it is logged as the
+// assistant's reasoning text (D3) and folded back into a reasoning block by
+// DeriveHistory; plain callers may omit it and the payload stays reasoning-free
+// (backward compatible with all existing call sites).
+func NewAssistantMessage(text string, toolCalls []llm.ToolCall, finishReason string, reasoning ...string) any {
+	var r string
+	if len(reasoning) > 0 {
+		r = reasoning[0]
+	}
+	return assistantMessageData{Text: text, ToolCalls: toolCalls, FinishReason: finishReason, Reasoning: r}
 }
 
 // NewToolResult builds one successful tool/result payload. spill is the
