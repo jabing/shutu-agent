@@ -124,9 +124,12 @@ const (
 	// 2026-08-20-m8-message-model.md 决策 M8-3): multimodal is off by default
 	// (D10); model_input_modalities defaults to "text" (the exact-model
 	// capability declaration); a single image's raw-byte cap defaults to
-	// 10 MiB (over-limit fails closed in internal/attachment).
-	DefaultModelInputModalities    = "text"
-	DefaultMultimodalMaxImageBytes = 10 * 1024 * 1024 // 10 MiB
+	// 10 MiB (over-limit fails closed in internal/attachment); the per-request
+	// image byte budget defaults to 20 MiB (M8-3b, over-budget images are
+	// offloaded — oldest replaced by the placeholder — in the providers).
+	DefaultModelInputModalities        = "text"
+	DefaultMultimodalMaxImageBytes     = 10 * 1024 * 1024 // 10 MiB
+	DefaultMultimodalMaxRequestImageBytes = 20 * 1024 * 1024 // 20 MiB
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
@@ -198,6 +201,12 @@ type MultimodalConfig struct {
 	// MaxImageBytes is the single-image raw-byte cap applied by SaveImage;
 	// <= 0 means the default 10 MiB (over-limit fails closed).
 	MaxImageBytes int `yaml:"max_image_bytes"`
+	// MaxRequestImageBytes is the per-request image byte budget
+	// (dispatch-m8-3b §6): images whose cumulative bytes (in message-history
+	// order) exceed it are offloaded at serialize time — the oldest images are
+	// replaced by the placeholder text. <= 0 means the default 20 MiB (the
+	// provider New applies the same fallback, 校验非负).
+	MaxRequestImageBytes int `yaml:"max_request_image_bytes"`
 }
 
 // OpenAIProviderConfig is the OpenAI-compatible provider parameters
@@ -931,6 +940,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.LLM.Multimodal.MaxImageBytes <= 0 {
 		cfg.LLM.Multimodal.MaxImageBytes = DefaultMultimodalMaxImageBytes
+	}
+	if cfg.LLM.Multimodal.MaxRequestImageBytes <= 0 {
+		cfg.LLM.Multimodal.MaxRequestImageBytes = DefaultMultimodalMaxRequestImageBytes
 	}
 }
 

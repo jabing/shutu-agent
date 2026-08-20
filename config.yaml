@@ -52,6 +52,10 @@ llm:
     # Single-image raw-byte cap applied by /attach (fail-closed over-limit);
     # 0/absent ⇒ 10485760 (10 MiB).
     max_image_bytes: 10485760
+    # Request-level image total budget (M8-3b): images whose cumulative bytes
+    # (in message-history order) exceed it are replaced with the placeholder
+    # text, oldest first; 0/absent ⇒ 20971520 (20 MiB).
+    max_request_image_bytes: 20971520
 
 # Directory for runtime data (the session database pa.db lives here).
 data_dir: data

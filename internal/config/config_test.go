@@ -1584,6 +1584,10 @@ func TestLoadMultimodalDefaultsWhenAbsent(t *testing.T) {
 		t.Errorf("llm.multimodal.max_image_bytes = %d, want default %d",
 			cfg.LLM.Multimodal.MaxImageBytes, DefaultMultimodalMaxImageBytes)
 	}
+	if cfg.LLM.Multimodal.MaxRequestImageBytes != DefaultMultimodalMaxRequestImageBytes {
+		t.Errorf("llm.multimodal.max_request_image_bytes = %d, want default %d",
+			cfg.LLM.Multimodal.MaxRequestImageBytes, DefaultMultimodalMaxRequestImageBytes)
+	}
 }
 
 // M8-3: an explicit multimodal section is honored (enabled, model_input_
@@ -1663,5 +1667,52 @@ func TestLoadMultimodalExplicitDisabledStaysOff(t *testing.T) {
 	}
 	if cfg.LLM.Multimodal.MaxImageBytes != 512 {
 		t.Errorf("llm.multimodal.max_image_bytes = %d, want 512 (explicit value kept)", cfg.LLM.Multimodal.MaxImageBytes)
+	}
+}
+
+// M8-3b: llm.multimodal.max_request_image_bytes defaults to 20MiB and parses
+// from YAML; a non-positive value falls back to the default (dispatch-m8-3b
+// §6/§7).
+func TestLoadMultimodalMaxRequestImageBytes(t *testing.T) {
+	// Default when absent.
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LLM.Multimodal.MaxRequestImageBytes != DefaultMultimodalMaxRequestImageBytes {
+		t.Errorf("llm.multimodal.max_request_image_bytes default = %d, want %d",
+			cfg.LLM.Multimodal.MaxRequestImageBytes, DefaultMultimodalMaxRequestImageBytes)
+	}
+
+	// Explicit value honored.
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := `llm:
+  multimodal:
+    max_request_image_bytes: 1048576
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg2, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.LLM.Multimodal.MaxRequestImageBytes != 1048576 {
+		t.Errorf("llm.multimodal.max_request_image_bytes = %d, want 1048576",
+			cfg2.LLM.Multimodal.MaxRequestImageBytes)
+	}
+
+	// Non-positive → default (校验非负).
+	path3 := filepath.Join(t.TempDir(), "config3.yaml")
+	if err := os.WriteFile(path3, []byte("llm:\n  multimodal:\n    max_request_image_bytes: 0\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg3, err := Load(path3)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg3.LLM.Multimodal.MaxRequestImageBytes != DefaultMultimodalMaxRequestImageBytes {
+		t.Errorf("non-positive max_request_image_bytes = %d, want default %d",
+			cfg3.LLM.Multimodal.MaxRequestImageBytes, DefaultMultimodalMaxRequestImageBytes)
 	}
 }
