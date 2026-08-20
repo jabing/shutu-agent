@@ -9,6 +9,32 @@ model: deepseek-chat
 # (https://api.deepseek.com).
 base_url: ""
 
+# LLM provider selection (M8-2, design.md §6 / ADR 2026-08-20-m8-message-model.md).
+# The top-level model/base_url above remain the DeepSeek default configuration
+# (compatible with existing config.yaml — not migrated). API keys NEVER appear
+# here: they only come from environment variables — DEEPSEEK_API_KEY for the
+# deepseek provider, OPENAI_API_KEY for the openai provider (纪律 6).
+llm:
+  # Provider selection route: deepseek (default) | openai | anthropic (M8-2b).
+  # An unknown value fails closed at startup (no silent fallback).
+  provider: deepseek
+  # Per-provider parameters. A non-selected provider's parameters still parse
+  # to their defaults, so the config can switch providers; credentials only
+  # ever come from the environment.
+  openai:
+    # OpenAI-compatible base URL; empty defaults to https://api.openai.com/v1.
+    base_url: https://api.openai.com/v1
+    # Chat model; empty defaults to gpt-4o-mini.
+    model: gpt-4o-mini
+    # API key: OPENAI_API_KEY environment variable only (纪律 6).
+  anthropic:
+    # Anthropic Messages API base URL (M8-2b consumes it; this milestone only
+    # parses it).
+    base_url: https://api.anthropic.com/v1
+    # Chat model (M8-2b placeholder).
+    model: claude-sonnet-4-5
+    # API key: ANTHROPIC_API_KEY environment variable only (M8-2b, 纪律 6).
+
 # Directory for runtime data (the session database pa.db lives here).
 data_dir: data
 

@@ -106,6 +106,18 @@ const (
 	DefaultWebDeepSeekAPIVersion    = "2023-06-01"
 	DefaultWebDeepSeekMaxTokens     = 4096
 	DefaultWebDeepSeekMaxUses       = 5
+
+	// M8-2 LLM-provider defaults (dispatch-m8-2 §5): the default provider is
+	// "deepseek" (regression: behavior identical to before M8-2); openai
+	// defaults to base_url https://api.openai.com/v1 and model gpt-4o-mini
+	// (both configurable). anthropic is an M8-2b placeholder — parsed and
+	// defaulted here so the config can switch providers, but not consumed this
+	// milestone (M8-2b finalizes its wire defaults).
+	DefaultLLMProvider      = "deepseek"
+	DefaultOpenAIBaseURL    = "https://api.openai.com/v1"
+	DefaultOpenAIModel      = "gpt-4o-mini"
+	DefaultAnthropicBaseURL = "https://api.anthropic.com/v1"
+	DefaultAnthropicModel   = "claude-sonnet-4-5"
 )
 
 // defaultEnabledTools is the whitelist applied when tools.enabled is absent.
@@ -134,6 +146,45 @@ type Config struct {
 	Mcp        McpConfig        `yaml:"mcp"`         // MCP tool-ecosystem policy (M6f)
 	Fs         FsConfig         `yaml:"fs"`          // safe-file-operation policy (M6f)
 	Web        WebConfig        `yaml:"web"`         // web search/fetch policy (M7)
+	LLM        LLMConfig        `yaml:"llm"`         // LLM provider selection (M8-2)
+}
+
+// LLMConfig is the LLM provider-selection policy (dispatch-m8-2 §5 / ADR
+// 2026-08-20-m8-message-model.md 决策 M8-2). Provider routes to one of the
+// registered providers: deepseek (default) | openai | anthropic (M8-2b). An
+// unknown value fails closed at startup (the composition root errors, no
+// silent fallback). The per-provider parameters are still parsed to their
+// defaults even when that provider is not selected, so the config can switch
+// providers; credentials only ever come from the environment (纪律 6), never
+// from this file.
+type LLMConfig struct {
+	// Provider is the selection route; empty defaults to "deepseek".
+	Provider string `yaml:"provider"`
+	// OpenAI carries the OpenAI-compatible provider parameters (base_url /
+	// model); the API key is OPENAI_API_KEY from the environment.
+	OpenAI OpenAIProviderConfig `yaml:"openai"`
+	// Anthropic carries the Anthropic provider parameters (base_url / model);
+	// it is an M8-2b placeholder — parsed and defaulted here but not consumed
+	// this milestone. The API key will be ANTHROPIC_API_KEY from the
+	// environment (M8-2b).
+	Anthropic AnthropicProviderConfig `yaml:"anthropic"`
+}
+
+// OpenAIProviderConfig is the OpenAI-compatible provider parameters
+// (dispatch-m8-2 §5). BaseURL defaults to https://api.openai.com/v1, Model to
+// gpt-4o-mini; the API key is OPENAI_API_KEY (env-only, 纪律 6).
+type OpenAIProviderConfig struct {
+	BaseURL string `yaml:"base_url"`
+	Model   string `yaml:"model"`
+}
+
+// AnthropicProviderConfig is the Anthropic Messages provider parameters
+// (dispatch-m8-2 §5). M8-2b uses it; this milestone only parses and defaults
+// it. BaseURL defaults to https://api.anthropic.com/v1; the API key will be
+// ANTHROPIC_API_KEY (env-only).
+type AnthropicProviderConfig struct {
+	BaseURL string `yaml:"base_url"`
+	Model   string `yaml:"model"`
 }
 
 // JobsConfig is the background-job policy (dispatch-m5a-2 §3 / ADR
@@ -820,6 +871,25 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Web.DeepSeek.MaxUses <= 0 {
 		cfg.Web.DeepSeek.MaxUses = DefaultWebDeepSeekMaxUses
+	}
+	// M8-2 LLM defaults (dispatch-m8-2 §5): provider 空 → deepseek; the openai
+	// and anthropic parameter fields fall back to their defaults so the config
+	// can switch providers. The top-level model/base_url stay as the deepseek
+	// default configuration (compatible existing config.yaml, not migrated).
+	if cfg.LLM.Provider == "" {
+		cfg.LLM.Provider = DefaultLLMProvider
+	}
+	if cfg.LLM.OpenAI.BaseURL == "" {
+		cfg.LLM.OpenAI.BaseURL = DefaultOpenAIBaseURL
+	}
+	if cfg.LLM.OpenAI.Model == "" {
+		cfg.LLM.OpenAI.Model = DefaultOpenAIModel
+	}
+	if cfg.LLM.Anthropic.BaseURL == "" {
+		cfg.LLM.Anthropic.BaseURL = DefaultAnthropicBaseURL
+	}
+	if cfg.LLM.Anthropic.Model == "" {
+		cfg.LLM.Anthropic.Model = DefaultAnthropicModel
 	}
 }
 
