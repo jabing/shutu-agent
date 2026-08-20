@@ -84,6 +84,7 @@ type Event struct {
 - **M5 增加**（参照 dsh 四个能力族，ADR `2026-08-18-m5-agent-core.md`）：`job/start|status|done`（后台任务）、`subagent/start|end|report`（子代理）、`compaction/start|summary|end|prune`（上下文压缩，摘要本身作为带 `surfaceOp: replace` 的 `user/message` 遮蔽旧范围）、`skill/catalog|load`（技能目录与加载）。全部 log-only，`DeriveHistory` 视为不透明数据（compaction 除外：其为派生规则输入，折叠时跳过被遮蔽 seq）。
 - **M6 增加**（能力补全，ADR `2026-08-19-m6-agent-full.md`）：`schedule/*`（定时调度）、`plan/*`（任务规划）、`spill/*`（长期记忆）、`interact/*`（人工审批）、`code/*`（代码沙箱）、`mcp/*`（外部工具生态）。同样全部 log-only，逐段派发时细化各事件类型。
 - **M7 增加**（web 搜索，ADR `2026-08-20-m7-web-search.md`）：`web/search-request`（搜索请求快照，secret-free：query/endpoint/model/body，派发前落库）。`web_search`/`web_fetch` 工具结果走通用 `tool/result`（模型实际看到 ⇒ 已满足 D3）。log-only，`DeriveHistory` 视为不透明数据。
+- **M8 事件字段演进**（消息模型升级，ADR `2026-08-20-m8-message-model.md`）：`user/message` 与 `assistant/message` 载荷从纯字符串演进为 `content` blocks 数组（text / reasoning / image-ref / tool-call / tool-result）；assistant 消息带 `reasoning_content`（D3 落库并随 `DeriveHistory` 跨 provider 回传）；image block 只落 `ImageRef` 引用（不含 base64，D8 兼容：旧纯字符串回放时包成单个 text block）。
 - **新输入 ⇒ 新事件类型**，绝不在内存里拼 prompt 而不记录。
 - `DeriveHistory() []llm.Message` 是纯函数：从日志折叠出模型历史；未来加过滤（如截断/压缩）只改折叠规则。
 - 持久化 = 追加写入（SQLite 单表或 JSONL），启动时重放重建内存日志。事件类型带 `Version` 字段预留迁移。
@@ -193,7 +194,7 @@ kb 能力 = 三部分（严格对应 seam 结构）：
 | 项 | 选择 | 备注 |
 |---|---|---|
 | 语言 | Go（1.23+） | 编译型、单二进制、跨平台 |
-| LLM 客户端 | `sashabaranov/go-openai`（自定义 BaseURL）或手写 SSE | DeepSeek 为默认 |
+| LLM 客户端 | `sashabaranov/go-openai`（自定义 BaseURL）或手写 SSE；M8 起 provider 注册表（deepseek / openai 兼容 / anthropic Messages），多模态图片请求时转 data URL | DeepSeek 为默认；Anthropic 复用 M7 的 HTTP 客户端心智 |
 | 参数校验 | `santhosh-tekuri/jsonschema/v5` | 纯 Go |
 | 配置 | `gopkg.in/yaml.v3` + 环境变量 | API Key 只走环境变量，绝不入库 |
 | 持久化 | `modernc.org/sqlite`（纯 Go，无 CGO） | Windows 友好；JSONL 仅作开发模式 |
@@ -233,6 +234,7 @@ kb 能力 = 三部分（严格对应 seam 结构）：
 | M5 | 核心能力四段（ADR `2026-08-18-m5-agent-core.md`）：M5a 后台任务 → M5b 子代理 → M5c 上下文压缩 → M5d 技能 | 按四段逐段验收 | 四段各自验收标准（见各 dispatch 文档）全部达标才算 M5 完成 |
 | M6 | 能力补全六段（ADR `2026-08-19-m6-agent-full.md`）：M6a 定时调度 → M6b 任务规划 → M6c 长期记忆 → M6d 人工审批 → M6e 代码沙箱 → M6f 工具生态 | 按六段逐段验收 | 六段各自验收标准（见各 dispatch 文档）全部达标才算 M6 完成；默认关、零新依赖（M6f MCP 优先自实现，SDK 仅当协议超限才评估）—— **✅ 2026-08-19 六段全部验收通过（见 `../Agent.md` §4）** |
 | M7 | web 搜索（ADR `2026-08-20-m7-web-search.md`）：`internal/web` 接缝（service + deepseek 官方搜索 provider + http fetch provider + `web_search`/`web_fetch` 工具 + `web/search-request` 事件）+ config | 按 half 逐段验收 | M7 验收标准（见 dispatch-m7 文档与 ADR）：真实搜索返回结构化来源；D3/D7/D10 合规；零新依赖；不改 loop—— **✅ 2026-08-20 验收通过（见 `../Agent.md` §4；真实 key 冒烟待 rotate 后补）** |
+| M8 | 消息模型升级（ADR `2026-08-20-m8-message-model.md`，Agent 部分第二阶段）：M8-1 `llm.Message` content parts（text/reasoning/image-ref/tool-call/tool-result）+ reasoning 落库回传 + 全部使用方迁移（D8 旧事件回放兼容）→ M8-2 多 provider 注册表（deepseek/openai/anthropic，config 切换，reasoning 跨 provider 保留，anthropic 复用 M7 HTTP 客户端）→ M8-3 多模态（`/attach` 图片，落库只存 `ImageRef`、请求时 data URL、20MiB 上限最老替换、inputModalities 声明、默认关） | 三段逐段验收 | M8 验收标准（见 ADR）：`go vet/test/build` 全绿且迁移无残留；旧会话回放不回归；provider 切换历史重编码正确（reasoning 保留）；图片/多模态按范式工作；不改 loop；零新依赖—— **⬜ 候选（Agent 部分第二阶段）** |
 
 ---
 
