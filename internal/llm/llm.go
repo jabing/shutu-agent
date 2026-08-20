@@ -17,22 +17,6 @@ const (
 	RoleTool      Role = "tool"
 )
 
-// ToolCall is one assistant-emitted tool invocation.
-type ToolCall struct {
-	ID        string // call correlation id, echoed by tool messages
-	Name      string // registered tool name
-	Arguments string // raw JSON string of the arguments
-}
-
-// Message is one entry of a chat history. Exactly one of Content/ToolCallID/
-// ToolCalls is meaningful depending on Role (see field comments).
-type Message struct {
-	Role       Role
-	Content    string     // system/user/assistant/tool content
-	ToolCallID string     // role=tool only: the call id this result answers
-	ToolCalls  []ToolCall // role=assistant only: tool calls this message emitted
-}
-
 // ToolSchema declares one callable tool to the model.
 type ToolSchema struct {
 	Name        string
@@ -54,15 +38,21 @@ type StreamEventKind int
 const (
 	// StreamTextDelta carries an incremental piece of assistant text.
 	StreamTextDelta StreamEventKind = iota
-	// StreamFinish marks the end of the stream with the final finish reason
-	// and the complete accumulated tool calls (arguments already joined).
+	// StreamReasoningDelta carries an incremental piece of the assistant's
+	// reasoning text (M8: DeepSeek streams reasoning_content deltas in
+	// parallel with content deltas).
+	StreamReasoningDelta
+	// StreamFinish marks the end of the stream with the final finish reason,
+	// the complete accumulated tool calls (arguments already joined), and the
+	// accumulated reasoning text.
 	StreamFinish
 )
 
 // StreamEvent is one element read from a model stream.
 type StreamEvent struct {
 	Kind         StreamEventKind
-	Text         string     // StreamTextDelta
+	Text         string     // StreamTextDelta / StreamReasoningDelta
+	Reasoning    string     // StreamFinish: accumulated reasoning text
 	FinishReason string     // StreamFinish: stop | tool_calls | ...
 	ToolCalls    []ToolCall // StreamFinish: complete calls in model order
 }
