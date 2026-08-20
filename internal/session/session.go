@@ -43,6 +43,16 @@ const (
 	EventJobStatus = "job/status"
 	EventJobDone   = "job/done"
 
+	// M9 persistent-terminal events (design.md §3 / ADR 2026-08-20-m9-terminal.md
+	// / dispatch-m9-2 §3): terminal/start lands when a session starts,
+	// terminal/stop when it is closed. They are log-only (D3): the model sees
+	// session output through the terminal_* tools' tool/result events, and
+	// DeriveHistory treats these types as opaque data, so adding them never
+	// changes the turn/step structure (D4). The payloads are pure data
+	// projections — the session package never imports the terminal package.
+	EventTerminalStart = "terminal/start"
+	EventTerminalStop  = "terminal/stop"
+
 	// M5b subagent events (design.md §3 / ADR 2026-08-18-m5-agent-core.md
 	// 决策 ② / dispatch-m5b-2 §1): subagent/start lands when a delegation
 	// registers successfully, subagent/end when a child settles (observed on
@@ -631,6 +641,30 @@ func NewJobStatus(id, status, detail string) any {
 // payload is always lean (dispatch-m5a-2 §1 / D3).
 func NewJobDone(id, status, detail, output string) any {
 	return jobDoneData{ID: id, Status: status, Detail: detail, OutputSummary: summaryHead(output)}
+}
+
+// terminalStartData is the terminal/start payload (dispatch-m9-2 §3).
+type terminalStartData struct {
+	ID    string `json:"id"`
+	Owner string `json:"owner,omitempty"`
+}
+
+// terminalStopData is the terminal/stop payload (dispatch-m9-2 §3).
+type terminalStopData struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// NewTerminalStart builds the terminal/start payload recorded when a
+// persistent shell session starts (dispatch-m9-2 §3 / D3).
+func NewTerminalStart(id, owner string) any {
+	return terminalStartData{ID: id, Owner: owner}
+}
+
+// NewTerminalStop builds the terminal/stop payload recorded when a persistent
+// shell session closes (dispatch-m9-2 §3 / D3).
+func NewTerminalStop(id, reason string) any {
+	return terminalStopData{ID: id, Reason: reason}
 }
 
 // summaryHead returns a bounded, whitespace-compacted head of s for a log
