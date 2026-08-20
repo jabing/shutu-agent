@@ -127,8 +127,8 @@ const (
 	// 10 MiB (over-limit fails closed in internal/attachment); the per-request
 	// image byte budget defaults to 20 MiB (M8-3b, over-budget images are
 	// offloaded — oldest replaced by the placeholder — in the providers).
-	DefaultModelInputModalities        = "text"
-	DefaultMultimodalMaxImageBytes     = 10 * 1024 * 1024 // 10 MiB
+	DefaultModelInputModalities           = "text"
+	DefaultMultimodalMaxImageBytes        = 10 * 1024 * 1024 // 10 MiB
 	DefaultMultimodalMaxRequestImageBytes = 20 * 1024 * 1024 // 20 MiB
 )
 

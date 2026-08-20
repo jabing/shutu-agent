@@ -136,7 +136,7 @@ func (c *Client) Available() bool {
 
 type wireMessage struct {
 	Role             string         `json:"role"`
-	Content          any            `json:"content,omitempty"` // string (text-only) or []any parts (images, M8-3b)
+	Content          any            `json:"content,omitempty"`           // string (text-only) or []any parts (images, M8-3b)
 	ReasoningContent string         `json:"reasoning_content,omitempty"` // assistant reasoning (OpenAI-compatible field, M8)
 	ToolCallID       string         `json:"tool_call_id,omitempty"`
 	ToolCalls        []wireToolCall `json:"tool_calls,omitempty"`
@@ -221,7 +221,7 @@ func imageURLParts(blocks []llm.ContentBlock) ([]any, error) {
 				return nil, err
 			}
 			parts = append(parts, map[string]any{
-				"type": "image_url",
+				"type":      "image_url",
 				"image_url": map[string]any{"url": dataURL},
 			})
 			continue

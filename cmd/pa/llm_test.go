@@ -451,8 +451,8 @@ func TestRegisterLLMWiresMaxRequestImageBytes(t *testing.T) {
 				Provider:             "deepseek",
 				ModelInputModalities: "text,image",
 				Multimodal: config.MultimodalConfig{
-					Enabled:            true,
-					MaxImageBytes:      1 << 20,
+					Enabled:              true,
+					MaxImageBytes:        1 << 20,
 					MaxRequestImageBytes: 5, // tiny budget so the 100-byte image offloads
 				},
 			},
