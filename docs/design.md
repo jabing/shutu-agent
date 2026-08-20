@@ -232,7 +232,7 @@ kb 能力 = 三部分（严格对应 seam 结构）：
 | M4 | 知识库能力（拆三段：M4a 内核 → M4b 工具与召回 → M4c 提取回写） | 1–2 周 | 对话产生可复用知识能被提取并检索引用（含中文）；显式 `kb_add` 可写；`kb_search`/`kb_read`/`kb/recall`/`kb/extract`/`kb/add` 落日志；换 Provider 不改消费方 |
 | M5 | 核心能力四段（ADR `2026-08-18-m5-agent-core.md`）：M5a 后台任务 → M5b 子代理 → M5c 上下文压缩 → M5d 技能 | 按四段逐段验收 | 四段各自验收标准（见各 dispatch 文档）全部达标才算 M5 完成 |
 | M6 | 能力补全六段（ADR `2026-08-19-m6-agent-full.md`）：M6a 定时调度 → M6b 任务规划 → M6c 长期记忆 → M6d 人工审批 → M6e 代码沙箱 → M6f 工具生态 | 按六段逐段验收 | 六段各自验收标准（见各 dispatch 文档）全部达标才算 M6 完成；默认关、零新依赖（M6f MCP 优先自实现，SDK 仅当协议超限才评估）—— **✅ 2026-08-19 六段全部验收通过（见 `../Agent.md` §4）** |
-| M7 | web 搜索（ADR `2026-08-20-m7-web-search.md`）：`internal/web` 接缝（service + deepseek 官方搜索 provider + http fetch provider + `web_search`/`web_fetch` 工具 + `web/search-request` 事件）+ config | 按 half 逐段验收 | M7 验收标准（见 dispatch-m7 文档与 ADR）：真实搜索返回结构化来源；D3/D7/D10 合规；零新依赖；不改 loop—— **⬜ 候选（Agent 部分第一阶段）** |
+| M7 | web 搜索（ADR `2026-08-20-m7-web-search.md`）：`internal/web` 接缝（service + deepseek 官方搜索 provider + http fetch provider + `web_search`/`web_fetch` 工具 + `web/search-request` 事件）+ config | 按 half 逐段验收 | M7 验收标准（见 dispatch-m7 文档与 ADR）：真实搜索返回结构化来源；D3/D7/D10 合规；零新依赖；不改 loop—— **✅ 2026-08-20 验收通过（见 `../Agent.md` §4；真实 key 冒烟待 rotate 后补）** |
 
 ---
 
