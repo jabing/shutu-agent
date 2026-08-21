@@ -409,9 +409,11 @@ searchToggle.addEventListener("click", (e) => {
   if (sidebarCollapsed()) toggleSidebar();   // rail gesture: expand first
   setSearchExpanded(true);
 });
+let searchTimer = null;
 searchInput.addEventListener("input", (e) => {
-  searchQuery = e.target.value;
-  loadSessions();
+  searchQuery = e.target.value.trim();
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadSessions(), 250); // debounce (dsh remote search)
 });
 searchClear.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -481,10 +483,11 @@ async function loadSessions() {
     return;
   }
   list.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
-  const q = searchQuery.trim().toLowerCase();
-  // A live search renders flat results regardless of the grouping mode.
-  if (q) { renderFlat(list, q); return; }
-  if (groupBy !== "workspace") { renderFlat(list, ""); return; }
+  // A live query switches to the remote body-text search view (P6.3, dsh
+  // searchAcrossSessions); nothing else is drawn while searching.
+  if (searchQuery) { doSearch(searchQuery); return; }
+  if (groupBy === "flat") { renderFlat(list, ""); return; }
+  if (groupBy === "date") { renderDateGroups(list); return; }
   try {
     const wr = await api("/api/workspaces");
     const data = await wr.json();
@@ -492,6 +495,49 @@ async function loadSessions() {
     wsUngrouped = data.ungrouped_ids || [];
   } catch (e) { if (e.message !== "unauthorized") console.error(e); }
   renderGrouped(list);
+}
+
+// doSearch fetches body-text hits and draws the search-results view.
+async function doSearch(q) {
+  let res;
+  try {
+    res = await api("/api/search?q=" + encodeURIComponent(q));
+  } catch (e) { if (e.message !== "unauthorized") console.error(e); return; }
+  const data = await res.json();
+  const hits = data.hits || [];
+  sessionList.textContent = "";
+  if (hits.length === 0) {
+    const li = document.createElement("li");
+    li.className = "session-item";
+    li.innerHTML = `<span class="si-title empty">没有找到「${esc(q)}」相关的会话</span>`;
+    sessionList.appendChild(li);
+    return;
+  }
+  for (const h of hits) {
+    const li = document.createElement("li");
+    li.className = "session-item search-hit";
+    li.dataset.id = h.id;
+    const title = h.title || truncate(h.snippet, 18) || "会话";
+    li.innerHTML = `
+      <span class="si-dot" data-state="done"></span>
+      <span class="sh-main">
+        <span class="si-title">${highlight(title, q)}</span>
+        <span class="sh-snippet">${highlight(h.snippet, q)}</span>
+      </span>
+      <span class="si-time">${fmtShort(h.updated_at)}</span>`;
+    li.addEventListener("click", () => switchSession(h.id));
+    sessionList.appendChild(li);
+  }
+}
+
+// truncate shortens a string to n chars with an ellipsis (search fallback title).
+function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + "…" : s; }
+// highlight wraps every case-insensitive occurrence of q in <mark>.
+function highlight(text, q) {
+  const escT = esc(text || "");
+  if (!q) return escT;
+  const escQ = esc(q).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return escT.replace(new RegExp(escQ, "gi"), (m) => `<mark>${m}</mark>`);
 }
 
 // injectIcons fills every [data-icon] element with the dsh web SVG glyphs
@@ -529,13 +575,12 @@ function appendSessionItem(container, s) {
   container.appendChild(li);
 }
 
-// renderFlat draws the single-list view (dsh FlatList), filtered by q.
-function renderFlat(list, q) {
-  for (const s of list) {
-    const hay = ((s.title || "") + " " + s.id).toLowerCase();
-    if (q && !hay.includes(q)) continue;
-    appendSessionItem(sessionList, s);
-  }
+// renderFlat draws the single-list view (dsh FlatList). Once the user drags
+// any row (flat_sort set), the manual order wins; otherwise recent activity.
+function renderFlat(list) {
+  const hasManual = list.some((s) => s.flat_sort > 0);
+  const arr = hasManual ? [...list].sort((a, b) => a.flat_sort - b.flat_sort) : list;
+  for (const s of arr) appendSessionItem(sessionList, s);
 }
 
 // renderGrouped draws the dsh grouped tree: a workspace header row per group
@@ -627,8 +672,64 @@ function renderGrouped(list) {
   }
 }
 
-// openWorkspaceMenu shows the workspace header action menu (dsh WorkspaceMenu:
-// rename / delete, icon-led).
+// renderDateGroups draws the date-grouped tree (dsh groupBy=date): 今天 /
+// 昨天 / 最近 7 天 / 最近 30 天 / 更早 buckets from updated_at. Buckets have
+// no workspace actions — they are pure view grouping, collapsible like the
+// workspace headers.
+function renderDateGroups(list) {
+  const now = new Date();
+  const day = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const today = day(now);
+  const DAY = 86400000;
+  const buckets = [
+    { key: "今天", from: today, next: Infinity },
+    { key: "昨天", from: today - DAY, next: today },
+    { key: "最近 7 天", from: today - 6 * DAY, next: today - DAY },
+    { key: "最近 30 天", from: today - 29 * DAY, next: today - 6 * DAY },
+    { key: "更早", from: -Infinity, next: today - 29 * DAY },
+  ];
+  const byBucket = buckets.map((b) => ({ ...b, ids: [] }));
+  for (const s of list) {
+    const t = new Date(s.updated_at).getTime();
+    for (const b of byBucket) {
+      if (t >= b.from && t < b.next) { b.ids.push(s.id); break; }
+    }
+  }
+  let any = false;
+  for (const b of byBucket) {
+    if (b.ids.length === 0) continue;
+    any = true;
+    const wrap = document.createElement("div");
+    wrap.className = "ws-group" + (wsOpenState("d:" + b.key) ? "" : " closed");
+    wrap.dataset.key = b.key;
+    const head = document.createElement("button");
+    head.className = "group-head";
+    head.innerHTML = `
+      <span class="gh-chevron" aria-hidden="true">${PA_ICONS.triangleright}</span>
+      <span class="gh-folder" aria-hidden="true">${PA_ICONS.folderclose16}</span>
+      <span class="gh-title">${esc(b.key)}</span>
+      <span class="gh-count">${b.ids.length}</span>`;
+    head.addEventListener("click", () => {
+      setWsOpen("d:" + b.key, !wsOpenState("d:" + b.key));
+      wrap.classList.toggle("closed", !wsOpenState("d:" + b.key));
+    });
+    wrap.appendChild(head);
+    if (wsOpenState("d:" + b.key)) {
+      const ul = document.createElement("ul");
+      ul.className = "group-sessions";
+      const byId = new Map(list.map((s) => [s.id, s]));
+      for (const id of b.ids) appendSessionItem(ul, byId.get(id));
+      wrap.appendChild(ul);
+    }
+    sessionList.appendChild(wrap);
+  }
+  if (!any) {
+    const li = document.createElement("li");
+    li.className = "session-item";
+    li.innerHTML = `<span class="si-title empty">还没有会话，点「新会话」开始</span>`;
+    sessionList.appendChild(li);
+  }
+}
 function openWorkspaceMenu(g) {
   closeAnyMenu();
   const pop = document.createElement("div");
@@ -677,7 +778,7 @@ function showDropInd(anchorEl, atBottom) {
 function hideDropInd() { if (dropInd) dropInd.classList.remove("visible"); }
 
 function onDragStart(e) {
-  if (groupBy !== "workspace") return;
+  if (groupBy !== "workspace" && groupBy !== "flat") return;
   if (e.target.closest(".gh-act")) return;
   const head = e.target.closest(".group-head");
   const item = e.target.closest(".session-item");
@@ -691,7 +792,7 @@ function onDragStart(e) {
     dragState = {
       kind: "session",
       id: item.dataset.id,
-      groupKey: item.closest(".ws-group")?.dataset.key || "__u",
+      groupKey: groupBy === "workspace" ? (item.closest(".ws-group")?.dataset.key || "__u") : null,
     };
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", dragState.id);
@@ -707,7 +808,11 @@ function onDragOver(e) {
   if (dragState.kind === "session" && item) {
     const r = item.getBoundingClientRect();
     const before = e.clientY < r.top + r.height / 2;
-    dropPos = { kind: "session", anchor: before ? "before" : "after", el: item, groupKey: item.closest(".ws-group")?.dataset.key || "__u" };
+    if (groupBy === "flat") {
+      dropPos = { kind: "session-flat", anchor: before ? "before" : "after", el: item };
+    } else {
+      dropPos = { kind: "session", anchor: before ? "before" : "after", el: item, groupKey: item.closest(".ws-group")?.dataset.key || "__u" };
+    }
     if (before) showDropInd(item);
     else if (item.nextElementSibling && item.nextElementSibling.classList.contains("session-item")) showDropInd(item.nextElementSibling);
     else showDropInd(item, true);
@@ -755,6 +860,18 @@ async function onDrop(e) {
       const to = order.indexOf(pos.el.dataset.key);
       order.splice(to + (pos.anchor === "after" ? 1 : 0), 0, d.id);
       await api("/api/workspaces/order", { method: "PATCH", body: JSON.stringify({ ids: order }) });
+      loadSessions();
+      return;
+    }
+    if (d.kind === "session" && pos.kind === "session-flat") {
+      const visible = [...sessionList.querySelectorAll(".session-item")].map((li) => li.dataset.id);
+      const at = visible.indexOf(pos.el.dataset.id);
+      let idx = pos.anchor === "after" ? at + 1 : at;
+      const newOrder = visible.filter((id) => id !== d.id);
+      if (at !== -1 && visible.indexOf(d.id) !== -1 && visible.indexOf(d.id) < at) idx -= 1;
+      if (idx < 0) idx = 0;
+      newOrder.splice(idx, 0, d.id);
+      await api("/api/sessions/flat-order", { method: "PATCH", body: JSON.stringify({ ids: newOrder }) });
       loadSessions();
       return;
     }

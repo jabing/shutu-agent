@@ -364,6 +364,19 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
 .drop-indicator.visible { opacity: 1; }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .drop-indicator { display: none; }
 
+/* Remote search results (P6.3): a hit row with a highlighted snippet line. */
+.search-hit { cursor: pointer; }
+.search-hit .si-title { font-weight: 500; }
+.sh-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.sh-snippet {
+  font-size: 12px; line-height: 16px; color: var(--dsw-alias-label-tertiary);
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+mark {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 22%, transparent);
+  color: inherit; border-radius: 2px; padding: 0 1px;
+}
+
 /* session rows: dsh ui-workspace single-line rows (32px, radius 8), state
    dot + title + relative time, hover reveals the ⋯ menu (rename / delete).
    The selected row reuses the hover fill (dsh .sessionRow.selected), not a

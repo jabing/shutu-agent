@@ -9,6 +9,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -53,6 +54,7 @@ func migrateSchema(db *sql.DB) error {
 		{"sessions", "workspace_id", `ALTER TABLE sessions ADD COLUMN workspace_id TEXT`},
 		{"sessions", "archived_at", `ALTER TABLE sessions ADD COLUMN archived_at INTEGER`},
 		{"sessions", "sort", `ALTER TABLE sessions ADD COLUMN sort INTEGER NOT NULL DEFAULT 0`},
+		{"sessions", "flat_sort", `ALTER TABLE sessions ADD COLUMN flat_sort INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, st := range steps {
 		if _, err := db.Exec(st.ddl); err != nil {
@@ -192,10 +194,11 @@ func (s *SQLiteStore) LoadSession(ctx context.Context, sessionID string) ([]sess
 
 // ListSessions returns every session's metadata, most recently updated first.
 // Archived sessions are included (the webserver filters them out of the active
-// list); Sort is the manual drag order within the group.
+// list); Sort is the manual drag order within the group and FlatSort the
+// manual drag order of the flat view.
 func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT s.id, s.created_at, s.updated_at, s.title, s.workspace_id, s.archived_at, s.sort, COUNT(e.seq)
+		SELECT s.id, s.created_at, s.updated_at, s.title, s.workspace_id, s.archived_at, s.sort, s.flat_sort, COUNT(e.seq)
 		FROM sessions s LEFT JOIN events e ON e.session_id = s.id
 		GROUP BY s.id
 		ORDER BY s.updated_at DESC, s.created_at DESC`)
@@ -210,7 +213,7 @@ func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 		var title, workspaceID sql.NullString
 		var archived sql.NullInt64
 		var count int
-		if err := rows.Scan(&m.ID, &created, &updated, &title, &workspaceID, &archived, &m.Sort, &count); err != nil {
+		if err := rows.Scan(&m.ID, &created, &updated, &title, &workspaceID, &archived, &m.Sort, &m.FlatSort, &count); err != nil {
 			return nil, fmt.Errorf("store: scan session meta: %w", err)
 		}
 		m.CreatedAt = time.Unix(0, created).UTC()
@@ -274,6 +277,81 @@ func (s *SQLiteStore) ReorderSessions(ctx context.Context, workspaceID string, s
 		return fmt.Errorf("store: commit reorder sessions: %w", err)
 	}
 	return nil
+}
+
+// ReorderSessionsFlat applies the flat-view manual order: flat_sort is
+// rewritten 0..n-1 in list order, leaving workspace membership untouched.
+func (s *SQLiteStore) ReorderSessionsFlat(ctx context.Context, sessionIDs []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin reorder flat: %w", err)
+	}
+	defer tx.Rollback()
+	for i, id := range sessionIDs {
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET flat_sort = ? WHERE id = ?`, i, id); err != nil {
+			return fmt.Errorf("store: reorder flat %q: %w", id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit reorder flat: %w", err)
+	}
+	return nil
+}
+
+// SearchSessions finds sessions whose event bodies contain q, returning the
+// first matching event's body as a snippet per session, most recently updated
+// first. The LIKE is case-insensitive for ASCII (SQLite default) and the query
+// is escaped so user %/_ don't act as wildcards.
+func (s *SQLiteStore) SearchSessions(ctx context.Context, q string) ([]SearchHit, error) {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT e.session_id, e.data, s.updated_at, s.title
+		FROM events e
+		JOIN sessions s ON s.id = e.session_id
+		JOIN (
+			SELECT session_id, MIN(seq) AS m FROM events
+			WHERE data LIKE ? ESCAPE '\'
+			GROUP BY session_id
+		) m ON m.session_id = e.session_id AND e.seq = m.m
+		ORDER BY s.updated_at DESC, e.session_id`,
+		"%"+escaped+"%")
+	if err != nil {
+		return nil, fmt.Errorf("store: search sessions: %w", err)
+	}
+	defer rows.Close()
+	var hits []SearchHit
+	for rows.Next() {
+		var h SearchHit
+		var data []byte
+		var title sql.NullString
+		var updated int64
+		if err := rows.Scan(&h.SessionID, &data, &updated, &title); err != nil {
+			return nil, fmt.Errorf("store: scan search hit: %w", err)
+		}
+		h.UpdatedAt = time.Unix(0, updated).UTC()
+		h.Title = title.String
+		h.Snippet = snippetFromEventData(data)
+		hits = append(hits, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: read search hits: %w", err)
+	}
+	return hits, nil
+}
+
+// snippetFromEventData extracts a readable text line from an event's JSON body
+// for search previews (best effort, never returns an error).
+func snippetFromEventData(data []byte) string {
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return ""
+	}
+	for _, k := range []string{"text", "content", "summary"} {
+		if v, ok := obj[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // SetSessionWorkspace moves a session into a workspace; an empty workspaceID

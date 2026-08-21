@@ -140,6 +140,9 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	mux.Handle("POST /api/sessions/{id}/archive", s.requireAuth(http.HandlerFunc(s.handleSessionArchive)))
 	mux.Handle("POST /api/sessions/{id}/unarchive", s.requireAuth(http.HandlerFunc(s.handleSessionUnarchive)))
 	mux.Handle("PATCH /api/sessions/order", s.requireAuth(http.HandlerFunc(s.handleSessionsOrder)))
+	mux.Handle("PATCH /api/sessions/flat-order", s.requireAuth(http.HandlerFunc(s.handleSessionsFlatOrder)))
+	// P6.3 remote search across session bodies (dsh searchAcrossSessions).
+	mux.Handle("GET /api/search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
 	// P6 workspace grouping (dsh grouped sidebar view): list, create, rename,
 	// delete, order. The sessions list carries workspace_id so the sidebar groups.
 	mux.Handle("GET /api/workspaces", s.requireAuth(http.HandlerFunc(s.handleWorkspaces)))
@@ -392,6 +395,7 @@ type sessionView struct {
 	WorkspaceID string    `json:"workspace_id,omitempty"`
 	Archived    bool      `json:"archived,omitempty"`
 	Sort        int       `json:"sort,omitempty"`
+	FlatSort    int       `json:"flat_sort,omitempty"`
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -406,7 +410,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		if !m.ArchivedAt.IsZero() {
 			continue
 		}
-		v := sessionView{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, EventCount: m.EventCount, Blank: m.EventCount == 0, WorkspaceID: m.WorkspaceID, Sort: m.Sort}
+		v := sessionView{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, EventCount: m.EventCount, Blank: m.EventCount == 0, WorkspaceID: m.WorkspaceID, Sort: m.Sort, FlatSort: m.FlatSort}
 		if m.Title != "" {
 			// User-set title (P2 rename) wins over inference.
 			v.Title = boundRunes(m.Title, maxTitle)
@@ -787,6 +791,52 @@ func (s *Server) handleSessionsOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleSessionsFlatOrder implements PATCH /api/sessions/flat-order
+// {"ids":[...]} (P6.3 flat-view drag): flat_sort is rewritten 0..n-1.
+func (s *Server) handleSessionsFlatOrder(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad request: " + err.Error()})
+		return
+	}
+	if err := s.store.ReorderSessionsFlat(r.Context(), body.IDs); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// searchHitView is the owned search result the frontend renders as a preview
+// row (title + snippet + time).
+type searchHitView struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Snippet   string    `json:"snippet"`
+}
+
+// handleSearch implements GET /api/search?q=... (P6.3): sessions whose event
+// bodies contain the query, each with the first matching snippet.
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"hits": []searchHitView{}})
+		return
+	}
+	hits, err := s.store.SearchSessions(r.Context(), q)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	out := make([]searchHitView, 0, len(hits))
+	for _, h := range hits {
+		out = append(out, searchHitView{ID: h.SessionID, Title: h.Title, UpdatedAt: h.UpdatedAt, Snippet: boundRunes(h.Snippet, maxSummary)})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"hits": out})
 }
 
 // handleWorkspacesOrder implements PATCH /api/workspaces/order {"ids":[...]}

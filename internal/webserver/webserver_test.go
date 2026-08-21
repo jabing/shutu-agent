@@ -14,6 +14,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -906,6 +907,37 @@ func TestSessionForkArchiveOrder(t *testing.T) {
 	}
 	if rec := doReqBody(t, h, "PATCH", "/api/workspaces/order", "", `{"ids":["w1"]}`); rec.Code != http.StatusOK {
 		t.Fatalf("order workspaces → %d", rec.Code)
+	}
+}
+
+// TestSearchAPI covers GET /api/search (P6.3): body-text hits with snippets.
+func TestSearchAPI(t *testing.T) {
+	srv, st := newTestServer(t, "")
+	h := srv.Handler()
+	seedSession(t, st, "s1", []session.Event{
+		{Seq: 1, Type: session.EventUserMessage, Version: 1, At: time.Now().UTC(), Data: []byte(`{"text":"部署 dsh 网关"}`)},
+	})
+	seedSession(t, st, "s2", []session.Event{
+		{Seq: 1, Type: session.EventUserMessage, Version: 1, At: time.Now().UTC(), Data: []byte(`{"text":"无关内容"}`)},
+	})
+
+	rec := doReq(t, h, "GET", "/api/search?q="+url.QueryEscape("网关"), "")
+	var res struct {
+		Hits []struct {
+			ID      string `json:"id"`
+			Snippet string `json:"snippet"`
+		} `json:"hits"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	if len(res.Hits) != 1 || res.Hits[0].ID != "s1" || res.Hits[0].Snippet == "" {
+		t.Fatalf("hits = %+v, want one s1 with snippet", res.Hits)
+	}
+	// Empty query → empty hits.
+	rec = doReq(t, h, "GET", "/api/search?q=", "")
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || len(res.Hits) != 0 {
+		t.Fatalf("empty query hits = %+v", res.Hits)
 	}
 }
 

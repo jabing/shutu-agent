@@ -33,6 +33,19 @@ type SessionMeta struct {
 	// Sort is the manual drag order (P6.2): zero means "fall back to updated
 	// activity"; a drag sets the whole bucket's order.
 	Sort int
+	// FlatSort is the manual drag order for the flat (ungrouped) view
+	// (P6.3): zero means "fall back to updated activity". It is independent
+	// from the per-workspace Sort.
+	FlatSort int
+}
+
+// SearchHit is one session that matched a body-text query, with the first
+// matching line snippet (P6.3 remote search, dsh searchAcrossSessions).
+type SearchHit struct {
+	SessionID string
+	UpdatedAt time.Time
+	Title     string
+	Snippet   string
 }
 
 // WorkspaceMeta is the durable metadata of one workspace (P6, dsh workspace
@@ -78,6 +91,14 @@ type Store interface {
 	// order, so the grouped sidebar follows the drag. The group's other
 	// sessions keep their sort untouched.
 	ReorderSessions(ctx context.Context, workspaceID string, sessionIDs []string) error
+	// ReorderSessionsFlat applies a manual order for the flat view: every
+	// listed session takes flat_sort 0..n-1 in list order (workspace
+	// membership is untouched).
+	ReorderSessionsFlat(ctx context.Context, sessionIDs []string) error
+	// SearchSessions finds sessions whose event bodies contain q (case- and
+	// width-insensitive substring), returning one hit per session with the
+	// first matching snippet, most recently updated first.
+	SearchSessions(ctx context.Context, q string) ([]SearchHit, error)
 	// DeleteSession removes a session and all of its events. ErrNotFound when
 	// the id has no row.
 	DeleteSession(ctx context.Context, sessionID string) error

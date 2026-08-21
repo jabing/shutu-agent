@@ -387,3 +387,75 @@ func TestArchiveAndOrder(t *testing.T) {
 		t.Fatalf("workspace order = %s,%s, want w2,w1", ws[0].ID, ws[1].ID)
 	}
 }
+
+// TestSearchAndFlatOrder covers P6.3: body-text search returns a snippet per
+// matching session, and flat-order rewrites flat_sort without touching
+// workspace membership.
+func TestSearchAndFlatOrder(t *testing.T) {
+	st := openSQLite(t)
+	ctx := context.Background()
+	mk := func(id, text string) {
+		if err := st.CreateSession(ctx, id, time.Now().UTC()); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+		if err := st.AppendEvents(ctx, id, []session.Event{
+			{Seq: 1, Type: session.EventUserMessage, Version: 1, At: time.Now().UTC(), Data: []byte(`{"text":"` + text + `"}`)},
+		}); err != nil {
+			t.Fatalf("append %s: %v", id, err)
+		}
+	}
+	mk("s1", "部署 dsh 网关的配置说明")
+	mk("s2", "今天天气很好")
+	mk("s3", "再次部署网关")
+	// Set a title for one hit to confirm it is carried.
+	if err := st.SetSessionTitle(ctx, "s1", "网关部署手册"); err != nil {
+		t.Fatalf("set title: %v", err)
+	}
+
+	hits, err := st.SearchSessions(ctx, "部署")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("search hits = %d, want 2 (s1, s3)", len(hits))
+	}
+	got := map[string]SearchHit{}
+	for _, h := range hits {
+		got[h.SessionID] = h
+	}
+	if got["s1"].Snippet == "" || got["s1"].Title != "网关部署手册" {
+		t.Fatalf("s1 hit = %+v, want snippet + title", got["s1"])
+	}
+	if _, ok := got["s2"]; ok {
+		t.Fatal("s2 should not match 部署")
+	}
+	// A literal % must not act as a wildcard.
+	if hits, _ := st.SearchSessions(ctx, "%"); len(hits) != 0 {
+		t.Fatalf("literal %% matched %d sessions, want 0", len(hits))
+	}
+
+	// Flat order: s1/s3 keep membership, take flat_sort.
+	if err := st.CreateWorkspace(ctx, "w1", "研究"); err != nil {
+		t.Fatalf("create w1: %v", err)
+	}
+	if err := st.SetSessionWorkspace(ctx, "s3", "w1"); err != nil {
+		t.Fatalf("set s3->w1: %v", err)
+	}
+	if err := st.ReorderSessionsFlat(ctx, []string{"s3", "s1"}); err != nil {
+		t.Fatalf("flat order: %v", err)
+	}
+	metas, err := st.ListSessions(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	byID := map[string]SessionMeta{}
+	for _, m := range metas {
+		byID[m.ID] = m
+	}
+	if byID["s3"].FlatSort != 0 || byID["s1"].FlatSort != 1 {
+		t.Fatalf("flat sorts = %d/%d, want 0/1", byID["s3"].FlatSort, byID["s1"].FlatSort)
+	}
+	if byID["s3"].WorkspaceID != "w1" {
+		t.Fatalf("flat reorder changed membership: s3 ws = %q", byID["s3"].WorkspaceID)
+	}
+}
