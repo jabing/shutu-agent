@@ -591,6 +591,12 @@ mark {
 .frame[data-sidebar-collapsed="true"] > .col-sidebar #sidebar-toggle:hover .toggle-panel { display: inline-flex; }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar #sidebar-toggle:hover .toggle-mark { display: none; }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .toggle-panel svg { width: 18px; height: 18px; }
+/* Rail glyphs render at 18 (dsh rail spec: search 18, project-add 18, new
+   session 18, settings 18) instead of the expanded 16. */
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .icon-button svg,
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .ns-ico svg,
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .ws-header-btn svg,
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .foot-ico svg { width: 18px; height: 18px; }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .new-session-bar {
   align-self: flex-start; width: 36px; height: 36px; padding: 0; margin: 0 0 12px;
   gap: 0; border-color: transparent; background: transparent;
