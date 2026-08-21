@@ -94,6 +94,11 @@ type Server struct {
 	// the override) and DELETE /api/config/provider (remove a custom provider).
 	// nil (the default) makes those APIs answer 501.
 	setProviderFn func(ctx context.Context, action string, edit ProviderEdit) error
+
+	// M11-pi-ai (模型探测, dsh discovery 对齐): the model-discovery dispatcher
+	// for POST /api/config/provider/discover. It asks an endpoint which models
+	// it serves (获取可用模型). nil (the default) makes the API answer 501.
+	setDiscoverFn func(ctx context.Context, request ProviderDiscover) ([]ProviderModel, error)
 }
 
 // ProviderEdit is the M11 provider-management payload shared by POST and DELETE
@@ -101,15 +106,38 @@ type Server struct {
 // an API-key override. For a built-in provider only api_key is honored (the
 // profile fields stay config-driven); for a custom provider the profile is
 // persisted with it. Protocol is the custom provider's wire protocol (M11-pi-ai
-// 四协议); empty defaults to openai-completions.
+// 四协议); empty defaults to openai-completions. Models is the multi-model list
+// (M11-pi-ai ModelListEditor 对齐); an empty list falls back to the single
+// Model field.
 type ProviderEdit struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
+	ID       string           `json:"id"`
+	Name     string           `json:"name"`
+	BaseURL  string           `json:"base_url"`
+	Model    string           `json:"model"`
+	APIKey   string           `json:"api_key"`
+	Protocol string           `json:"protocol"`
+	Models   []ProviderModel  `json:"models"`
+	Custom   bool             `json:"custom"`
+}
+
+// ProviderModel is one custom-provider model row (id + optional name /
+// capacities), mirroring customModel on the composition side.
+type ProviderModel struct {
+	ID            string `json:"id"`
+	Name          string `json:"name,omitempty"`
+	ContextWindow int    `json:"context_window,omitempty"`
+	MaxTokens     int    `json:"max_tokens,omitempty"`
+}
+
+// ProviderDiscover is the POST /api/config/provider/discover payload: the
+// endpoint as the form currently shows it (base URL + protocol + a key typed
+// but not yet saved), plus an optional directory route that answers from its
+// own catalog.
+type ProviderDiscover struct {
+	Provider string `json:"provider"`
 	BaseURL  string `json:"base_url"`
-	Model    string `json:"model"`
-	APIKey   string `json:"api_key"`
 	Protocol string `json:"protocol"`
-	Custom   bool   `json:"custom"`
+	APIKey   string `json:"api_key"`
 }
 
 // SetAttachmentStore wires the image-attachment store (P5): POST/GET
@@ -133,7 +161,13 @@ func (s *Server) SetProviderManager(fn func(ctx context.Context, action string, 
 	s.setProviderFn = fn
 }
 
-// New validates the wiring and builds the portal handler. token is optional:
+// SetProviderDiscover wires the M11-pi-ai model discovery API (POST
+// /api/config/provider/discover to ask an endpoint which models it serves for
+// the 获取可用模型 action). Called by the composition root; nil (default) keeps
+// the API at 501.
+func (s *Server) SetProviderDiscover(fn func(ctx context.Context, request ProviderDiscover) ([]ProviderModel, error)) {
+	s.setDiscoverFn = fn
+}
 // empty opens the portal to the local machine (dsh-style, no login); a token
 // turns on bearer auth and only its SHA-256 digest is retained. addr defaults
 // to "127.0.0.1:8080".
@@ -198,6 +232,7 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	// settings table and apply immediately (the registry is rebuilt).
 	mux.Handle("POST /api/config/provider", s.requireAuth(http.HandlerFunc(s.handleProviderSave)))
 	mux.Handle("DELETE /api/config/provider", s.requireAuth(http.HandlerFunc(s.handleProviderDelete)))
+	mux.Handle("POST /api/config/provider/discover", s.requireAuth(http.HandlerFunc(s.handleProviderDiscover)))
 	mux.Handle("GET /api/settings", s.requireAuth(http.HandlerFunc(s.handleSettingsGet)))
 	mux.Handle("PATCH /api/settings", s.requireAuth(http.HandlerFunc(s.handleSettingsPatch)))
 	mux.Handle("GET /api/sessions/{id}/events/stream", s.requireAuth(http.HandlerFunc(s.handleEventStream)))
@@ -1256,9 +1291,31 @@ func (s *Server) handleProviderDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// handleAttachmentUpload implements POST /api/sessions/{id}/attachments (P5):
-// a multipart form with a "file" field. The bytes are validated and stored by
-// the attachment store; the session must exist. An unwired store answers 501.
+// handleProviderDiscover implements POST /api/config/provider/discover
+// (M11-pi-ai, 获取可用模型): it asks the endpoint the form currently shows which
+// models it advertises and returns candidate rows for the user to pick from.
+// The reply is candidate metadata only — never written behind the user. An
+// unwired discoverer answers 501.
+func (s *Server) handleProviderDiscover(w http.ResponseWriter, r *http.Request) {
+	if s.setDiscoverFn == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "provider discovery not wired"})
+		return
+	}
+	var body ProviderDiscover
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
+		return
+	}
+	models, err := s.setDiscoverFn(r.Context(), body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	if models == nil {
+		models = []ProviderModel{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"models": models})
+}
 func (s *Server) handleAttachmentUpload(w http.ResponseWriter, r *http.Request) {
 	if s.att == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "attachment store not wired"})

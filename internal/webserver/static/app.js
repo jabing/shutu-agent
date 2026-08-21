@@ -1622,6 +1622,137 @@ let adding = false;       // true while the 增加提供方 add card is open
 let addingId = null;      // provider id selected in the add card's <select>
 let customAdding = false; // true while the 增加自定义提供方 create card is open
 
+// M11-pi-ai multi-model list editor (dsh ModelListEditor 对齐). The draft
+// model rows of the open custom card live here so re-renders keep them; the
+// picker modal is a temporary overlay appended to document.body.
+let modelDraft = [];   // [{id,name,context_window,max_tokens}]
+let probeOpen = false; // true while the 获取可用模型 picker overlay is up
+
+// modelListHTML renders the ModelListEditor into an open card: one row per
+// draft entry (id + optional name, collapsed 容量 with context_window /
+// max_tokens), plus the 添加模型 and 获取可用模型 actions. The rows are only
+// ever added deliberately — an empty list means "none yet".
+function modelListHTML() {
+  const row = (m, i) => `<div class="m-modelrow" data-i="${i}">
+      <input class="m-input m-modelid" value="${esc(m.id || "")}" placeholder="模型 ID" autocomplete="off">
+      <input class="m-input m-modelname" value="${esc(m.name || "")}" placeholder="名称（可选）" autocomplete="off">
+      <button type="button" class="m-btn m-secondary m-modeldel" title="移除该模型">移除</button>
+      <details class="m-customized">
+        <summary class="m-customizedsummary">容量</summary>
+        <div class="m-customizedbody">
+          <input class="m-input m-modelctx" type="number" min="0" value="${m.context_window || ""}" placeholder="上下文窗口">
+          <input class="m-input m-modeltok" type="number" min="0" value="${m.max_tokens || ""}" placeholder="最大输出">
+        </div>
+      </details>
+    </div>`;
+  return `<div class="m-modellist">
+    <div class="m-modellistrows">${modelDraft.map(row).join("")}</div>
+    <div class="m-modellistactions">
+      <button type="button" class="m-btn m-secondary" id="m-model-add">添加模型</button>
+      <button type="button" class="m-btn m-secondary" id="m-model-probe">获取可用模型</button>
+    </div>
+  </div>`;
+}
+
+// readModelDraft syncs the rendered rows back into modelDraft (id/name + the
+// collapsed capacities), dropping fully-blank rows.
+function readModelDraft(sec) {
+  const rows = sec.querySelectorAll(".m-modelrow");
+  const next = [];
+  rows.forEach((r) => {
+    const id = (r.querySelector(".m-modelid").value || "").trim();
+    const name = (r.querySelector(".m-modelname").value || "").trim();
+    const ctx = parseInt(r.querySelector(".m-modelctx").value, 10);
+    const tok = parseInt(r.querySelector(".m-modeltok").value, 10);
+    if (!id) return;
+    next.push({ id, name, context_window: ctx > 0 ? ctx : undefined, max_tokens: tok > 0 ? tok : undefined });
+  });
+  modelDraft = next;
+}
+
+// wireModelList binds the model editor's actions in the card currently shown.
+// probeCtx supplies the live form's base URL / protocol / key for the 获取可用
+// 模型 action (dsh: ask the endpoint the form currently shows, key included).
+function wireModelList(sec, probeCtx) {
+  const addBtn = sec.querySelector("#m-model-add");
+  const probeBtn = sec.querySelector("#m-model-probe");
+  if (addBtn) addBtn.addEventListener("click", () => { modelDraft.push({ id: "", name: "" }); renderModel(config); });
+  sec.querySelectorAll(".m-modeldel").forEach((btn) => {
+    btn.addEventListener("click", () => { const i = Number(btn.closest(".m-modelrow").dataset.i); modelDraft.splice(i, 1); renderModel(config); });
+  });
+  if (probeBtn) probeBtn.addEventListener("click", () => { void probeModels(sec, probeCtx); });
+}
+
+// probeModels asks the endpoint (POST /api/config/provider/discover) which
+// models it advertises and opens the picker. probeCtx reads the live form:
+// base URL, protocol, and a key typed but not yet saved.
+async function probeModels(sec, ctx) {
+  if (probeOpen) return;
+  const base = (ctx.baseEl ? ctx.baseEl.value : "").trim();
+  if (!base) { alert("请先填写 API 地址再获取可用模型"); return; }
+  const protocol = ctx.protocolEl ? ctx.protocolEl.value : (ctx.protocol || "openai-completions");
+  const key = ctx.keyEl ? ctx.keyEl.value : "";
+  const provider = ctx.provider || "";
+  probeOpen = true;
+  try {
+    const res = await api("/api/config/provider/discover", { method: "POST", body: JSON.stringify({ provider, base_url: base, protocol, api_key: key }) });
+    if (res.status === 401) { showLogin("令牌无效或已过期"); return; }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+    openProbePicker(data.models || []);
+  } catch (e) {
+    alert("获取可用模型失败：" + e.message);
+  } finally { probeOpen = false; }
+}
+
+// openProbePicker renders the adoption modal: checkbox list of the candidates
+// the endpoint reported. Candidates already configured (a draft row with the
+// same id) start unchecked — adopting a selection never overwrites a capacity
+// the user corrected. 全选 / 取消全选 change only the checkboxes; nothing is
+// written until 添加所选.
+function openProbePicker(candidates) {
+  if (candidates.length === 0) { alert("该端点未返回任何模型。"); return; }
+  const existing = new Set(modelDraft.map((m) => m.id));
+  const overlay = document.createElement("div");
+  overlay.className = "probe-overlay";
+  overlay.innerHTML = `<div class="probe-modal">
+    <div class="probe-head">
+      <span class="probe-title">选择要添加的模型</span>
+      <button type="button" class="probe-close" aria-label="关闭">✕</button>
+    </div>
+    <div class="probe-tools">
+      <button type="button" class="m-btn m-secondary" id="probe-all">全选</button>
+      <button type="button" class="m-btn m-secondary" id="probe-none">取消全选</button>
+    </div>
+    <ul class="probe-list">
+      ${candidates.map((c) => `<li><label><input type="checkbox" value="${esc(c.id)}" ${existing.has(c.id) ? "" : "checked"}> <span class="probe-id">${esc(c.id)}</span>${c.name ? `<span class="probe-name">${esc(c.name)}</span>` : ""}</label></li>`).join("")}
+    </ul>
+    <div class="probe-actions">
+      <button type="button" class="m-btn m-secondary" id="probe-cancel">取消</button>
+      <button type="button" class="m-btn m-primary" id="probe-adopt">添加所选</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".probe-close").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector("#probe-cancel").addEventListener("click", close);
+  overlay.querySelector("#probe-all").addEventListener("click", () => overlay.querySelectorAll('input[type="checkbox"]').forEach((b) => { b.checked = true; }));
+  overlay.querySelector("#probe-none").addEventListener("click", () => overlay.querySelectorAll('input[type="checkbox"]').forEach((b) => { b.checked = false; }));
+  overlay.querySelector("#probe-adopt").addEventListener("click", () => {
+    const picked = new Set();
+    overlay.querySelectorAll('input[type="checkbox"]:checked').forEach((b) => picked.add(b.value));
+    for (const c of candidates) {
+      if (!picked.has(c.id)) continue;
+      // Never overwrite an existing row's capacity — only add the new ids.
+      if (existing.has(c.id)) continue;
+      modelDraft.push({ id: c.id, name: c.name || "", context_window: c.context_window || undefined, max_tokens: c.max_tokens || undefined });
+    }
+    close();
+    renderModel(config);
+  });
+}
+
 function renderModel(c) {
   const sec = settingsSectionEl();
   const providers = (c.providers || []).slice();
@@ -1668,9 +1799,11 @@ function renderModel(c) {
               : `<span class="m-fieldvalue">${esc(p.base_url || "提供方默认")}</span>`}
           </div>
           <div class="m-field">
-            <span class="m-fieldlabel">模型 ID</span>
-            <input id="m-model-name" class="m-input" list="m-model-candidates" value="${esc(curModel)}" placeholder="输入或从建议中选择">
-            <datalist id="m-model-candidates">${candOpts}</datalist>
+            <span class="m-fieldlabel">模型</span>
+            ${p.custom
+              ? modelListHTML()
+              : `<input id="m-model-name" class="m-input" list="m-model-candidates" value="${esc(curModel)}" placeholder="输入或从建议中选择">
+                 <datalist id="m-model-candidates">${candOpts}</datalist>`}
           </div>
         </div>
       </details>
@@ -1792,8 +1925,8 @@ function renderModel(c) {
           </select>
         </div>
         <div class="m-field">
-          <span class="m-fieldlabel">模型 ID</span>
-          <input id="m-custom-model" class="m-input" value="" placeholder="如 gpt-4o-mini" autocomplete="off">
+          <span class="m-fieldlabel">模型</span>
+          ${modelListHTML()}
         </div>
         <div class="m-field">
           <span class="m-fieldlabel">API Key</span>
@@ -1820,7 +1953,17 @@ function renderModel(c) {
 
   // Open the full editor card for a provider row.
   sec.querySelectorAll("[data-edit]").forEach((btn) => {
-    btn.addEventListener("click", () => { modelEditing = btn.dataset.edit; adding = false; addingId = null; customAdding = false; renderModel(c); });
+    btn.addEventListener("click", () => {
+      modelEditing = btn.dataset.edit; adding = false; addingId = null; customAdding = false;
+      // A custom provider's edit card shows the multi-model list (M11-pi-ai):
+      // seed the draft from its persisted models, falling back to the legacy
+      // single model. A built-in provider keeps the single-model field.
+      const p = providers.find((x) => x.id === btn.dataset.edit);
+      if (p && p.custom) {
+        modelDraft = (p.models && p.models.length) ? p.models.map((m) => ({ id: m.id, name: m.name || "", context_window: m.context_window || undefined, max_tokens: m.max_tokens || undefined })) : [{ id: p.model || "", name: "" }];
+      }
+      renderModel(c);
+    });
   });
   // Delete a custom provider (dsh remove, with confirm).
   sec.querySelectorAll("[data-del]").forEach((btn) => {
@@ -1856,7 +1999,8 @@ function renderModel(c) {
   const addCustom = sec.querySelector("#m-add-custom");
   if (addCustom) {
     addCustom.addEventListener("click", () => {
-      modelEditing = null; adding = false; addingId = null; customAdding = true; renderModel(c);
+      modelEditing = null; adding = false; addingId = null; customAdding = true;
+      modelDraft = [{ id: "", name: "" }]; renderModel(c);
     });
   }
 
@@ -1882,6 +2026,7 @@ function renderModel(c) {
       return { ok: true, msg: "" };
     };
     const refreshCustomState = () => {
+      readModelDraft(sec);
       const r = customRouteMsg(routeInput.value.trim());
       const kf = apiKeyFailure(keyInput.value);
       routeMsg.textContent = r.msg || "小写字母开头，仅小写字母 / 数字 / 单个连字符分隔（如 acme-gateway）。";
@@ -1889,32 +2034,33 @@ function renderModel(c) {
       keyMsg.textContent = kf === "keyBlank" ? "Key 不能为纯空白。" : kf === "keyIllegalCharacters" ? "Key 含非法字符（不能有环境变量行、引号或非打印字符）。" : "Key 默认读取环境变量（大写路由名 + _API_KEY，如 ACME_GATEWAY_API_KEY）；填入后以配置值为准。";
       keyMsg.classList.toggle("m-fielderror", !!kf);
       const ready = r.ok && sec.querySelector("#m-custom-base").value.trim().length > 0
-        && sec.querySelector("#m-custom-model").value.trim().length > 0 && !kf;
+        && modelDraft.length > 0 && !kf;
       apply.disabled = !ready;
     };
     routeInput.addEventListener("input", refreshCustomState);
     keyInput.addEventListener("input", refreshCustomState);
     sec.querySelector("#m-custom-base").addEventListener("input", refreshCustomState);
-    sec.querySelector("#m-custom-model").addEventListener("input", refreshCustomState);
+    // The model list is a self-contained editor: its rows live in modelDraft.
+    wireModelList(sec, { baseEl: sec.querySelector("#m-custom-base"), protocolEl: sec.querySelector("#m-custom-protocol"), keyEl: keyInput });
     refreshCustomState();
     // 增加自定义提供方: POST /api/config/provider {custom:true, ...}
     apply.addEventListener("click", async () => {
+      readModelDraft(sec);
       const route = routeInput.value.trim();
       const name = (sec.querySelector("#m-custom-name").value || "").trim();
       const base = (sec.querySelector("#m-custom-base").value || "").trim();
-      const model = (sec.querySelector("#m-custom-model").value || "").trim();
       const protocol = sec.querySelector("#m-custom-protocol").value;
       const key = keyInput.value.trim();
       const r = customRouteMsg(route);
       if (!r.ok) { status.textContent = r.msg; return; }
-      if (!base || !model) { status.textContent = "API 地址 / 模型 ID 必填"; return; }
+      if (!base || modelDraft.length === 0) { status.textContent = "API 地址 / 模型必填"; return; }
       const kf = apiKeyFailure(keyInput.value);
       if (kf) { status.textContent = kf === "keyBlank" ? "Key 不能为纯空白" : "Key 含非法字符"; return; }
       status.textContent = "保存中…";
       apply.disabled = true;
       try {
         const res = await api("/api/config/provider", { method: "POST", body: JSON.stringify({
-          id: route, name, base_url: base, model, protocol, api_key: key, custom: true,
+          id: route, name, base_url: base, models: modelDraft, protocol, api_key: key, custom: true,
         }) });
         if (res.status === 401) { showLogin("令牌无效或已过期"); return; }
         if (!res.ok) { const eb = await res.json().catch(() => ({})); throw new Error(eb.error || ("HTTP " + res.status)); }
@@ -1932,15 +2078,31 @@ function renderModel(c) {
   const editId = modelEditing || addingId;
   const target = (modelEditing ? sorted : dormant).find((x) => x.id === editId);
   const active = editId === currentProvider;
+  const isCustomEdit = modelEditing && target && target.custom;
   const input = sec.querySelector("#m-model-name");
   const keyInput = sec.querySelector("#m-provider-key");
   const baseInput = sec.querySelector("#m-provider-base");
   const isAdd = adding && !modelEditing;
+  // A custom provider's editor shows the multi-model list (M11-pi-ai): wire
+  // its rows + probe, seeded from the provider's persisted models. Protocol is
+  // fixed at create time (dsh: route chosen at create); the probe passes it so
+  // an OpenAI-compatible custom route can still be interrogated.
+  if (isCustomEdit) {
+    wireModelList(sec, { baseEl: baseInput, keyEl: keyInput, protocol: target.protocol || "openai-completions" });
+  }
   apply.addEventListener("click", async () => {
     const body = {};
     if (!active && !isAdd) body.provider = editId;
-    const m = input.value.trim();
-    if (m && m !== (active ? currentModel : (target && target.model))) body.model = m;
+    // Custom rows keep the effective default model = first draft row's id.
+    let customModelsChanged = false;
+    if (isCustomEdit) {
+      readModelDraft(sec);
+      const first = modelDraft.length ? modelDraft[0].id : "";
+      if (first && first !== (active ? currentModel : (target && target.model))) body.model = first;
+    } else {
+      const m = input.value.trim();
+      if (m && m !== (active ? currentModel : (target && target.model))) body.model = m;
+    }
     const key = keyInput.value.trim();
     if (key) body.api_key = key;
     // Custom-provider rows can also edit their profile (API 地址 / 模型).
@@ -1965,18 +2127,18 @@ function renderModel(c) {
       } finally { apply.disabled = false; }
       return;
     }
-    if (!body.provider && !body.model && !body.api_key && !body.base_url) { status.textContent = "未发生变化"; return; }
+    if (!body.provider && !body.model && !body.api_key && !body.base_url && !isCustomEdit) { status.textContent = "未发生变化"; return; }
     status.textContent = "应用中…";
     apply.disabled = true;
     try {
       // Key override (M11) is persisted via the provider API first, then the
       // model switch applies live (P5.1). Custom rows resave their profile on
       // any of key / API 地址 / 模型 change so the profile stays authoritative.
-      if (body.api_key || body.base_url || (target && target.custom && body.model)) {
+      if (body.api_key || body.base_url || (target && target.custom && (body.model || isCustomEdit))) {
         const rk = await api("/api/config/provider", {
           method: "POST",
           body: target && target.custom
-            ? { id: editId, name: target.name, base_url: body.base_url || target.base_url, model: body.model || target.model, api_key: key, custom: true }
+            ? { id: editId, name: target.name, base_url: body.base_url || target.base_url, model: body.model || (modelDraft.length ? modelDraft[0].id : target.model), models: modelDraft, api_key: key, protocol: target.protocol || "openai-completions", custom: true }
             : { id: editId, api_key: key },
         });
         if (rk.status === 401) { showLogin("令牌无效或已过期"); return; }

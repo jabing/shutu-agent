@@ -147,7 +147,11 @@ func (a *app) registerWebServer() error {
 		switch action {
 		case "save":
 			if edit.Custom {
-				return a.webSaveCustomProvider(ctx, edit.ID, edit.Name, edit.BaseURL, edit.Model, edit.APIKey, edit.Protocol)
+				models := make([]customModel, 0, len(edit.Models))
+				for _, m := range edit.Models {
+					models = append(models, customModel{ID: m.ID, Name: m.Name, ContextWindow: m.ContextWindow, MaxTokens: m.MaxTokens})
+				}
+				return a.webSaveCustomProvider(ctx, edit.ID, edit.Name, edit.BaseURL, edit.Model, edit.APIKey, edit.Protocol, models)
 			}
 			return a.webSaveProvider(ctx, edit.ID, edit.APIKey)
 		case "delete":
@@ -155,6 +159,24 @@ func (a *app) registerWebServer() error {
 		default:
 			return fmt.Errorf("unknown provider action %q", action)
 		}
+	})
+	// M11-pi-ai (模型探测, dsh discovery 对齐): wire the 获取可用模型 API so the
+	// 增加自定义提供方 / 编辑卡 can fill the multi-model list from the endpoint.
+	srv.SetProviderDiscover(func(ctx context.Context, req webserver.ProviderDiscover) ([]webserver.ProviderModel, error) {
+		models, err := a.webDiscoverModels(ctx, discoverRequest{
+			Provider: req.Provider,
+			BaseURL:  req.BaseURL,
+			Protocol: req.Protocol,
+			APIKey:   req.APIKey,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out := make([]webserver.ProviderModel, 0, len(models))
+		for _, m := range models {
+			out = append(out, webserver.ProviderModel{ID: m.ID, Name: m.Name, ContextWindow: m.ContextWindow, MaxTokens: m.MaxTokens})
+		}
+		return out, nil
 	})
 	a.webserver = srv
 	go func() {
@@ -331,18 +353,19 @@ func (a *app) webProviders() []map[string]any {
 			available = p.Available()
 		}
 		out = append(out, map[string]any{
-			"id":         cp.ID,
-			"name":       cp.Name,
-			"custom":     true,
-			"registered": registered,
-			"available":  available,
-			"configured": a.providerKey(cp.ID) != "",
-			"model":      cp.Model,
-			"base_url":   cp.BaseURL,
-			"candidates": nil,
-			"env_var":    llmKeyEnv(cp.ID),
-			"protocol":   cp.Protocol,
+			"id":             cp.ID,
+			"name":           cp.Name,
+			"custom":         true,
+			"registered":     registered,
+			"available":      available,
+			"configured":     a.providerKey(cp.ID) != "",
+			"model":          cp.Model,
+			"base_url":       cp.BaseURL,
+			"candidates":     nil,
+			"env_var":        llmKeyEnv(cp.ID),
+			"protocol":       cp.Protocol,
 			"protocol_label": protocolLabel(providerProtocol(cp.Protocol)),
+			"models":         cp.Models,
 		})
 	}
 	return out
@@ -390,11 +413,14 @@ func (a *app) webSaveProvider(ctx context.Context, id, apiKey string) error {
 
 // webSaveCustomProvider persists a custom provider declaration (M11, POST
 // /api/config/provider with custom:true): it validates the profile (id/name/
-// base_url/model, wire protocol when given), stores llm.custom.<id> + an
-// optional llm.key.<id> override and rebuilds the registry immediately. The
-// protocol is one of the four supported wire protocols (M11-pi-ai); an empty
-// protocol means the OpenAI-compatible default.
-func (a *app) webSaveCustomProvider(ctx context.Context, id, name, baseURL, model, apiKey, protocol string) error {
+// base_url + at least one model, wire protocol when given), stores
+// llm.custom.<id> + an optional llm.key.<id> override and rebuilds the registry
+// immediately. The protocol is one of the four supported wire protocols
+// (M11-pi-ai); an empty protocol means the OpenAI-compatible default. models is
+// the multi-model list (M11-pi-ai ModelListEditor 对齐): the effective default
+// model is the first entry, or the legacy single model argument when the list
+// is empty (a hand-declared provider needs at least one).
+func (a *app) webSaveCustomProvider(ctx context.Context, id, name, baseURL, model, apiKey, protocol string, models []customModel) error {
 	a.turnMu.Lock()
 	defer a.turnMu.Unlock()
 	if a.llmReg == nil {
@@ -405,8 +431,8 @@ func (a *app) webSaveCustomProvider(ctx context.Context, id, name, baseURL, mode
 	baseURL = strings.TrimSpace(baseURL)
 	model = strings.TrimSpace(model)
 	protocol = strings.TrimSpace(protocol)
-	if id == "" || baseURL == "" || model == "" {
-		return errors.New("id, base_url and model are required")
+	if id == "" || baseURL == "" {
+		return errors.New("id and base_url are required")
 	}
 	if name == "" {
 		// dsh CustomProviderCard: the display name is optional and defaults to
@@ -425,7 +451,26 @@ func (a *app) webSaveCustomProvider(ctx context.Context, id, name, baseURL, mode
 	if protocol == "" {
 		protocol = string(protocolCompletions)
 	}
-	raw, err := json.Marshal(customProviderProfile{ID: id, Name: name, BaseURL: baseURL, Model: model, Protocol: protocol})
+	// Validate the model list: at least one entry, each with a non-empty id.
+	// The effective default model is the first entry; a legacy single model
+	// (no list) is accepted as-is.
+	if len(models) > 0 {
+		cleaned := models[:0]
+		for _, m := range models {
+			m.ID = strings.TrimSpace(m.ID)
+			if m.ID == "" {
+				continue
+			}
+			cleaned = append(cleaned, m)
+		}
+		models = cleaned
+	}
+	if len(models) > 0 {
+		model = models[0].ID
+	} else if model == "" {
+		return errors.New("at least one model is required")
+	}
+	raw, err := json.Marshal(customProviderProfile{ID: id, Name: name, BaseURL: baseURL, Model: model, Protocol: protocol, Models: models})
 	if err != nil {
 		return err
 	}
@@ -441,16 +486,17 @@ func (a *app) webSaveCustomProvider(ctx context.Context, id, name, baseURL, mode
 		}
 		a.llmKeys[id] = apiKey
 	}
+	profile := customProviderProfile{ID: id, Name: name, BaseURL: baseURL, Model: model, Protocol: protocol, Models: models}
 	replaced := false
 	for i := range a.customProviders {
 		if a.customProviders[i].ID == id {
-			a.customProviders[i] = customProviderProfile{ID: id, Name: name, BaseURL: baseURL, Model: model, Protocol: protocol}
+			a.customProviders[i] = profile
 			replaced = true
 			break
 		}
 	}
 	if !replaced {
-		a.customProviders = append(a.customProviders, customProviderProfile{ID: id, Name: name, BaseURL: baseURL, Model: model, Protocol: protocol})
+		a.customProviders = append(a.customProviders, profile)
 	}
 	if err := a.registerLLM(); err != nil {
 		return err

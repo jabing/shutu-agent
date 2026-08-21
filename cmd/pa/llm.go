@@ -221,17 +221,32 @@ func registerBuiltinByProtocol(reg *llm.Registry, bp builtinProvider, key string
 	}
 }
 
+// customModel is one model of a custom provider's multi-model list
+// (M11-pi-ai ModelListEditor 对齐): an id plus optional display name and
+// capacities (context window / max output tokens, as disclosed by the probe
+// listing). Capacities are suggestions; they are not enforced at the wire.
+type customModel struct {
+	ID            string `json:"id"`
+	Name          string `json:"name,omitempty"`
+	ContextWindow int    `json:"context_window,omitempty"`
+	MaxTokens     int    `json:"max_tokens,omitempty"`
+}
+
 // customProviderProfile is the persisted M11 custom-provider declaration
 // (settings row llm.custom.<route> = JSON). A custom provider is a
-// user-declared endpoint: route id, display name, base URL, default model and
-// wire protocol (M11-pi-ai 四协议). Its API key follows the standard precedence
+// user-declared endpoint: route id, display name, base URL, wire protocol
+// (M11-pi-ai 四协议) and the model list. Model is the effective default model
+// (the first entry of Models, or a legacy single-model value); Models is the
+// multi-model list a probe fills or the user edits by hand (empty keeps the
+// legacy single Model). Its API key follows the standard precedence
 // (llm.key.<route> setting > env <ROUTE>_API_KEY).
 type customProviderProfile struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	BaseURL  string `json:"base_url"`
-	Model    string `json:"model"`
-	Protocol string `json:"protocol"`
+	ID       string        `json:"id"`
+	Name     string        `json:"name"`
+	BaseURL  string        `json:"base_url"`
+	Model    string        `json:"model"`
+	Protocol string        `json:"protocol"`
+	Models   []customModel `json:"models,omitempty"`
 }
 
 // validProtocol reports whether protocol is one of the four supported wire

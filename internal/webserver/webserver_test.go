@@ -1033,6 +1033,51 @@ func TestProviderManager(t *testing.T) {
 	}
 }
 
+// TestProviderDiscover covers POST /api/config/provider/discover (M11-pi-ai):
+// a wired discoverer passes the probe payload and returns candidate models;
+// a rejected probe answers 400; an unwired discoverer answers 501.
+func TestProviderDiscover(t *testing.T) {
+	srv, _ := newTestServer(t, "tok")
+	var got ProviderDiscover
+	srv.SetProviderDiscover(func(ctx context.Context, request ProviderDiscover) ([]ProviderModel, error) {
+		got = request
+		return []ProviderModel{{ID: "gpt-4o", Name: "GPT-4o", ContextWindow: 128000, MaxTokens: 16384}, {ID: "gpt-4o-mini"}}, nil
+	})
+
+	rec := doReqBody(t, srv.Handler(), "POST", "/api/config/provider/discover", "tok",
+		`{"provider":"","base_url":"https://gw.example/v1","protocol":"openai-completions","api_key":"k"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("discover → %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if got.BaseURL != "https://gw.example/v1" || got.Protocol != "openai-completions" || got.APIKey != "k" {
+		t.Fatalf("discover got %#v", got)
+	}
+	var body struct {
+		Models []ProviderModel `json:"models"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Models) != 2 || body.Models[0].ID != "gpt-4o" || body.Models[0].ContextWindow != 128000 {
+		t.Fatalf("models = %#v", body.Models)
+	}
+
+	// Rejected probe → 400.
+	srv.SetProviderDiscover(func(ctx context.Context, request ProviderDiscover) ([]ProviderModel, error) {
+		return nil, errors.New("协议 \"anthropic-messages\" 无模型列表可读")
+	})
+	if rec := doReqBody(t, srv.Handler(), "POST", "/api/config/provider/discover", "tok",
+		`{"base_url":"https://x","protocol":"anthropic-messages"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("rejected discover → %d, want 400", rec.Code)
+	}
+
+	// Unwired discoverer → 501.
+	srv2, _ := newTestServer(t, "tok")
+	if rec := doReqBody(t, srv2.Handler(), "POST", "/api/config/provider/discover", "tok", `{"base_url":"https://x"}`); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("discover without wire → %d, want 501", rec.Code)
+	}
+}
+
 // TestAttachmentUploadGet covers the P5 attachment APIs: a multipart upload
 // (POST) returns the attachment view, the byte echo (GET) returns the stored
 // bytes with the right Content-Type, unknown ids answer 404, and an unwired

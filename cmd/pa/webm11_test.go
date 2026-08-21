@@ -93,7 +93,7 @@ func TestWebCustomProviderLifecycle(t *testing.T) {
 	a, st := m11App(t)
 	t.Setenv("OLLAMA_API_KEY", "ollama-key")
 
-	if err := a.webSaveCustomProvider(context.Background(), "ollama", "Ollama", "http://localhost:11434/v1", "llama3.1", "", ""); err != nil {
+	if err := a.webSaveCustomProvider(context.Background(), "ollama", "Ollama", "http://localhost:11434/v1", "llama3.1", "", "", nil); err != nil {
 		t.Fatalf("webSaveCustomProvider: %v", err)
 	}
 
@@ -150,13 +150,13 @@ func TestWebCustomProviderValidation(t *testing.T) {
 		name string
 		edit func() error
 	}{
-		{"missing fields", func() error { return a.webSaveCustomProvider(context.Background(), "x", "", "", "", "", "") }},
-		{"builtin shadow", func() error { return a.webSaveCustomProvider(context.Background(), "openai", "X", "http://x/v1", "m", "", "") }},
-		{"invalid route", func() error { return a.webSaveCustomProvider(context.Background(), "Bad Route!", "X", "http://x/v1", "m", "", "") }},
-		{"trailing dash", func() error { return a.webSaveCustomProvider(context.Background(), "bad-", "X", "http://x/v1", "m", "", "") }},
-		{"doubled dash", func() error { return a.webSaveCustomProvider(context.Background(), "bad--route", "X", "http://x/v1", "m", "", "") }},
-		{"digit leading", func() error { return a.webSaveCustomProvider(context.Background(), "1st-route", "X", "http://x/v1", "m", "", "") }},
-		{"unknown protocol", func() error { return a.webSaveCustomProvider(context.Background(), "my-llm", "X", "http://x/v1", "m", "", "bogus-protocol") }},
+		{"missing fields", func() error { return a.webSaveCustomProvider(context.Background(), "x", "", "", "", "", "", nil) }},
+		{"builtin shadow", func() error { return a.webSaveCustomProvider(context.Background(), "openai", "X", "http://x/v1", "m", "", "", nil) }},
+		{"invalid route", func() error { return a.webSaveCustomProvider(context.Background(), "Bad Route!", "X", "http://x/v1", "m", "", "", nil) }},
+		{"trailing dash", func() error { return a.webSaveCustomProvider(context.Background(), "bad-", "X", "http://x/v1", "m", "", "", nil) }},
+		{"doubled dash", func() error { return a.webSaveCustomProvider(context.Background(), "bad--route", "X", "http://x/v1", "m", "", "", nil) }},
+		{"digit leading", func() error { return a.webSaveCustomProvider(context.Background(), "1st-route", "X", "http://x/v1", "m", "", "", nil) }},
+		{"unknown protocol", func() error { return a.webSaveCustomProvider(context.Background(), "my-llm", "X", "http://x/v1", "m", "", "bogus-protocol", nil) }},
 		{"delete builtin", func() error { return a.webDeleteCustomProvider(context.Background(), "deepseek") }},
 		{"delete unknown", func() error { return a.webDeleteCustomProvider(context.Background(), "nope") }},
 	}
@@ -166,7 +166,7 @@ func TestWebCustomProviderValidation(t *testing.T) {
 		}
 	}
 	// Valid route characters are accepted.
-	if err := a.webSaveCustomProvider(context.Background(), "my-llm-2", "X", "http://x/v1", "m", "", ""); err != nil {
+	if err := a.webSaveCustomProvider(context.Background(), "my-llm-2", "X", "http://x/v1", "m", "", "", nil); err != nil {
 		t.Errorf("valid route rejected: %v", err)
 	}
 }
@@ -312,7 +312,7 @@ func TestWebCustomProviderProtocolDispatch(t *testing.T) {
 	a, st := m11App(t)
 
 	// anthropic-messages custom provider with a key override.
-	if err := a.webSaveCustomProvider(context.Background(), "my-messages", "", "https://gw.example/anthropic", "claude-sonnet-4-5", "msg-key", "anthropic-messages"); err != nil {
+	if err := a.webSaveCustomProvider(context.Background(), "my-messages", "", "https://gw.example/anthropic", "claude-sonnet-4-5", "msg-key", "anthropic-messages", nil); err != nil {
 		t.Fatalf("webSaveCustomProvider(messages): %v", err)
 	}
 	// Display name defaults to the route id.
@@ -346,7 +346,7 @@ func TestWebCustomProviderProtocolDispatch(t *testing.T) {
 
 	// google-generative-ai custom provider (no key override; env fallback).
 	t.Setenv("MY_GEMINI_API_KEY", "gem-key")
-	if err := a.webSaveCustomProvider(context.Background(), "my-gemini", "My Gemini", "https://gem.example", "gemini-2.5-flash", "", "google-generative-ai"); err != nil {
+	if err := a.webSaveCustomProvider(context.Background(), "my-gemini", "My Gemini", "https://gem.example", "gemini-2.5-flash", "", "google-generative-ai", nil); err != nil {
 		t.Fatalf("webSaveCustomProvider(gemini): %v", err)
 	}
 	if p, err := a.llmReg.Get("my-gemini"); err != nil {
@@ -365,6 +365,71 @@ func TestWebCustomProviderProtocolDispatch(t *testing.T) {
 	}
 	if _, err := a.llmReg.Get("my-messages"); err == nil {
 		t.Fatal("my-messages should be gone")
+	}
+}
+
+// TestWebCustomProviderMultiModel verifies the M11-pi-ai multi-model list: a
+// custom provider persists its models array, the effective default model is the
+// first entry (dsh ModelListEditor: the list is authoritative), webProviders
+// surfaces the models view, and an empty model list is rejected while a legacy
+// single model still works.
+func TestWebCustomProviderMultiModel(t *testing.T) {
+	a, st := m11App(t)
+	models := []customModel{
+		{ID: "gpt-4o-mini", Name: "GPT-4o mini", ContextWindow: 128000, MaxTokens: 16384},
+		{ID: "gpt-4o"},
+	}
+	if err := a.webSaveCustomProvider(context.Background(), "my-multi", "My Multi", "http://gw.example/v1", "", "multi-key", "openai-completions", models); err != nil {
+		t.Fatalf("webSaveCustomProvider(multi): %v", err)
+	}
+	got, _ := st.GetSettings(context.Background())
+	var cp customProviderProfile
+	if err := json.Unmarshal([]byte(got["llm.custom.my-multi"]), &cp); err != nil {
+		t.Fatalf("unmarshal profile: %v", err)
+	}
+	if len(cp.Models) != 2 || cp.Models[0].ID != "gpt-4o-mini" || cp.Models[0].ContextWindow != 128000 {
+		t.Fatalf("persisted models = %#v", cp.Models)
+	}
+	// Effective default model = first list entry.
+	if cp.Model != "gpt-4o-mini" {
+		t.Fatalf("effective model = %q, want first list entry", cp.Model)
+	}
+	// Registered with the default model.
+	p, err := a.llmReg.Get("my-multi")
+	if err != nil {
+		t.Fatalf("custom provider not registered: %v", err)
+	}
+	if p.ID() != "my-multi" || !p.Available() {
+		t.Fatalf("registered id=%q available=%v", p.ID(), p.Available())
+	}
+	// webProviders surfaces the models array.
+	op := findProvider(a.webConfig()["providers"].([]map[string]any), "my-multi")
+	if op == nil {
+		t.Fatal("custom provider missing from webProviders")
+	}
+	om, ok := op["models"].([]customModel)
+	if !ok || len(om) != 2 || om[1].ID != "gpt-4o" {
+		t.Fatalf("webProviders models view = %#v (%T)", op["models"], op["models"])
+	}
+	if op["model"] != "gpt-4o-mini" {
+		t.Fatalf("webProviders model = %v", op["model"])
+	}
+
+	// Empty model list + no legacy model → rejected.
+	if err := a.webSaveCustomProvider(context.Background(), "my-empty", "X", "http://x/v1", "", "", "", nil); err == nil {
+		t.Fatal("empty model list should be rejected")
+	}
+	// Blank-id rows are dropped; a surviving list still saves.
+	if err := a.webSaveCustomProvider(context.Background(), "my-clean", "X", "http://x/v1", "", "", "", []customModel{{ID: "  "}, {ID: "real"}}); err != nil {
+		t.Fatalf("clean models: %v", err)
+	}
+	got2, _ := st.GetSettings(context.Background())
+	var cp2 customProviderProfile
+	if err := json.Unmarshal([]byte(got2["llm.custom.my-clean"]), &cp2); err != nil {
+		t.Fatal(err)
+	}
+	if len(cp2.Models) != 1 || cp2.Models[0].ID != "real" || cp2.Model != "real" {
+		t.Fatalf("cleaned models = %#v", cp2.Models)
 	}
 }
 
