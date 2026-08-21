@@ -271,6 +271,7 @@ func (a *app) webProviders() []map[string]any {
 			"id":         p.ID(),
 			"available":  p.Available(),
 			"model":      llmProviderModel(a.cfg, p.ID()),
+			"base_url":   llmProviderBaseURL(a.cfg, p.ID()), // M11: editor shows it read-only
 			"candidates": modelCandidates(p.ID()),
 		})
 	}

@@ -45,6 +45,8 @@
   --dsw-alias-button-floating-fill: #2C2C2E;
   --dsw-alias-button-floating-hover: #353638;
   --dsw-alias-button-primary-fill: #F9FAFB;
+  --dsw-alias-button-primary-hover: #EBEEF2;
+  --dsw-alias-label-primary-foreground: #0F1115;
   --dsw-alias-brand-primary: #F9FAFB;
   /* markdown / tool cards */
   --dsw-alias-markdown-code-block: #1B1B1C;
@@ -111,6 +113,8 @@ body[data-ds-dark-theme="false"] {
   --dsw-alias-button-floating-fill: #FFFFFF;
   --dsw-alias-button-floating-hover: #F1F3F5;
   --dsw-alias-button-primary-fill: #0F1115;
+  --dsw-alias-button-primary-hover: #232324;
+  --dsw-alias-label-primary-foreground: #F9FAFB;
   --dsw-alias-brand-primary: #0F1115;
   --dsw-alias-markdown-code-block: #F9FAFB;
   --dsw-alias-markdown-code-block-banner: #F1F3F5;
@@ -986,6 +990,57 @@ body[data-ds-dark-theme="false"] .nav-cell.active { background: #EBEEF2; }
   border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-caption);
 }
 .cap-badge.on { color: var(--dsw-alias-state-success-primary); }
+/* Model settings page (M11: dsh ModelsSection) — provider row-cards, credential
+   dots, per-provider editor cards. Ported from dsh client-ui-settings-models'
+   ModelsSection stylesheet; every value maps onto the shutdown design tokens. */
+.m-rows { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; }
+.m-rowcard {
+  display: flex; flex-direction: column; gap: 12px;
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px; padding: 12px 14px;
+}
+.m-rowhead { display: flex; align-items: center; gap: 10px; }
+.m-rowid { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.m-rowname { color: var(--dsw-alias-label-primary); font-size: 14px; font-weight: 500; line-height: 22px; }
+.m-rowtag {
+  border: 1px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary);
+  border-radius: 4px; flex: none; padding: 1px 6px; font-size: 11px; line-height: 16px;
+}
+.m-rowtag.current { color: var(--dsw-alias-state-business-primary); border-color: var(--dsw-alias-state-business-tertiary); }
+.m-dot { box-sizing: border-box; border-radius: 50%; flex: none; width: 8px; height: 8px; }
+.m-dot.configured { background: var(--dsw-alias-state-success-primary); }
+.m-dot.missing { background: var(--dsw-alias-state-error-primary); }
+.m-rowmodel { margin-left: auto; font-size: 12px; line-height: 18px; }
+.m-rowactions { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+.m-btn {
+  box-sizing: border-box; height: 36px; font: inherit; cursor: pointer; border: none;
+  border-radius: 18px; justify-content: center; align-items: center; gap: 4px;
+  padding: 0 14px; font-size: 14px; line-height: 22px; display: inline-flex;
+}
+.m-btn.m-primary { background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); }
+.m-btn.m-primary:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
+.m-btn.m-secondary { border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-primary); background: transparent; }
+.m-btn.m-secondary:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.m-rowactions .m-btn.m-secondary { border-radius: 14px; height: 28px; padding: 0 10px; font-size: 12px; line-height: 18px; }
+.m-btn:disabled { opacity: 0.4; cursor: default; }
+.m-editor {
+  background: var(--dsw-alias-bg-module-platform); border-radius: 12px;
+  display: flex; flex-direction: column; gap: 14px; padding: 14px 16px;
+}
+.m-editorhead { display: flex; align-items: baseline; gap: 8px; }
+.m-editortitle { color: var(--dsw-alias-label-primary); font-size: 14px; font-weight: 500; line-height: 22px; }
+.m-editorroute { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
+.m-field { display: flex; flex-direction: column; gap: 6px; }
+.m-fieldlabel { color: var(--dsw-alias-label-secondary); font-size: 12px; font-weight: 500; line-height: 18px; }
+.m-input {
+  height: 36px; padding: 0 14px; border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 18px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
+  font: inherit; font-size: 14px;
+}
+.m-input:focus { outline: none; border-color: var(--dsw-alias-state-business-primary); }
+.m-fieldvalue { font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); font-family: var(--dsw-font-code); word-break: break-all; }
+.m-notice { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-warn-label); }
+.m-editoractions { display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
+.m-editoractions .model-status { font-size: 12px; color: var(--dsw-alias-label-caption); }
 /* provider row card (dsh ModelsSection.rowCard) */
 .row-card {
   display: flex; flex-direction: column; gap: 12px;

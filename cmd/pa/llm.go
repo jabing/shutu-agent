@@ -193,6 +193,20 @@ func llmProviderModel(cfg config.Config, id string) string {
 	return cfg.Model
 }
 
+// llmProviderBaseURL returns the effective base URL for provider id (the web
+// Model editor shows it read-only; an empty value means the provider default,
+// rendered as "提供方默认"). It mirrors llmProviderModel's routing: the legacy
+// top-level base_url stays the deepseek default configuration.
+func llmProviderBaseURL(cfg config.Config, id string) string {
+	switch id {
+	case "openai":
+		return cfg.LLM.OpenAI.BaseURL
+	case "anthropic":
+		return cfg.LLM.Anthropic.BaseURL
+	}
+	return cfg.BaseURL
+}
+
 // modelCandidates returns the suggested model names for provider id (P5.1 live
 // model picker). These are honest suggestions — the picker also allows a free
 // model string. Candidates mirror the M8-1/M8-2/M8-2b defaults.

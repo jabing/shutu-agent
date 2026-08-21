@@ -1602,53 +1602,100 @@ function renderGeneral(c) {
   })();
 }
 
+// Model settings page (M11: dsh ModelsSection) — provider row-cards, one per
+// registered provider (deepseek always; openai/anthropic when their env key is
+// present). Each row shows the display name, a credential dot (configured =
+// key present, green / missing = red), the configured model, and a 编辑 action
+// that opens the provider's editor card in place (model ID + base URL, Apply
+// switches provider/model live — P5.1). Keys are env-only (纪律 6): there is no
+// key input, only the honest configured/missing state.
+const PROVIDER_ENV = { deepseek: "DEEPSEEK_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY" };
+let modelEditing = null; // provider id currently open in its editor card
+
 function renderModel(c) {
   const sec = settingsSectionEl();
-  const providers = (c.providers || []).filter((p) => p.available);
+  const providers = (c.providers || []).slice();
   const currentProvider = c.llm_provider || "deepseek";
   const currentModel = c.model || "";
-  // provider options: available ones first (disabled entries cannot be picked
-  // — their key is absent, fail-closed on the backend too)
-  const sorted = [...(c.providers || [])].sort((a, b) => Number(b.available) - Number(a.available));
-  const provOptions = sorted.map((p) =>
-    `<option value="${esc(p.id)}"${p.id === currentProvider ? " selected" : ""}${p.available ? "" : " disabled"}>${esc(PROVIDER_DISPLAY[p.id] || p.id)}${p.available ? "" : "（未配置）"}</option>`).join("");
-  const cand = (providers.find((p) => p.id === currentProvider) || {}).candidates || [];
-  const candOpts = cand.map((m) => `<option value="${esc(m)}">${esc(MODEL_DISPLAY[m] || m)}</option>`).join("");
-  sec.innerHTML = `
-    <h2>模型</h2>
-    <p class="intro">切换提供方 / 模型即时生效（下一条消息即用新模型）；重启后回到 config.yaml 配置。</p>
-    <div class="row-card">
-      <div class="row-head"><span class="row-identity"><span class="row-name">LLM 提供方</span></span></div>
-      <div class="row-fields">
-        <div class="field"><span class="f-label">提供方</span>
-          <select id="model-provider" class="f-select">${provOptions}</select>
+  // available-first (dsh sorts usable providers up); the active one keeps its
+  // place among the configured rows.
+  const sorted = providers.sort((a, b) => Number(b.available) - Number(a.available));
+  const envName = (id) => PROVIDER_ENV[id] || (id.toUpperCase() + "_API_KEY");
+
+  let t = `<h2>模型</h2>
+    <p class="intro">配置 API Key 后即可使用以下提供方。切换提供方 / 模型即时生效（下一条消息即用新模型）；重启后回到 config.yaml 配置。</p>
+    <ul class="m-rows">`;
+
+  for (const p of sorted) {
+    const name = PROVIDER_DISPLAY[p.id] || p.id;
+    const active = p.id === currentProvider;
+    if (modelEditing === p.id) {
+      // Editor card (dsh rowCard→editor swap): the one open card owns its state.
+      const candOpts = (p.candidates || []).map((m) => `<option value="${esc(m)}">${esc(MODEL_DISPLAY[m] || m)}</option>`).join("");
+      const curModel = active ? currentModel : (p.model || "");
+      t += `<li class="m-rowcard m-editing">
+        <div class="m-editor">
+          <div class="m-editorhead">
+            <span class="m-editortitle">编辑 ${esc(name)}</span>
+            <span class="m-editorroute">${esc(p.id)}</span>
+          </div>
+          <div class="m-field">
+            <span class="m-fieldlabel">模型 ID</span>
+            <input id="m-model-name" class="m-input" list="m-model-candidates" value="${esc(curModel)}" placeholder="输入或从建议中选择">
+            <datalist id="m-model-candidates">${candOpts}</datalist>
+          </div>
+          <div class="m-field">
+            <span class="m-fieldlabel">API 地址</span>
+            <span class="m-fieldvalue">${esc(p.base_url || "提供方默认")}</span>
+          </div>
+          ${p.available ? "" : `<p class="m-notice">未配置 API Key（环境变量 ${esc(envName(p.id))}），当前不可用。</p>`}
+          <div class="m-editoractions">
+            <button type="button" class="m-btn m-secondary" id="m-model-cancel">取消</button>
+            <button type="button" class="m-btn m-primary" id="m-model-apply">应用</button>
+            <span id="m-model-status" class="model-status"></span>
+          </div>
         </div>
-        <div class="field"><span class="f-label">模型 ID</span>
-          <input id="model-name" class="f-input" list="model-candidates" value="${esc(currentModel)}" placeholder="输入或从建议中选择">
-          <datalist id="model-candidates">${candOpts}</datalist>
+      </li>`;
+    } else {
+      t += `<li class="m-rowcard">
+        <div class="m-rowhead">
+          <span class="m-rowid">
+            <span class="m-rowname">${esc(name)}</span>
+            ${active ? `<span class="m-rowtag current">当前</span>` : ""}
+            <span class="m-dot ${p.available ? "configured" : "missing"}" title="${p.available ? "API Key 已配置" : "未配置（缺 API Key）"}"></span>
+          </span>
+          <span class="m-rowmodel muted">${esc(p.model || "")}</span>
+          <span class="m-rowactions">
+            <button type="button" class="m-btn m-secondary" data-edit="${esc(p.id)}">编辑</button>
+          </span>
         </div>
-        <div class="field"><span class="f-label">API 地址</span><span class="f-value">${esc(c.base_url || "提供方默认")}</span></div>
-      </div>
-      <div class="row-actions"><button id="model-apply" class="sec-btn primary">应用</button>
-        <span id="model-status" class="model-status"></span></div>
-    </div>`;
-  const sel = sec.querySelector("#model-provider");
-  const input = sec.querySelector("#model-name");
-  const status = sec.querySelector("#model-status");
-  const apply = sec.querySelector("#model-apply");
-  // switching the provider updates the candidate datalist for its models
-  sel.addEventListener("change", () => {
-    const p = (c.providers || []).find((x) => x.id === sel.value);
-    const cl = (p && p.candidates) || [];
-    const dl = sec.querySelector("#model-candidates");
-    dl.innerHTML = cl.map((m) => `<option value="${esc(m)}">${esc(MODEL_DISPLAY[m] || m)}</option>`).join("");
-    if (cl.length) input.value = cl.includes(input.value) ? input.value : (p.model || cl[0]);
+      </li>`;
+    }
+  }
+
+  t += `</ul>
+    <p class="notice">API Key 仅从环境变量读取（不落库）；修改 config.yaml 重启后回到文件配置。</p>`;
+  sec.innerHTML = t;
+
+  // Open the editor card for a provider row.
+  sec.querySelectorAll("[data-edit]").forEach((btn) => {
+    btn.addEventListener("click", () => { modelEditing = btn.dataset.edit; renderModel(c); });
   });
+
+  const apply = sec.querySelector("#m-model-apply");
+  if (!apply) return;
+  const editId = modelEditing;
+  const target = sorted.find((x) => x.id === editId);
+  const active = editId === currentProvider;
+  const cancel = sec.querySelector("#m-model-cancel");
+  const input = sec.querySelector("#m-model-name");
+  const status = sec.querySelector("#m-model-status");
+  cancel.addEventListener("click", () => { modelEditing = null; renderModel(c); });
   apply.addEventListener("click", async () => {
     const body = {};
-    if (sel.value !== currentProvider) body.provider = sel.value;
+    if (!active) body.provider = editId;
     const m = input.value.trim();
-    if (m && m !== currentModel) body.model = m;
+    if (m && m !== (active ? currentModel : (target && target.model))) body.model = m;
     if (!body.provider && !body.model) { status.textContent = "未发生变化"; return; }
     status.textContent = "应用中…";
     apply.disabled = true;
