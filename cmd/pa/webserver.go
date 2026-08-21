@@ -178,6 +178,10 @@ func (a *app) registerWebServer() error {
 		}
 		return out, nil
 	})
+	// 技能设置页 (dsh-skill-mcp-panel 对齐): wire the skill-management API. The
+	// manager is created lazily (independent of skill.enabled) so the page
+	// always lists the skill files it manages.
+	srv.SetSkillManager(a.webSkills)
 	a.webserver = srv
 	go func() {
 		if err := srv.Serve(); err != nil {

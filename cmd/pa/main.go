@@ -529,7 +529,12 @@ type app struct {
 
 	compaction compaction.Engine // nil when compaction disabled (D10)
 	skills     skill.Registry    // nil when skill disabled (D10)
-	schedules  schedule.Engine   // nil when schedule disabled (D10)
+	// skillManager is the web settings-page skill manager (dsh-skill-mcp-panel
+	// 对齐). It is created whenever the web server runs — independent of
+	// skill.enabled — so the 技能 settings page can list/enable/disable/delete/
+	// add/migrate skill files even when the model-facing skill capability is off.
+	skillManager *skill.Manager
+	schedules    schedule.Engine // nil when schedule disabled (D10)
 	plans      plan.Engine       // nil when plan disabled (D10)
 	spills     spill.Engine      // nil when spill disabled (D10)
 	interacts  interact.Engine   // nil when interact disabled (D10)

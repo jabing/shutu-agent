@@ -1476,6 +1476,7 @@ const SETTINGS_SECTIONS = [
   { id: "model", label: "模型", icon: "◈" },
   { id: "caps", label: "能力开关", icon: "⚡" },
   { id: "tools", label: "工具", icon: "🧰" },
+  { id: "skills", label: "技能", icon: "📚" },
 ];
 const CAPABILITY_NAMES = {
   terminal: "终端", fs: "文件系统", fs_search: "全文检索", ralph: "Ralph 循环",
@@ -2197,6 +2198,409 @@ function renderTools(c) {
   sec.innerHTML = t;
 }
 
+// ---- 技能 settings page (dsh-skill-mcp-panel 对齐; user 2026-09) -----------
+// Boots via GET /api/config/skills (list + groups + scopes in one round trip),
+// then drives every action through POST /api/config/skills { action }.
+let skillState = { skills: [], groups: [], scopes: [], enabled: false, query: "", scopeFilter: "all", groupFilter: "", expanded: null };
+
+function skillScopeLabel(id) {
+  const hit = (skillState.scopes || []).find((s) => s.id === id);
+  return hit ? hit.label : id;
+}
+function skillGroupNames(ep) {
+  // A skill's groups for its scope: collect from group rows whose scope map lists the name.
+  const out = [];
+  for (const g of skillState.groups) {
+    const names = (g.scopes && g.scopes[ep.scope]) || [];
+    if (names.includes(ep.name)) out.push(g.name);
+  }
+  return out;
+}
+
+async function skillAPI(action, payload) {
+  const res = await api("/api/config/skills", { method: "POST", body: JSON.stringify(Object.assign({ action }, payload)) });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || ("请求失败 " + res.status));
+  }
+  return await res.json();
+}
+
+function skillOpts(ep) {
+  const on = ep.enabled;
+  const toggle = `<button class="sk-btn" data-skill-toggle="${esc(ep.name)}" data-skill-scope="${esc(ep.scope)}" data-skill-on="${on ? "0" : "1"}">${on ? "停用" : "启用"}</button>`;
+  const del = `<button class="sk-btn danger" data-skill-delete="${esc(ep.name)}" data-skill-scope="${esc(ep.scope)}">删除</button>`;
+  const mig = `<button class="sk-btn" data-skill-migrate="${esc(ep.name)}" data-skill-scope="${esc(ep.scope)}">迁移</button>`;
+  return { toggle, del, mig };
+}
+
+function renderSkills(c) {
+  const sec = settingsSectionEl();
+  sec.innerHTML = `
+    <h2>技能</h2>
+    <div class="muted" style="margin-top:6px">加载中…</div>`;
+  loadSkillState().catch((err) => {
+    sec.innerHTML = `<h2>技能</h2>
+      <p class="notice">加载技能失败：${esc(err.message)}</p>`;
+  }).then(() => { if (settingsSec === "skills") skillRenderReady(); });
+}
+
+async function loadSkillState() {
+  const res = await api("/api/config/skills");
+  if (!res.ok) throw new Error(await res.text().catch(() => "加载失败"));
+  const data = await res.json();
+  skillState.skills = data.skills || [];
+  skillState.groups = data.groups || [];
+  skillState.scopes = data.scopes || [];
+  skillState.enabled = !!data.enabled;
+}
+
+function skillRenderReady() {
+  const sec = settingsSectionEl();
+  sec.innerHTML = `
+    <h2>技能</h2>
+    <p class="intro">管理技能文件（项目根 / 用户根）。${
+      skillState.enabled === false
+        ? "当前 skill 能力未启用（config.yaml skill.enabled=false），仅管理目录；启用后这些技能会进入会话的技能目录注入。"
+        : "启停/删除/添加/迁移立即写入磁盘，会话下一轮即生效（无重启）。"
+    }</p>
+    <div class="sk-toolbar">
+      <div class="sk-search"><span class="sk-search-icon">🔍</span><input id="sk-search" placeholder="按名称搜索…" value="${esc(skillState.query)}"></div>
+      <button class="sk-btn primary" id="sk-add">＋ 添加</button>
+      <button class="sk-btn" id="sk-groups">分组</button>
+    </div>
+    <div class="sk-chipbar" id="sk-scopes"></div>
+    <div class="sk-chipbar" id="sk-groupsbar"></div>
+    <div id="sk-list"></div>`;
+  renderSkillScopeChips();
+  renderSkillGroupsBar();
+  renderSkillList();
+
+  $("sk-search").addEventListener("input", (e) => {
+    skillState.query = e.target.value; renderSkillList();
+  });
+  $("sk-add").addEventListener("click", () => skillOpenAdd());
+  $("sk-groups").addEventListener("click", () => skillOpenGroups());
+}
+
+async function skillRefresh() {
+  await loadSkillState();
+  skillRenderReady();
+}
+
+async function skillToggle(name, scope, on) {
+  try {
+    await skillAPI("set_enabled", { name, scope, enabled: on });
+    await skillRefresh();
+  } catch (err) { skillToast(err.message); }
+}
+
+async function skillDelete(name, scope) {
+  if (!confirm(`确定删除技能「${name}」吗？此操作不可撤销。`)) return;
+  try {
+    await skillAPI("delete", { name, scope });
+    await skillRefresh();
+  } catch (err) { skillToast(err.message); }
+}
+
+function skillOpenMigrate(name, from) {
+  const overlay = document.createElement("div");
+  overlay.className = "sk-overlay";
+  const scopeOpts = (skillState.scopes || []).map((s) =>
+    `<label class="sk-groupcheck"><input type="radio" name="mig-to" value="${esc(s.id)}"${s.id !== from ? " checked" : ""}>${esc(s.label)}</label>`).join("");
+  overlay.innerHTML = `<div class="sk-modal">
+    <h3>迁移「${esc(name)}」</h3>
+    <div class="sk-modalrow">目标作用域：</div>
+    <div class="sk-modalrow">${scopeOpts}</div>
+    <div class="sk-modalrow"><label class="sk-groupcheck"><input type="radio" name="mig-mode" value="move" checked>移动（源删除）</label></div>
+    <div class="sk-modalrow"><label class="sk-groupcheck"><input type="radio" name="mig-mode" value="copy">复制（保留源）</label></div>
+    <div class="sk-modalrow" style="justify-content:flex-end;gap:8px">
+      <button class="sk-btn" data-sk-cancel>取消</button>
+      <button class="sk-btn primary" data-sk-confirm>迁移</button>
+    </div></div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener("click", (ev) => {
+    if (ev.target === overlay || ev.target.closest("[data-sk-cancel]")) { overlay.remove(); return; }
+    if (ev.target.closest("[data-sk-confirm]")) {
+      const to = overlay.querySelector('input[name="mig-to"]:checked')?.value;
+      const mode = overlay.querySelector('input[name="mig-mode"]:checked')?.value;
+      overlay.remove();
+      skillAPI("migrate", { name, from, to, mode })
+        .then(() => skillRefresh())
+        .catch((err) => skillToast(err.message));
+    }
+  });
+}
+
+function skillOpenAdd() {
+  const overlay = document.createElement("div");
+  overlay.className = "sk-overlay";
+  overlay.innerHTML = `<div class="sk-modal">
+    <h3>添加技能</h3>
+    <p class="intro">选择 .md 单文件、技能文件夹或 .zip 压缩包（也可拖拽到此区域）。</p>
+    <div class="sk-drop" id="sk-drop" tabindex="0">点击选择文件 <span class="muted">或拖拽到此处</span></div>
+    <div class="sk-modalrow">导入到作用域：</div>
+    <div class="sk-modalrow">${(skillState.scopes || []).map((s) =>
+      `<label class="sk-groupcheck"><input type="radio" name="add-scope" value="${esc(s.id)}"${s.id === "global" ? " checked" : ""}>${esc(s.label)}</label>`).join("")}</div>
+    <div class="sk-modalrow" style="justify-content:flex-end;gap:8px">
+      <span class="muted" id="sk-addfiles" style="margin-right:auto">未选择文件</span>
+      <button class="sk-btn" data-sk-cancel>取消</button>
+      <button class="sk-btn primary" data-sk-confirm>导入</button>
+    </div>
+    <input type="file" id="sk-fileinput" multiple hidden></div>`;
+  document.body.appendChild(overlay);
+
+  const dropZone = overlay.querySelector("#sk-drop");
+  const fileInput = overlay.querySelector("#sk-fileinput");
+  const filesLabel = overlay.querySelector("#sk-addfiles");
+  let selected = [];
+  dropZone.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    selected = [...fileInput.files];
+    filesLabel.textContent = selected.length ? `已选 ${selected.length} 个文件` : "未选择文件";
+  });
+  ["dragover", "dragenter"].forEach((ev) => dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.add("dragging"); }));
+  ["dragleave", "drop"].forEach((ev) => dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.remove("dragging"); }));
+  dropZone.addEventListener("drop", (e) => {
+    selected = [...(e.dataTransfer.files || [])];
+    filesLabel.textContent = selected.length ? `已选 ${selected.length} 个文件` : "未选择文件";
+  });
+
+  overlay.addEventListener("click", (ev) => {
+    if (ev.target === overlay || ev.target.closest("[data-sk-cancel]")) { overlay.remove(); return; }
+    if (ev.target.closest("[data-sk-confirm]")) {
+      const scope = overlay.querySelector('input[name="add-scope"]:checked')?.value || "global";
+      const kind = selected.length === 1 && /\.zip$/i.test(selected[0].name) ? "zip" : (selected.some((f) => f.webkitRelativePath || (f.name && f.name.includes("/"))) ? "bundle" : (selected.length ? "flat" : ""));
+      if (!kind || selected.length === 0) { skillToast("请先选择文件"); return; }
+      overlay.remove();
+      skillAddFiles(kind, selected, scope);
+    }
+  });
+}
+
+async function skillAddFiles(kind, files, scope) {
+  try {
+    const uploads = [];
+    for (const f of files) {
+      // Bundle dirs come through File.path (webkitRelativePath); keep a flat-relative path.
+      const path = (f.webkitRelativePath || f.name).replace(/\\/g, "/");
+      const buf = await f.arrayBuffer();
+      uploads.push({ path, base64: bufToBase64(buf) });
+    }
+    await skillAPI("add", { kind, files: uploads, scope });
+    await skillRefresh();
+  } catch (err) { skillToast(err.message); }
+}
+
+function bufToBase64(buf) {
+  let bin = "";
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+function skillOpenGroups() {
+  const overlay = document.createElement("div");
+  overlay.className = "sk-overlay";
+  overlay.innerHTML = `<div class="sk-modal">
+    <h3>技能分组</h3>
+    <div class="sk-modalrow">
+      <input id="sk-groupname" class="sk-search" style="height:36px;padding:0 12px" placeholder="分组名称…">
+      <button class="sk-btn primary" id="sk-groupadd">新建</button>
+    </div>
+    <div id="sk-grouplist" style="margin-top:6px"></div>
+    <div class="sk-modalrow" style="justify-content:flex-end"><button class="sk-btn" data-sk-close>关闭</button></div>
+    <div class="sk-modalrow" id="sk-groupscope" hidden></div>
+  </div>`;
+  document.body.appendChild(overlay);
+
+  const renderList = () => {
+    const listEl = overlay.querySelector("#sk-grouplist");
+    listEl.textContent = "";
+    if (skillState.groups.length === 0) {
+      listEl.innerHTML = `<div class="sk-empty">还没有分组</div>`;
+      return;
+    }
+    for (const g of skillState.groups) {
+      const row = document.createElement("div");
+      row.className = "sk-grouprow";
+      const count = Object.values(g.scopes || {}).reduce((s, arr) => s + arr.length, 0);
+      row.innerHTML = `<span style="flex:1">${esc(g.name)} <span class="muted">(${count})</span></span>
+        <button class="sk-btn" data-sk-groupedit="${esc(g.id)}">编辑</button>
+        <button class="sk-btn danger" data-sk-groupdel="${esc(g.id)}">删除</button>`;
+      listEl.appendChild(row);
+    }
+  };
+
+  const openScope = (g) => {
+    const scopeEl = overlay.querySelector("#sk-groupscope");
+    scopeEl.hidden = false;
+    const scope = skillState.scopes[0]?.id || "global";
+    const names = skillState.skills.filter((s) => s.scope === scope).map((s) => s.name);
+    const members = (g.scopes && g.scopes[scope]) || [];
+    scopeEl.innerHTML = `<h3>编辑「${esc(g.name)}」（${esc(scope)} 作用域）</h3>
+      <div style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow:auto">
+        ${names.map((n) => {
+          const on = members.includes(n);
+          return `<label class="sk-groupcheck"><input type="checkbox" data-skill-check="${esc(n)}"${on ? " checked" : ""}>${esc(n)}</label>`;
+        }).join("") || `<span class="muted">该作用域没有技能</span>`}
+      </div>
+      <div class="sk-modalrow" style="justify-content:flex-end;gap:8px">
+        <button class="sk-btn" data-sk-scopecancel>取消</button>
+        <button class="sk-btn primary" data-sk-scopesave>保存</button>
+      </div>`;
+    scopeEl.dataset.groupId = g.id;
+    scopeEl.dataset.groupName = g.name;
+  };
+
+  overlay.addEventListener("click", async (ev) => {
+    if (ev.target === overlay || ev.target.closest("[data-sk-close]")) { overlay.remove(); return; }
+    if (ev.target.closest("#sk-groupadd")) {
+      const name = overlay.querySelector("#sk-groupname").value.trim();
+      if (!name) { skillToast("请输入分组名称"); return; }
+      try { skillState.groups = (await skillAPI("group_save", { group_name: name, scope: "", names: [] })).groups || skillState.groups; renderList(); }
+      catch (err) { skillToast(err.message); }
+      return;
+    }
+    const del = ev.target.closest("[data-sk-groupdel]");
+    if (del) {
+      if (!confirm("删除此分组？")) return;
+      try { skillState.groups = (await skillAPI("group_delete", { group_id: del.dataset.skGroupdel })).groups || skillState.groups; renderList(); }
+      catch (err) { skillToast(err.message); }
+      return;
+    }
+    const edit = ev.target.closest("[data-sk-groupedit]");
+    if (edit) { openScope(skillState.groups.find((g) => g.id === edit.dataset.skGroupedit)); return; }
+    if (ev.target.closest("[data-sk-scopecancel]")) { const se = overlay.querySelector("#sk-groupscope"); se.hidden = true; return; }
+    if (ev.target.closest("[data-sk-scopesave]")) {
+      const se = overlay.querySelector("#sk-groupscope");
+      const gid = se.dataset.groupId, gname = se.dataset.groupName;
+      const names = [...se.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.dataset.skillCheck);
+      const scope = "global";
+      try { skillState.groups = (await skillAPI("group_save", { group_id: gid, group_name: gname, scope, names })).groups || skillState.groups; se.hidden = true; renderList(); }
+      catch (err) { skillToast(err.message); }
+      return;
+    }
+  });
+  renderList();
+}
+
+function skillToast(msg) {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = msg;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => { el.classList.remove("show"); setTimeout(() => el.remove(), 200); }, 2600);
+}
+
+
+function renderSkillScopeChips() {
+  const bar = $("sk-scopes");
+  const all = [{ id: "all", label: "全部" }].concat(skillState.scopes || []);
+  bar.textContent = "";
+  for (const s of all) {
+    const n = s.id === "all" ? skillState.skills.length : skillState.skills.filter((x) => x.scope === s.id).length;
+    const b = document.createElement("button");
+    b.className = "sk-chip" + (skillState.scopeFilter === s.id ? " active" : "");
+    b.dataset.scope = s.id;
+    b.innerHTML = `${esc(s.label)}<span class="sk-chipcount">${n}</span>`;
+    b.addEventListener("click", () => { skillState.scopeFilter = s.id; renderSkillScopeChips(); renderSkillList(); });
+    bar.appendChild(b);
+  }
+}
+
+function renderSkillGroupsBar() {
+  const bar = $("sk-groupsbar");
+  bar.textContent = "";
+  const groups = [{ id: "", name: "全部" }].concat(skillState.groups || []);
+  for (const g of groups) {
+    const b = document.createElement("button");
+    b.className = "sk-chip" + (skillState.groupFilter === g.id ? " active" : "");
+    b.dataset.group = g.id;
+    b.textContent = g.name;
+    b.addEventListener("click", () => { skillState.groupFilter = g.id; renderSkillGroupsBar(); renderSkillList(); });
+    bar.appendChild(b);
+  }
+}
+
+function skillFiltered() {
+  const q = skillState.query.trim().toLowerCase();
+  return skillState.skills.filter((e) => {
+    if (skillState.scopeFilter !== "all" && e.scope !== skillState.scopeFilter) return false;
+    if (skillState.groupFilter) {
+      const g = skillState.groups.find((x) => x.id === skillState.groupFilter);
+      if (!g || !((g.scopes && g.scopes[e.scope]) || []).includes(e.name)) return false;
+    }
+    if (q && !e.name.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+function renderSkillList() {
+  const list = $("sk-list");
+  const filtered = skillFiltered();
+  if (filtered.length === 0) {
+    list.innerHTML = `<div class="sk-empty">没有匹配的技能</div>`;
+    return;
+  }
+  const grid = document.createElement("div");
+  grid.className = "sk-grid";
+  for (const e of filtered) {
+    const { toggle, del, mig } = skillOpts(e);
+    const card = document.createElement("div");
+    card.className = "sk-card";
+    card.dataset.skillName = e.name;
+    card.dataset.skillScope = e.scope;
+    const groups = skillGroupNames(e);
+    card.innerHTML = `
+      <div class="sk-cardhead">
+        <span class="sk-status ${e.enabled ? "on" : "off"}"></span>
+        <span class="sk-cardname">${esc(e.name)}</span>
+        <span class="sk-tag ${e.enabled ? "" : "off"}">${e.enabled ? "已启用" : "已停用"}</span>
+      </div>
+      <div class="sk-carddesc">${esc(e.description || "")}</div>
+      <div class="sk-cardmeta">${esc(skillScopeLabel(e.scope))} · ${esc(e.source || "")}${e.rel ? " · " + esc(e.rel) : ""}${groups.length ? " · 分组: " + esc(groups.join(", ")) : ""}</div>
+      <div class="sk-actions">${toggle}${del}${mig}</div>`;
+    card.addEventListener("click", async (ev) => {
+      if (ev.target.closest("button")) return;
+      const key = e.name + "@" + e.scope;
+      const was = skillState.expanded === key;
+      skillState.expanded = was ? null : key;
+      const detail = card.querySelector(".sk-detail");
+      if (detail) { detail.remove(); if (!was) return; }
+      if (!was) await skillRenderDetail(card, e);
+    });
+    grid.appendChild(card);
+  }
+  list.textContent = "";
+  list.appendChild(grid);
+  grid.addEventListener("click", (ev) => {
+    const t = ev.target.closest("[data-skill-toggle],[data-skill-delete],[data-skill-migrate]");
+    if (!t) return;
+    ev.stopPropagation();
+    if (t.dataset.skillToggle !== undefined) skillToggle(t.dataset.skillToggle, t.dataset.skillScope, t.dataset.skillOn === "1");
+    else if (t.dataset.skillDelete !== undefined) skillDelete(t.dataset.skillDelete, t.dataset.skillScope);
+    else if (t.dataset.skillMigrate !== undefined) skillOpenMigrate(t.dataset.skillMigrate, t.dataset.skillScope);
+  });
+}
+
+async function skillRenderDetail(card, e) {
+  try {
+    const res = await skillAPI("content", { name: e.name, scope: e.scope });
+    const d = document.createElement("div");
+    d.className = "sk-detail";
+    d.innerHTML = `<pre>${esc(res.content || "")}</pre>`;
+    card.appendChild(d);
+  } catch (err) {
+    const d = document.createElement("div");
+    d.className = "sk-detail";
+    d.innerHTML = `<pre style="color:var(--dsw-alias-state-error-primary)">${esc(err.message)}</pre>`;
+    card.appendChild(d);
+  }
+}
+
+
 function renderSettingsSec() {
   const c = settingsConfig;
   const sec = settingsSectionEl();
@@ -2207,6 +2611,7 @@ function renderSettingsSec() {
   else if (settingsSec === "model") renderModel(c);
   else if (settingsSec === "caps") renderCaps(c);
   else if (settingsSec === "tools") renderTools(c);
+  else if (settingsSec === "skills") renderSkills(c);
 }
 
 async function renderSettings() {

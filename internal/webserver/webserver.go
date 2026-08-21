@@ -99,6 +99,13 @@ type Server struct {
 	// for POST /api/config/provider/discover. It asks an endpoint which models
 	// it serves (获取可用模型). nil (the default) makes the API answer 501.
 	setDiscoverFn func(ctx context.Context, request ProviderDiscover) ([]ProviderModel, error)
+
+	// 技能设置页 (dsh-skill-mcp-panel 对齐): the skill-management dispatcher for
+	// /api/config/skills. It lists every skill with scope/rel/disabled state,
+	// reads full content, hot-enables/disables, deletes, adds, migrates between
+	// the two scopes and persists display groups. nil (the default) makes every
+	// /api/config/skills route answer 501.
+	skillsFn func(ctx context.Context, action string, req SkillRequest) (map[string]any, error)
 }
 
 // ProviderEdit is the M11 provider-management payload shared by POST and DELETE
@@ -138,6 +145,48 @@ type ProviderDiscover struct {
 	BaseURL  string `json:"base_url"`
 	Protocol string `json:"protocol"`
 	APIKey   string `json:"api_key"`
+}
+
+// SkillFile is one uploaded skill file for the add action: a path relative to
+// the skill root plus its base64 content (aligned with the plugin's add wire).
+type SkillFile struct {
+	Path   string `json:"path"`
+	Base64 string `json:"base64"`
+}
+
+// SkillRequest is the unified /api/config/skills payload. Every action reads
+// only the fields it needs:
+//   - list:        no fields
+//   - content:     name + scope
+//   - set_enabled: name + scope + enabled
+//   - delete:      name + scope
+//   - add:         kind + files + scope
+//   - migrate:     name + from + to + mode
+//   - group_save:  group_id + group_name + scope + names
+//   - group_delete: group_id
+//
+// Scope is a string ("global" | "project") — the plugin's per-workspace scope
+// object collapses to our two roots (有差异对齐, 显式记录).
+type SkillRequest struct {
+	Name      string      `json:"name"`
+	Scope     string      `json:"scope"`
+	From      string      `json:"from"`
+	To        string      `json:"to"`
+	Mode      string      `json:"mode"`
+	Kind      string      `json:"kind"`
+	Enabled   bool        `json:"enabled"`
+	Files     []SkillFile `json:"files"`
+	GroupID   string      `json:"group_id"`
+	GroupName string      `json:"group_name"`
+	Names     []string    `json:"names"`
+}
+
+// SetSkillManager wires the skill-management API (POST /api/config/skills, the
+// dsh-skill-mcp-panel 对齐 settings page). The composition root dispatches each
+// action to the skill.Manager and returns a JSON-able result map. nil (the
+// default) keeps every /api/config/skills route at 501.
+func (s *Server) SetSkillManager(fn func(ctx context.Context, action string, req SkillRequest) (map[string]any, error)) {
+	s.skillsFn = fn
 }
 
 // SetAttachmentStore wires the image-attachment store (P5): POST/GET
@@ -233,6 +282,11 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	mux.Handle("POST /api/config/provider", s.requireAuth(http.HandlerFunc(s.handleProviderSave)))
 	mux.Handle("DELETE /api/config/provider", s.requireAuth(http.HandlerFunc(s.handleProviderDelete)))
 	mux.Handle("POST /api/config/provider/discover", s.requireAuth(http.HandlerFunc(s.handleProviderDiscover)))
+	// 技能设置页 (dsh-skill-mcp-panel 对齐): the skill-management API. One route
+	// carries every action (list/content/set_enabled/delete/add/migrate/group_save/
+	// group_delete) selected by the "action" body field.
+	mux.Handle("POST /api/config/skills", s.requireAuth(http.HandlerFunc(s.handleSkills)))
+	mux.Handle("GET /api/config/skills", s.requireAuth(http.HandlerFunc(s.handleSkillsList)))
 	mux.Handle("GET /api/settings", s.requireAuth(http.HandlerFunc(s.handleSettingsGet)))
 	mux.Handle("PATCH /api/settings", s.requireAuth(http.HandlerFunc(s.handleSettingsPatch)))
 	mux.Handle("GET /api/sessions/{id}/events/stream", s.requireAuth(http.HandlerFunc(s.handleEventStream)))
@@ -1296,6 +1350,50 @@ func (s *Server) handleProviderDelete(w http.ResponseWriter, r *http.Request) {
 // models it advertises and returns candidate rows for the user to pick from.
 // The reply is candidate metadata only — never written behind the user. An
 // unwired discoverer answers 501.
+// handleSkillsList implements GET /api/config/skills — the skill-page boot
+// fetch (list + groups in one round trip). It answers 501 when the skill
+// manager is not wired, else the dispatcher's JSON view.
+func (s *Server) handleSkillsList(w http.ResponseWriter, r *http.Request) {
+	if s.skillsFn == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "skill management not wired"})
+		return
+	}
+	result, err := s.skillsFn(r.Context(), "list", SkillRequest{})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleSkills implements POST /api/config/skills — every skill-page action
+// (content/set_enabled/delete/add/migrate/group_save/group_delete), selected by
+// the "action" body field. It answers 501 when the skill manager is not wired.
+func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
+	if s.skillsFn == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "skill management not wired"})
+		return
+	}
+	var body struct {
+		Action string `json:"action"`
+		SkillRequest
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 32<<20)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
+		return
+	}
+	if body.Action == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "action required"})
+		return
+	}
+	result, err := s.skillsFn(r.Context(), body.Action, body.SkillRequest)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) handleProviderDiscover(w http.ResponseWriter, r *http.Request) {
 	if s.setDiscoverFn == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "provider discovery not wired"})
