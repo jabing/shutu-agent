@@ -125,6 +125,8 @@ type Store interface {
 	GetSettings(ctx context.Context) (map[string]string, error)
 	// SetSetting stores one runtime setting, replacing any previous value.
 	SetSetting(ctx context.Context, key, value string) error
+	// DeleteSetting removes one runtime setting row (no-op when absent).
+	DeleteSetting(ctx context.Context, key string) error
 
 	// Close releases the backend's resources.
 	Close() error

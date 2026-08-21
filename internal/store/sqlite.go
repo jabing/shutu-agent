@@ -523,6 +523,14 @@ func (s *SQLiteStore) SetSetting(ctx context.Context, key, value string) error {
 	return nil
 }
 
+// DeleteSetting removes one runtime setting row; a missing key is a no-op.
+func (s *SQLiteStore) DeleteSetting(ctx context.Context, key string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, key); err != nil {
+		return fmt.Errorf("store: delete setting %q: %w", key, err)
+	}
+	return nil
+}
+
 // Close releases the underlying database handle.
 func (s *SQLiteStore) Close() error {
 	return s.db.Close()

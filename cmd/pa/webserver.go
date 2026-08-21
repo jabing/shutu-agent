@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -138,6 +139,23 @@ func (a *app) registerWebServer() error {
 	srv.SetModelSwitcher(func(ctx context.Context, provider, model string) error {
 		return a.webSwitchModel(ctx, provider, model)
 	})
+	// M11 (增加提供方 / 增加自定义提供方): wire the provider-management API. A
+	// "save" of a built-in provider stores only the API-key override (custom:false);
+	// a "save" of a custom provider (custom:true) persists the full profile + key;
+	// "delete" removes a custom provider. All apply immediately via registerLLM.
+	srv.SetProviderManager(func(ctx context.Context, action string, edit webserver.ProviderEdit) error {
+		switch action {
+		case "save":
+			if edit.Custom {
+				return a.webSaveCustomProvider(ctx, edit.ID, edit.Name, edit.BaseURL, edit.Model, edit.APIKey)
+			}
+			return a.webSaveProvider(ctx, edit.ID, edit.APIKey)
+		case "delete":
+			return a.webDeleteCustomProvider(ctx, edit.ID)
+		default:
+			return fmt.Errorf("unknown provider action %q", action)
+		}
+	})
 	a.webserver = srv
 	go func() {
 		if err := srv.Serve(); err != nil {
@@ -254,10 +272,15 @@ func (a *app) webConfig() map[string]any {
 	}
 }
 
-// webProviders returns the registered providers for the P5.1 model pickers:
-// each provider's id, availability (key present / base_url sane), its current
-// model and the suggested model candidates. Only these leaf fields leave the
-// process — never keys, prompts or tokens.
+// webProviders returns the known providers for the P5.1/M11 model pickers:
+// every built-in provider (deepseek always; openai/anthropic even when their
+// credential is absent, so the "增加提供方" setup flow can configure them) plus
+// every M11 custom provider declared in settings. Each entry carries its id,
+// whether it is a custom provider, registration/availability state, the
+// configured-key state (configured = a key is present in settings or env), its
+// current model, base_url, suggested model candidates and the env var that
+// carries its credential. Only these leaf fields leave the process — never
+// keys, prompts or tokens.
 func (a *app) webProviders() []map[string]any {
 	a.llmMu.RLock()
 	reg := a.llmReg
@@ -265,17 +288,226 @@ func (a *app) webProviders() []map[string]any {
 	if reg == nil {
 		return nil
 	}
-	out := make([]map[string]any, 0, len(reg.List()))
-	for _, p := range reg.List() {
+	out := make([]map[string]any, 0, 8)
+	// Built-in provider definitions (deepseek always, openai/anthropic even when
+	// unregistered) so the settings page can add their key.
+	type builtin struct {
+		id       string
+		custom   bool
+		model    string
+		baseURL  string
+		env      string
+		envKnown bool
+	}
+	builtins := []builtin{
+		{id: "deepseek", model: llmProviderModel(a.cfg, "deepseek"), baseURL: llmProviderBaseURL(a.cfg, "deepseek"), env: "DEEPSEEK_API_KEY"},
+		{id: "openai", model: llmProviderModel(a.cfg, "openai"), baseURL: llmProviderBaseURL(a.cfg, "openai"), env: "OPENAI_API_KEY"},
+		{id: "anthropic", model: llmProviderModel(a.cfg, "anthropic"), baseURL: llmProviderBaseURL(a.cfg, "anthropic"), env: "ANTHROPIC_API_KEY"},
+	}
+	for _, b := range builtins {
+		registered := false
+		available := false
+		if p, err := reg.Get(b.id); err == nil {
+			registered = true
+			available = p.Available()
+		}
 		out = append(out, map[string]any{
-			"id":         p.ID(),
-			"available":  p.Available(),
-			"model":      llmProviderModel(a.cfg, p.ID()),
-			"base_url":   llmProviderBaseURL(a.cfg, p.ID()), // M11: editor shows it read-only
-			"candidates": modelCandidates(p.ID()),
+			"id":         b.id,
+			"custom":     false,
+			"registered": registered,
+			"available":  available,
+			"configured": a.providerKey(b.id) != "",
+			"model":      b.model,
+			"base_url":   b.baseURL,
+			"candidates": modelCandidates(b.id),
+			"env_var":    b.env,
+		})
+	}
+	// M11 custom providers from settings.
+	for _, cp := range a.customProviders {
+		registered := false
+		available := false
+		if p, err := reg.Get(cp.ID); err == nil {
+			registered = true
+			available = p.Available()
+		}
+		out = append(out, map[string]any{
+			"id":         cp.ID,
+			"name":       cp.Name,
+			"custom":     true,
+			"registered": registered,
+			"available":  available,
+			"configured": a.providerKey(cp.ID) != "",
+			"model":      cp.Model,
+			"base_url":   cp.BaseURL,
+			"candidates": nil,
+			"env_var":    llmKeyEnv(cp.ID),
 		})
 	}
 	return out
+}
+
+// webSaveProvider persists a provider API-key override (M11, POST
+// /api/config/provider): it writes llm.key.<id> to the settings table and
+// rebuilds the registry so the change applies immediately (no restart — the
+// registry is built per registerLLM, and this re-runs it). It runs under
+// turnMu (D5 serial: no turn is in flight while the registry is rebuilt).
+// An empty api_key removes the override, falling back to the env var.
+func (a *app) webSaveProvider(ctx context.Context, id, apiKey string) error {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
+	if a.llmReg == nil {
+		return fmt.Errorf("llm not registered")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("provider id is required")
+	}
+	if apiKey != "" {
+		if err := a.store.SetSetting(ctx, "llm.key."+id, apiKey); err != nil {
+			return err
+		}
+		if a.llmKeys == nil {
+			a.llmKeys = map[string]string{}
+		}
+		a.llmKeys[id] = apiKey
+	} else {
+		if err := a.store.DeleteSetting(ctx, "llm.key."+id); err != nil {
+			return err
+		}
+		delete(a.llmKeys, id)
+	}
+	// Rebuild the registry so the new key is live immediately.
+	if err := a.registerLLM(); err != nil {
+		return err
+	}
+	if a.compaction != nil {
+		_ = a.registerCompaction()
+	}
+	return nil
+}
+
+// webSaveCustomProvider persists a custom OpenAI-compatible provider
+// declaration (M11, POST /api/config/provider with custom:true): it validates
+// the profile, stores llm.custom.<id> + an optional llm.key.<id> override and
+// rebuilds the registry immediately.
+func (a *app) webSaveCustomProvider(ctx context.Context, id, name, baseURL, model, apiKey string) error {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
+	if a.llmReg == nil {
+		return fmt.Errorf("llm not registered")
+	}
+	id = strings.TrimSpace(id)
+	name = strings.TrimSpace(name)
+	baseURL = strings.TrimSpace(baseURL)
+	model = strings.TrimSpace(model)
+	if id == "" || name == "" || baseURL == "" || model == "" {
+		return errors.New("id, name, base_url and model are required")
+	}
+	if id == "deepseek" || id == "openai" || id == "anthropic" {
+		return errors.New("custom provider id conflicts with a built-in provider")
+	}
+	if !validProviderRoute(id) {
+		return errors.New("provider id must be lowercase letters, digits or '-'")
+	}
+	raw, err := json.Marshal(customProviderProfile{ID: id, Name: name, BaseURL: baseURL, Model: model})
+	if err != nil {
+		return err
+	}
+	if err := a.store.SetSetting(ctx, "llm.custom."+id, string(raw)); err != nil {
+		return err
+	}
+	if apiKey != "" {
+		if err := a.store.SetSetting(ctx, "llm.key."+id, apiKey); err != nil {
+			return err
+		}
+		if a.llmKeys == nil {
+			a.llmKeys = map[string]string{}
+		}
+		a.llmKeys[id] = apiKey
+	}
+	replaced := false
+	for i := range a.customProviders {
+		if a.customProviders[i].ID == id {
+			a.customProviders[i] = customProviderProfile{ID: id, Name: name, BaseURL: baseURL, Model: model}
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		a.customProviders = append(a.customProviders, customProviderProfile{ID: id, Name: name, BaseURL: baseURL, Model: model})
+	}
+	if err := a.registerLLM(); err != nil {
+		return err
+	}
+	if a.compaction != nil {
+		_ = a.registerCompaction()
+	}
+	return nil
+}
+
+// webDeleteCustomProvider removes a custom provider declaration (M11, DELETE
+// /api/config/provider): it deletes llm.custom.<id> and its key override, then
+// rebuilds the registry. Built-in providers cannot be removed.
+func (a *app) webDeleteCustomProvider(ctx context.Context, id string) error {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
+	if a.llmReg == nil {
+		return fmt.Errorf("llm not registered")
+	}
+	id = strings.TrimSpace(id)
+	if id == "deepseek" || id == "openai" || id == "anthropic" {
+		return errors.New("built-in providers cannot be removed")
+	}
+	found := false
+	for _, cp := range a.customProviders {
+		if cp.ID == id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("custom provider %q not found", id)
+	}
+	if err := a.store.DeleteSetting(ctx, "llm.custom."+id); err != nil {
+		return err
+	}
+	if err := a.store.DeleteSetting(ctx, "llm.key."+id); err != nil {
+		return err
+	}
+	kept := a.customProviders[:0]
+	for _, cp := range a.customProviders {
+		if cp.ID != id {
+			kept = append(kept, cp)
+		}
+	}
+	a.customProviders = kept
+	delete(a.llmKeys, id)
+	if err := a.registerLLM(); err != nil {
+		return err
+	}
+	if a.compaction != nil {
+		_ = a.registerCompaction()
+	}
+	return nil
+}
+
+// validProviderRoute reports whether id is a safe custom-provider route:
+// lowercase letters, digits and single '-' separators.
+func validProviderRoute(id string) bool {
+	if id == "" {
+		return false
+	}
+	for i, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			continue
+		}
+		if r == '-' && i > 0 && i < len(id)-1 {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // webSwitchModel implements POST /api/config/model (P5.1, 模型选择实时生效): it

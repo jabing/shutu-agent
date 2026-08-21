@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -165,6 +166,23 @@ func main() {
 		// baseCtx = the process-lifetime signal ctx (see the field comment): the
 		// persist sink and the web-only block live as long as the process.
 		baseCtx: ctx,
+	}
+	// M11: load the provider API-key overrides (llm.key.<id>) and custom
+	// OpenAI-compatible provider declarations (llm.custom.<route>) from the
+	// durable settings table before registerLLM builds the registry. A
+	// configured key wins over the env var (配置后以配置的为准, user 2026-09).
+	for k, v := range settings {
+		if strings.HasPrefix(k, "llm.key.") {
+			if app.llmKeys == nil {
+				app.llmKeys = map[string]string{}
+			}
+			app.llmKeys[strings.TrimPrefix(k, "llm.key.")] = v
+		} else if strings.HasPrefix(k, "llm.custom.") {
+			var cp customProviderProfile
+			if json.Unmarshal([]byte(v), &cp) == nil && cp.ID != "" && cp.Name != "" {
+				app.customProviders = append(app.customProviders, cp)
+			}
+		}
 	}
 	// M8-2: registerLLM builds the provider registry and injects the selected
 	// provider into a.llm — the single llm.LLM the loop, compaction, subagent
@@ -488,6 +506,16 @@ type app struct {
 	// builds it and injects the selected provider into llm; /llm-status reads
 	// it. Non-nil only after registerLLM succeeds.
 	llmReg *llm.Registry
+	// llmKeys is the M11 provider API-key override map (settings rows
+	// llm.key.<providerId>), loaded at startup and updated by the Model-settings
+	// page's save endpoint. A configured key wins over the env var (配置后以配置的
+	// 为准, user 2026-09); providerKey consults it first. nil ⇒ env-only.
+	llmKeys map[string]string
+	// customProviders is the M11 custom OpenAI-compatible provider declarations
+	// (settings rows llm.custom.<route> = JSON customProviderProfile), loaded at
+	// startup and updated by the provider-save endpoint. registerLLM registers
+	// each under its route.
+	customProviders []customProviderProfile
 	// attachStore is the M8-3 image-attachment store (dispatch-m8-3 §4): created
 	// by registerAttachments only when llm.multimodal.enabled; nil when disabled
 	// (D10) — /attach then errors.

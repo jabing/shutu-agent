@@ -87,6 +87,27 @@ type Server struct {
 	// rebuilds the selected LLM provider and answers the new config state. nil
 	// (the default) makes the API answer 501.
 	setModelFn func(ctx context.Context, provider, model string) error
+
+	// M11 (增加提供方 / 增加自定义提供方, dsh-synced): the provider-management
+	// dispatcher. setProviderFn handles POST /api/config/provider (save a
+	// built-in key override or a custom provider profile, api_key empty removes
+	// the override) and DELETE /api/config/provider (remove a custom provider).
+	// nil (the default) makes those APIs answer 501.
+	setProviderFn func(ctx context.Context, action string, edit ProviderEdit) error
+}
+
+// ProviderEdit is the M11 provider-management payload shared by POST and DELETE
+// /api/config/provider: id plus the optional custom-provider profile fields and
+// an API-key override. For a built-in provider only api_key is honored (the
+// profile fields stay config-driven); for a custom provider the profile is
+// persisted with it.
+type ProviderEdit struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
+	APIKey  string `json:"api_key"`
+	Custom  bool   `json:"custom"`
 }
 
 // SetAttachmentStore wires the image-attachment store (P5): POST/GET
@@ -100,6 +121,14 @@ func (s *Server) SetAttachmentStore(st *attachment.Store) { s.att = st }
 // provider. Called by the composition root; nil (default) keeps the API at 501.
 func (s *Server) SetModelSwitcher(fn func(ctx context.Context, provider, model string) error) {
 	s.setModelFn = fn
+}
+
+// SetProviderManager wires the M11 provider-management API (POST /api/config/
+// provider to save an API-key override or a custom provider, DELETE
+// /api/config/provider to remove a custom provider). Called by the composition
+// root; nil (default) keeps those APIs at 501.
+func (s *Server) SetProviderManager(fn func(ctx context.Context, action string, edit ProviderEdit) error) {
+	s.setProviderFn = fn
 }
 
 // New validates the wiring and builds the portal handler. token is optional:
@@ -162,6 +191,11 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	mux.Handle("GET /api/sessions/{id}/attachments/{attID}", s.requireAuth(http.HandlerFunc(s.handleAttachmentGet)))
 	// P5.1: live model switch (provider/model), answers the new config state.
 	mux.Handle("POST /api/config/model", s.requireAuth(http.HandlerFunc(s.handleModelSwitch)))
+	// M11: provider management — save an API-key override or a custom provider
+	// profile (POST) / remove a custom provider (DELETE). Both persist to the
+	// settings table and apply immediately (the registry is rebuilt).
+	mux.Handle("POST /api/config/provider", s.requireAuth(http.HandlerFunc(s.handleProviderSave)))
+	mux.Handle("DELETE /api/config/provider", s.requireAuth(http.HandlerFunc(s.handleProviderDelete)))
 	mux.Handle("GET /api/settings", s.requireAuth(http.HandlerFunc(s.handleSettingsGet)))
 	mux.Handle("PATCH /api/settings", s.requireAuth(http.HandlerFunc(s.handleSettingsPatch)))
 	mux.Handle("GET /api/sessions/{id}/events/stream", s.requireAuth(http.HandlerFunc(s.handleEventStream)))
@@ -1160,6 +1194,60 @@ func (s *Server) handleModelSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.setModelFn(r.Context(), strings.TrimSpace(body.Provider), strings.TrimSpace(body.Model)); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleProviderSave implements POST /api/config/provider (M11, 增加提供方 /
+// 增加自定义提供方): a built-in provider edit only carries an API-key override
+// (custom:false, api_key empty removes the override back to the env var); a
+// custom provider edit (custom:true) carries the full OpenAI-compatible
+// profile (id/name/base_url/model) plus an optional key override. An unwired
+// manager answers 501; a rejected edit (unknown id / invalid custom route /
+// missing profile fields) answers 400 and leaves the registry untouched.
+func (s *Server) handleProviderSave(w http.ResponseWriter, r *http.Request) {
+	if s.setProviderFn == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "provider manager not wired"})
+		return
+	}
+	var body ProviderEdit
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
+		return
+	}
+	if strings.TrimSpace(body.ID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "provider id is required"})
+		return
+	}
+	if err := s.setProviderFn(r.Context(), "save", body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleProviderDelete implements DELETE /api/config/provider (M11): removes a
+// custom provider declaration and its key override. Built-in providers are
+// rejected by the manager. An unwired manager answers 501.
+func (s *Server) handleProviderDelete(w http.ResponseWriter, r *http.Request) {
+	if s.setProviderFn == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "provider manager not wired"})
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
+		return
+	}
+	if strings.TrimSpace(body.ID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "provider id is required"})
+		return
+	}
+	if err := s.setProviderFn(r.Context(), "delete", ProviderEdit{ID: body.ID}); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}

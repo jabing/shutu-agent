@@ -33,14 +33,21 @@ import (
 //
 // Other registered providers may be unavailable (their key absent) — /llm-status
 // reports them as such; only the selected one must be usable.
+//
+// M11 (增加提供方 / 增加自定义提供方, dsh-synced): every provider id can carry a
+// configured API key persisted in the settings table (llm.key.<id>); a configured
+// key wins over the env var (配置后以配置的为准, user 2026-09). Custom
+// OpenAI-compatible providers are declared in settings (llm.custom.<id> JSON) and
+// registered here under their route.
 func (a *app) registerLLM() error {
 	reg := llm.NewRegistry()
 
 	// The deepseek provider is always registered; its parameters come from the
 	// legacy top-level model/base_url (the deepseek default configuration,
-	// dispatch-m8-2 §5) and DEEPSEEK_API_KEY from the environment.
+	// dispatch-m8-2 §5) and DEEPSEEK_API_KEY from the environment (a configured
+	// llm.key.deepseek setting wins, M11).
 	if err := reg.Register(deepseek.New(deepseek.Config{
-		APIKey:               os.Getenv("DEEPSEEK_API_KEY"),
+		APIKey:               a.providerKey("deepseek"),
 		BaseURL:              a.cfg.BaseURL,
 		Model:                a.cfg.Model,
 		MaxRetries:           2,
@@ -51,9 +58,10 @@ func (a *app) registerLLM() error {
 	}
 
 	// The openai provider is registered only when its credential is present
-	// (OPENAI_API_KEY env-only, dispatch-m8-2 §6). It reuses the deepseek
-	// OpenAI-compatible client — zero new wire code (dispatch-m8-2 §4).
-	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+	// (OPENAI_API_KEY env-only, dispatch-m8-2 §6; configured llm.key.openai
+	// wins, M11). It reuses the deepseek OpenAI-compatible client — zero new
+	// wire code (dispatch-m8-2 §4).
+	if key := a.providerKey("openai"); key != "" {
 		if err := reg.Register(openai.New(openai.Config{
 			APIKey:               key,
 			BaseURL:              a.cfg.LLM.OpenAI.BaseURL,
@@ -66,10 +74,10 @@ func (a *app) registerLLM() error {
 	}
 
 	// The anthropic provider is registered only when its credential is present
-	// (ANTHROPIC_API_KEY env-only, dispatch-m8-2b §3). Its parameters come from
-	// llm.anthropic.base_url/model (defaults https://api.anthropic.com/v1 /
-	// claude-sonnet-4-5, dispatch-m8-2b §3).
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+	// (ANTHROPIC_API_KEY env-only, dispatch-m8-2b §3; configured llm.key.anthropic
+	// wins, M11). Its parameters come from llm.anthropic.base_url/model
+	// (defaults https://api.anthropic.com/v1 / claude-sonnet-4-5, M8-2b §3).
+	if key := a.providerKey("anthropic"); key != "" {
 		if err := reg.Register(anthropic.New(anthropic.Config{
 			APIKey:               key,
 			BaseURL:              a.cfg.LLM.Anthropic.BaseURL,
@@ -78,6 +86,23 @@ func (a *app) registerLLM() error {
 			MaxRequestImageBytes: a.cfg.LLM.Multimodal.MaxRequestImageBytes, // 默认 20MiB 由 New 兜底
 		})); err != nil {
 			return fmt.Errorf("pa: register anthropic provider: %w", err)
+		}
+	}
+
+	// M11: custom OpenAI-compatible providers declared through the Model
+	// settings page (llm.custom.<id> in the settings table). Each carries its
+	// own route id, display name, base URL and model; its key follows the same
+	// precedence (configured llm.key.<id> > env <ROUTE>_API_KEY).
+	for _, cp := range a.customProviders {
+		if err := reg.Register(openai.New(openai.Config{
+			ID:                   cp.ID,
+			APIKey:               a.providerKey(cp.ID),
+			BaseURL:              cp.BaseURL,
+			Model:                cp.Model,
+			SupportsImages:       strings.Contains(a.cfg.LLM.ModelInputModalities, "image"),
+			MaxRequestImageBytes: a.cfg.LLM.Multimodal.MaxRequestImageBytes,
+		})); err != nil {
+			return fmt.Errorf("pa: register custom provider %q: %w", cp.ID, err)
 		}
 	}
 
@@ -119,6 +144,49 @@ func llmProviderIDs(reg *llm.Registry) string {
 	return strings.Join(ids, ", ")
 }
 
+// customProviderProfile is the persisted M11 custom-provider declaration
+// (settings row llm.custom.<route> = JSON). A custom provider is an
+// OpenAI-compatible endpoint: route id, display name, base URL and default
+// model. Its API key follows the standard precedence (llm.key.<route> setting
+// > env <ROUTE>_API_KEY).
+type customProviderProfile struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
+}
+
+// llmKeyEnv returns the environment variable that carries provider id's API
+// key. Built-ins map to their canonical credential variable; a custom provider
+// id derives one by upper-casing the route (my-llm → MY_LLM_API_KEY). This is
+// the env-only default (纪律 6); a key configured through the Model settings
+// page (llm.key.<id>, M11) takes precedence over it (配置后以配置的为准).
+func llmKeyEnv(id string) string {
+	switch id {
+	case "deepseek":
+		return "DEEPSEEK_API_KEY"
+	case "openai":
+		return "OPENAI_API_KEY"
+	case "anthropic":
+		return "ANTHROPIC_API_KEY"
+	default:
+		return strings.ToUpper(strings.ReplaceAll(id, "-", "_")) + "_API_KEY"
+	}
+}
+
+// providerKey returns provider id's effective API key: a key configured through
+// the Model settings page wins (llm.key.<id>, persisted in the settings table),
+// otherwise the environment variable (llmKeyEnv). nil llmKeys (direct-constructed
+// apps in tests) falls straight back to the env default.
+func (a *app) providerKey(id string) string {
+	if a.llmKeys != nil {
+		if k, ok := a.llmKeys[id]; ok && k != "" {
+			return k
+		}
+	}
+	return os.Getenv(llmKeyEnv(id))
+}
+
 // llmCredentialEnv returns the environment variable that carries provider id's
 // API key (env-only, 纪律 6).
 func llmCredentialEnv(id string) string {
@@ -130,7 +198,7 @@ func llmCredentialEnv(id string) string {
 	case "anthropic":
 		return "ANTHROPIC_API_KEY"
 	default:
-		return "the provider's API key environment variable"
+		return llmKeyEnv(id)
 	}
 }
 

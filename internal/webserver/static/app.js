@@ -1603,31 +1603,35 @@ function renderGeneral(c) {
 }
 
 // Model settings page (M11: dsh ModelsSection) — provider row-cards, one per
-// registered provider (deepseek always; openai/anthropic when their env key is
-// present). Each row shows the display name, a credential dot (configured =
-// key present, green / missing = red), the configured model, and a 编辑 action
-// that opens the provider's editor card in place (model ID + base URL, Apply
-// switches provider/model live — P5.1). Keys are env-only (纪律 6): there is no
-// key input, only the honest configured/missing state.
+// known provider: every built-in (deepseek always; openai/anthropic even when
+// their env key is absent, so the 增加提供方 setup flow can configure them) plus
+// every M11 custom OpenAI-compatible provider. Each row shows the display name,
+// a 自定义 tag for custom providers, the active tag, a credential dot
+// (configured = a key is present in settings or env → green, missing → red),
+// the configured model, and a 编辑 action that opens the provider's editor card
+// in place (model ID + base URL + API Key input, Apply switches provider/model
+// live — P5.1 — and saves the key — M11). Keys default from the environment
+// variable; a key entered here takes precedence (配置后以配置的为准, user 2026-09).
 const PROVIDER_ENV = { deepseek: "DEEPSEEK_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY" };
 let modelEditing = null; // provider id currently open in its editor card
+let customAdding = false; // true while the 增加自定义提供方 create card is open
 
 function renderModel(c) {
   const sec = settingsSectionEl();
   const providers = (c.providers || []).slice();
   const currentProvider = c.llm_provider || "deepseek";
   const currentModel = c.model || "";
-  // available-first (dsh sorts usable providers up); the active one keeps its
-  // place among the configured rows.
-  const sorted = providers.sort((a, b) => Number(b.available) - Number(a.available));
-  const envName = (id) => PROVIDER_ENV[id] || (id.toUpperCase() + "_API_KEY");
+  // configured-first (dsh sorts usable providers up), then registered; the
+  // active one keeps its place among the configured rows.
+  const sorted = providers.sort((a, b) => (Number(b.configured) - Number(a.configured)) || (Number(b.registered) - Number(a.registered)));
+  const envName = (id) => PROVIDER_ENV[id] || (id.toUpperCase().replace(/-/g, "_") + "_API_KEY");
 
   let t = `<h2>模型</h2>
-    <p class="intro">配置 API Key 后即可使用以下提供方。切换提供方 / 模型即时生效（下一条消息即用新模型）；重启后回到 config.yaml 配置。</p>
+    <p class="intro">配置 API Key 后即可使用以下提供方。切换提供方 / 模型即时生效（下一条消息即用新模型）；Key 默认从环境变量读取，在本页填入的 Key 以配置值为准（覆盖环境变量）。</p>
     <ul class="m-rows">`;
 
   for (const p of sorted) {
-    const name = PROVIDER_DISPLAY[p.id] || p.id;
+    const name = PROVIDER_DISPLAY[p.id] || p.name || p.id;
     const active = p.id === currentProvider;
     if (modelEditing === p.id) {
       // Editor card (dsh rowCard→editor swap): the one open card owns its state.
@@ -1648,7 +1652,12 @@ function renderModel(c) {
             <span class="m-fieldlabel">API 地址</span>
             <span class="m-fieldvalue">${esc(p.base_url || "提供方默认")}</span>
           </div>
-          ${p.available ? "" : `<p class="m-notice">未配置 API Key（环境变量 ${esc(envName(p.id))}），当前不可用。</p>`}
+          <div class="m-field">
+            <span class="m-fieldlabel">API Key</span>
+            <input id="m-provider-key" class="m-input" type="password" autocomplete="off" placeholder="留空使用环境变量 ${esc(envName(p.id))}" value="">
+            <span class="m-fieldhint">Key 默认读取环境变量 ${esc(envName(p.id))}；填入后以配置值为准（留空并保存即清除自定义 Key，回到环境变量）。</span>
+          </div>
+          ${p.registered && !p.available ? `<p class="m-notice">当前不可用（Key 缺失或 API 地址无效）。</p>` : ""}
           <div class="m-editoractions">
             <button type="button" class="m-btn m-secondary" id="m-model-cancel">取消</button>
             <button type="button" class="m-btn m-primary" id="m-model-apply">应用</button>
@@ -1662,49 +1671,163 @@ function renderModel(c) {
           <span class="m-rowid">
             <span class="m-rowname">${esc(name)}</span>
             ${active ? `<span class="m-rowtag current">当前</span>` : ""}
-            <span class="m-dot ${p.available ? "configured" : "missing"}" title="${p.available ? "API Key 已配置" : "未配置（缺 API Key）"}"></span>
+            ${p.custom ? `<span class="m-rowtag custom">自定义</span>` : ""}
+            <span class="m-dot ${p.configured ? "configured" : "missing"}" title="${p.configured ? "API Key 已配置" : "未配置（缺 API Key）"}"></span>
           </span>
           <span class="m-rowmodel muted">${esc(p.model || "")}</span>
           <span class="m-rowactions">
-            <button type="button" class="m-btn m-secondary" data-edit="${esc(p.id)}">编辑</button>
+            <button type="button" class="m-btn m-secondary" data-edit="${esc(p.id)}">${p.registered ? "编辑" : "增加"}</button>
+            ${p.custom ? `<button type="button" class="m-btn m-secondary m-danger" data-del="${esc(p.id)}">删除</button>` : ""}
           </span>
         </div>
       </li>`;
     }
   }
 
+  // 增加自定义提供方 create card (rendered after the rows, above the add row).
+  if (customAdding) {
+    t += `<li class="m-rowcard m-editing">
+      <div class="m-editor">
+        <div class="m-editorhead">
+          <span class="m-editortitle">增加自定义提供方</span>
+          <span class="m-editorroute">OpenAI 兼容端点</span>
+        </div>
+        <div class="m-field">
+          <span class="m-fieldlabel">路由 ID</span>
+          <input id="m-custom-route" class="m-input" value="my-provider" placeholder="如 ollama、vllm（小写字母/数字/-）">
+        </div>
+        <div class="m-field">
+          <span class="m-fieldlabel">显示名称</span>
+          <input id="m-custom-name" class="m-input" value="" placeholder="如 Ollama">
+        </div>
+        <div class="m-field">
+          <span class="m-fieldlabel">API 地址</span>
+          <input id="m-custom-base" class="m-input" value="" placeholder="https://api.example.com/v1">
+        </div>
+        <div class="m-field">
+          <span class="m-fieldlabel">模型 ID</span>
+          <input id="m-custom-model" class="m-input" value="" placeholder="如 gpt-4o-mini">
+        </div>
+        <div class="m-field">
+          <span class="m-fieldlabel">API Key</span>
+          <input id="m-custom-key" class="m-input" type="password" autocomplete="off" value="" placeholder="留空使用环境变量 [ROUTE]_API_KEY">
+          <span class="m-fieldhint">Key 默认读取环境变量（大写路由名 + _API_KEY，如 OLLAMA_API_KEY）；填入后以配置值为准。</span>
+        </div>
+        <div class="m-editoractions">
+          <button type="button" class="m-btn m-secondary" id="m-model-cancel">取消</button>
+          <button type="button" class="m-btn m-primary" id="m-model-apply">创建</button>
+          <span id="m-model-status" class="model-status"></span>
+        </div>
+      </div>
+    </li>`;
+  }
+
+  // dsh addButton row: 增加提供方 (opens the first dormant built-in's setup
+  // card) + 增加自定义提供方 (opens the custom-provider create card).
   t += `</ul>
-    <p class="notice">API Key 仅从环境变量读取（不落库）；修改 config.yaml 重启后回到文件配置。</p>`;
+    <div class="m-addrow">
+      <button type="button" class="m-btn m-add" id="m-add-provider">增加提供方</button>
+      <button type="button" class="m-btn m-add" id="m-add-custom">增加自定义提供方</button>
+    </div>
+    <p class="notice">API Key 默认从环境变量读取（不落 config.yaml）；本页填入的 Key 以配置值为准并持久化保存。修改 config.yaml 重启后回到文件配置。</p>`;
   sec.innerHTML = t;
 
-  // Open the editor card for a provider row.
+  // Open the editor card for a provider row (增加提供方 opens the first dormant
+  // built-in, i.e. a built-in that is not yet configured).
   sec.querySelectorAll("[data-edit]").forEach((btn) => {
-    btn.addEventListener("click", () => { modelEditing = btn.dataset.edit; renderModel(c); });
+    btn.addEventListener("click", () => { modelEditing = btn.dataset.edit; customAdding = false; renderModel(c); });
   });
+  // Delete a custom provider (dsh remove, with confirm).
+  sec.querySelectorAll("[data-del]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.del;
+      if (!confirm(`删除自定义提供方 ${id}？`)) return;
+      try {
+        const res = await api("/api/config/provider", { method: "DELETE", body: JSON.stringify({ id }) });
+        if (res.status === 401) { showLogin("令牌无效或已过期"); return; }
+        if (!res.ok) { const eb = await res.json().catch(() => ({})); throw new Error(eb.error || ("HTTP " + res.status)); }
+        if (modelEditing === id) modelEditing = null;
+        await loadConfig();
+        renderModel(config);
+      } catch (e) { alert("删除失败：" + e.message); }
+    });
+  });
+  const addProvider = sec.querySelector("#m-add-provider");
+  if (addProvider) {
+    addProvider.addEventListener("click", () => {
+      const dormant = sorted.find((p) => !p.custom && !p.registered);
+      if (dormant) { modelEditing = dormant.id; customAdding = false; renderModel(c); }
+    });
+  }
+  const addCustom = sec.querySelector("#m-add-custom");
+  if (addCustom) {
+    addCustom.addEventListener("click", () => {
+      modelEditing = null; customAdding = true; renderModel(c);
+    });
+  }
 
+  // Wire the editor card actions (built-in / custom edit / custom create).
   const apply = sec.querySelector("#m-model-apply");
   if (!apply) return;
+  const cancel = sec.querySelector("#m-model-cancel");
+  const status = sec.querySelector("#m-model-status");
+  cancel.addEventListener("click", () => { modelEditing = null; customAdding = false; renderModel(c); });
+
+  if (customAdding) {
+    // 增加自定义提供方: POST /api/config/provider {custom:true, ...}
+    apply.addEventListener("click", async () => {
+      const route = (sec.querySelector("#m-custom-route").value || "").trim();
+      const name = (sec.querySelector("#m-custom-name").value || "").trim();
+      const base = (sec.querySelector("#m-custom-base").value || "").trim();
+      const model = (sec.querySelector("#m-custom-model").value || "").trim();
+      const key = (sec.querySelector("#m-custom-key").value || "").trim();
+      if (!route || !name || !base || !model) { status.textContent = "路由 / 名称 / API 地址 / 模型 均必填"; return; }
+      status.textContent = "保存中…";
+      apply.disabled = true;
+      try {
+        const res = await api("/api/config/provider", { method: "POST", body: JSON.stringify({
+          id: route, name, base_url: base, model, api_key: key, custom: true,
+        }) });
+        if (res.status === 401) { showLogin("令牌无效或已过期"); return; }
+        if (!res.ok) { const eb = await res.json().catch(() => ({})); throw new Error(eb.error || ("HTTP " + res.status)); }
+        status.textContent = "已保存 ✓";
+        modelEditing = null; customAdding = false;
+        await loadConfig();
+        renderModel(config);
+      } catch (e) {
+        status.textContent = "失败：" + e.message;
+      } finally { apply.disabled = false; }
+    });
+    return;
+  }
+
   const editId = modelEditing;
   const target = sorted.find((x) => x.id === editId);
   const active = editId === currentProvider;
-  const cancel = sec.querySelector("#m-model-cancel");
   const input = sec.querySelector("#m-model-name");
-  const status = sec.querySelector("#m-model-status");
-  cancel.addEventListener("click", () => { modelEditing = null; renderModel(c); });
+  const keyInput = sec.querySelector("#m-provider-key");
   apply.addEventListener("click", async () => {
     const body = {};
     if (!active) body.provider = editId;
     const m = input.value.trim();
     if (m && m !== (active ? currentModel : (target && target.model))) body.model = m;
-    if (!body.provider && !body.model) { status.textContent = "未发生变化"; return; }
+    const key = keyInput.value.trim();
+    if (key) body.api_key = key;
+    if (!body.provider && !body.model && !body.api_key) { status.textContent = "未发生变化"; return; }
     status.textContent = "应用中…";
     apply.disabled = true;
     try {
-      const res = await api("/api/config/model", { method: "POST", body: JSON.stringify(body) });
-      if (res.status === 401) { showLogin("令牌无效或已过期"); return; }
-      if (!res.ok) {
-        const eb = await res.json().catch(() => ({}));
-        throw new Error(eb.error || ("HTTP " + res.status));
+      // Key override (M11) is persisted via the provider API first, then the
+      // model switch applies live (P5.1).
+      if (body.api_key) {
+        const rk = await api("/api/config/provider", { method: "POST", body: JSON.stringify({ id: editId, api_key: key }) });
+        if (rk.status === 401) { showLogin("令牌无效或已过期"); return; }
+        if (!rk.ok) { const eb = await rk.json().catch(() => ({})); throw new Error(eb.error || ("HTTP " + rk.status)); }
+      }
+      if (body.provider || body.model) {
+        const rm = await api("/api/config/model", { method: "POST", body: JSON.stringify(body) });
+        if (rm.status === 401) { showLogin("令牌无效或已过期"); return; }
+        if (!rm.ok) { const eb = await rm.json().catch(() => ({})); throw new Error(eb.error || ("HTTP " + rm.status)); }
       }
       status.textContent = "已生效 ✓";
       await loadConfig();        // refresh the config view (model/provider)

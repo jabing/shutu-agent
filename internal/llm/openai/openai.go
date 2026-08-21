@@ -26,8 +26,12 @@ const (
 )
 
 // Config configures the OpenAI-compatible provider. APIKey must come from the
-// environment (OPENAI_API_KEY only, design.md §6).
+// environment (OPENAI_API_KEY only, design.md §6). ID is the provider's
+// registry id; empty defaults to "openai" (the built-in OpenAI adapter). A
+// non-empty ID lets the composition root register arbitrary OpenAI-compatible
+// custom providers (M11: 增加自定义提供方) under their own route.
 type Config struct {
+	ID      string
 	BaseURL string
 	APIKey  string
 	Model   string
@@ -44,13 +48,17 @@ type Config struct {
 // openaiProvider is an llm.Provider delegating the OpenAI-compatible SSE wire
 // to a shared deepseek.Client (dispatch-m8-2 §4: 零新 wire 代码).
 type openaiProvider struct {
-	c *deepseek.Client
+	id string
+	c  *deepseek.Client
 }
 
 // New returns an openaiProvider built on a deepseek.Client with OpenAI-compatible
 // defaults applied (base_url https://api.openai.com/v1, model gpt-4o-mini,
 // both configurable). Stream/Available delegate to the shared client.
 func New(cfg Config) *openaiProvider {
+	if cfg.ID == "" {
+		cfg.ID = providerID
+	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = DefaultBaseURL
 	}
@@ -58,6 +66,7 @@ func New(cfg Config) *openaiProvider {
 		cfg.Model = DefaultModel
 	}
 	return &openaiProvider{
+		id: cfg.ID,
 		c: deepseek.New(deepseek.Config{
 			BaseURL:              cfg.BaseURL,
 			APIKey:               cfg.APIKey,
@@ -68,8 +77,9 @@ func New(cfg Config) *openaiProvider {
 	}
 }
 
-// ID returns the stable provider id "openai" (dispatch-m8-2 §4).
-func (p *openaiProvider) ID() string { return providerID }
+// ID returns the provider's registry id ("openai" for the built-in adapter, or
+// the custom route configured via Config.ID).
+func (p *openaiProvider) ID() string { return p.id }
 
 // Available reports whether the provider can be used: a cheap local check (API
 // key present and base URL parseable) that never performs a network call —

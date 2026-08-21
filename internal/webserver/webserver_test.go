@@ -979,6 +979,60 @@ func TestModelSwitch(t *testing.T) {
 	}
 }
 
+// TestProviderManager covers the M11 provider-management API: POST
+// /api/config/provider dispatches a save (custom provider profile or built-in
+// key override) to the injected manager and answers 200; an empty id answers
+// 400; a rejected save answers 400; DELETE dispatches a delete; an unwired
+// manager answers 501.
+func TestProviderManager(t *testing.T) {
+	srv, _ := newTestServer(t, "tok")
+	var gotAction string
+	var gotEdit ProviderEdit
+	srv.SetProviderManager(func(ctx context.Context, action string, edit ProviderEdit) error {
+		gotAction, gotEdit = action, edit
+		return nil
+	})
+
+	// Save a custom provider.
+	rec := doReqBody(t, srv.Handler(), "POST", "/api/config/provider", "tok",
+		`{"id":"ollama","name":"Ollama","base_url":"http://localhost:11434/v1","model":"llama3.1","api_key":"k","custom":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("custom save → %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if gotAction != "save" || gotEdit.ID != "ollama" || !gotEdit.Custom || gotEdit.BaseURL != "http://localhost:11434/v1" {
+		t.Fatalf("manager got %q %#v, want save custom ollama", gotAction, gotEdit)
+	}
+
+	// Empty id → 400.
+	if rec := doReqBody(t, srv.Handler(), "POST", "/api/config/provider", "tok", `{}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty id save → %d, want 400", rec.Code)
+	}
+
+	// Manager rejection → 400.
+	srv.SetProviderManager(func(ctx context.Context, action string, edit ProviderEdit) error { return errors.New("bad route") })
+	if rec := doReqBody(t, srv.Handler(), "POST", "/api/config/provider", "tok", `{"id":"x","name":"X","base_url":"http://x/v1","model":"m"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("rejected save → %d, want 400", rec.Code)
+	}
+
+	// DELETE dispatches a delete for the custom provider.
+	srv.SetProviderManager(func(ctx context.Context, action string, edit ProviderEdit) error {
+		gotAction, gotEdit = action, edit
+		return nil
+	})
+	if rec := doReqBody(t, srv.Handler(), "DELETE", "/api/config/provider", "tok", `{"id":"ollama"}`); rec.Code != http.StatusOK {
+		t.Fatalf("delete → %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if gotAction != "delete" || gotEdit.ID != "ollama" {
+		t.Fatalf("manager got %q %#v, want delete ollama", gotAction, gotEdit)
+	}
+
+	// Unwired manager → 501.
+	srv2, _ := newTestServer(t, "tok")
+	if rec := doReqBody(t, srv2.Handler(), "POST", "/api/config/provider", "tok", `{"id":"x"}`); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("save without wire → %d, want 501", rec.Code)
+	}
+}
+
 // TestAttachmentUploadGet covers the P5 attachment APIs: a multipart upload
 // (POST) returns the attachment view, the byte echo (GET) returns the stored
 // bytes with the right Content-Type, unknown ids answer 404, and an unwired
