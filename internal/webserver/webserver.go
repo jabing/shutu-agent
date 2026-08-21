@@ -789,6 +789,7 @@ type eventView struct {
 	Reasoning  string      `json:"reasoning,omitempty"`   // assistant/message 的思维链（有界）
 	ToolName   string      `json:"tool_name,omitempty"`   // tool/result、tool/error 的工具名
 	ToolOutput string      `json:"tool_output,omitempty"` // tool/result 的有界输出
+	ToolArgs   string      `json:"tool_args,omitempty"`   // 该调用名对应的工具入参（来自 assistant 的 toolCall；只读展示用）
 	Images     []imageView `json:"images,omitempty"`      // P5: 该消息携带的图片引用
 }
 
@@ -874,10 +875,63 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]eventView, 0, len(events))
+	argsByCall := collectToolArgs(events)
 	for _, ev := range events {
-		out = append(out, toEventView(ev))
+		v := toEventView(ev)
+		if callID := callIDOf(ev); callID != "" {
+			// Read-only detail field: the tool's own input, for the details panel.
+			v.ToolArgs = argsByCall[callID]
+		}
+		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// callIDOf returns the correlation id of a tool/result or tool/error event;
+// empty otherwise. It unmarshals only the leaf callId key.
+func callIDOf(ev session.Event) string {
+	switch ev.Type {
+	case "tool/result":
+		var d struct{ CallID string `json:"callId"` }
+		if json.Unmarshal(ev.Data, &d) == nil {
+			return d.CallID
+		}
+	}
+	return ""
+}
+
+// collectToolArgs builds the callID → args map from every assistant/message
+// event's toolCalls, so the details panel can show a tool's input alongside its
+// output without changing the session log format (the args are the model's own
+// tool call, already durable in the assistant event).
+func collectToolArgs(events []session.Event) map[string]string {
+	args := make(map[string]string)
+	for _, ev := range events {
+		collectToolArgsInto(args, ev)
+	}
+	return args
+}
+
+// collectToolArgsInto folds one assistant/message event's toolCalls into a
+// running callID → args map (the live-stream counterpart of collectToolArgs).
+func collectToolArgsInto(args map[string]string, ev session.Event) {
+	if ev.Type != "assistant/message" {
+		return
+	}
+	var d struct {
+		ToolCalls []struct {
+			ID        string
+			Arguments string
+		} `json:"toolCalls"`
+	}
+	if json.Unmarshal(ev.Data, &d) != nil {
+		return
+	}
+	for _, tc := range d.ToolCalls {
+		if tc.ID != "" {
+			args[tc.ID] = tc.Arguments
+		}
+	}
 }
 
 // handleSessionCreate implements POST /api/sessions (M10 W1, ADR D-WEB2-C):
@@ -1565,12 +1619,15 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, "retry: 3000\n")
+	argsByCall := make(map[string]string)
 	for _, ev := range events {
-		writeSSEEvent(w, ev)
+		collectToolArgsInto(argsByCall, ev)
+		writeSSEEvent(w, ev, argsByCall)
 	}
 	fl.Flush()
 	unsub := s.evSrc(id, func(ev session.Event) {
-		writeSSEEvent(w, ev)
+		collectToolArgsInto(argsByCall, ev)
+		writeSSEEvent(w, ev, argsByCall)
 		fl.Flush()
 	})
 	defer unsub()
@@ -1579,8 +1636,12 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 
 // writeSSEEvent writes one SSE frame for an event and returns. Writes to a
 // disconnected client fail silently (the handler exits on context cancellation).
-func writeSSEEvent(w http.ResponseWriter, ev session.Event) {
-	b, err := json.Marshal(toEventView(ev))
+func writeSSEEvent(w http.ResponseWriter, ev session.Event, argsByCall map[string]string) {
+	v := toEventView(ev)
+	if callID := callIDOf(ev); callID != "" {
+		v.ToolArgs = argsByCall[callID]
+	}
+	b, err := json.Marshal(v)
 	if err != nil {
 		return
 	}

@@ -144,10 +144,24 @@
         <div id="messages" class="messages" aria-live="polite"></div>
         <!-- Empty-state hero (探索未至之境) shown when there is no current
              session or the current session has no events. -->
+        <!-- Empty-state hero (dsh ConversationRoot HeroShell: fish logo →
+             headline → preview badge → workspace chip row → composer below). -->
         <div id="hero" class="hero hidden">
           <div class="hero-inner">
-            <h1 class="hero-title">探索未至之境</h1>
-            <p class="hero-sub muted">数驼 AI Agent</p>
+            <div class="hero-headline">
+              <span class="hero-fish" data-icon="fishlogo" aria-hidden="true"></span>
+              <h1 class="hero-title">探索未至之境</h1>
+              <span class="hero-preview">预览版</span>
+            </div>
+            <div class="hero-ws-row">
+              <button id="hero-ws-chip" class="ws-chip" type="button" aria-haspopup="menu" aria-expanded="false"
+                      title="选择工作区">
+                <span class="ws-chip-ico" data-icon="folderclose16" aria-hidden="true"></span>
+                <span id="hero-ws-label" class="ws-chip-label">选择工作区</span>
+                <span class="ws-chip-caret" data-icon="caretdown" aria-hidden="true"></span>
+              </button>
+              <div id="hero-ws-menu" class="ws-menu hidden" role="menu"></div>
+            </div>
           </div>
           <div class="hero-glow" aria-hidden="true"></div>
         </div>
@@ -166,7 +180,21 @@
 
       <!-- Details column: reserved for the tool-call details panel (P1 keeps 0
            width; data not ready → stays mounted but invisible). -->
-      <section class="col-details" aria-label="详情"></section>
+      <!-- Details column (dsh ui-conversation DetailsPanel): a session / tool-call
+           detail pane. The panel is mounted and shown when opened; the column
+           stays at 0 width while collapsed (data-details-collapsed). -->
+      <section class="col-details" aria-label="详情">
+        <div id="details-panel" class="details-panel hidden">
+          <header class="details-header">
+            <span id="details-title" class="details-title">详情</span>
+            <button id="details-close" class="details-close" title="关闭详情" type="button" aria-label="关闭详情">✕</button>
+          </header>
+          <div class="details-body">
+            <div id="details-empty" class="details-empty">点击消息流中的工具行查看详情</div>
+            <div id="details-selection" class="details-selection hidden"></div>
+          </div>
+        </div>
+      </section>
     </div>
   </div>
 

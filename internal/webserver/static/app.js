@@ -17,6 +17,9 @@ const SIDEBAR_MAX = 420;
 const SIDEBAR_COLLAPSED = 56;
 const SIDEBAR_AUTO_COLLAPSE = 1024;
 const CENTER_MIN = 640;
+const DETAILS_DEFAULT = 360;
+const DETAILS_MIN = 300;
+const DETAILS_MAX = 520;
 
 // ---- element refs --------------------------------------------------------
 const $ = (id) => document.getElementById(id);
@@ -29,10 +32,19 @@ const composerText = $("composer-text"), composerBox = $("composer"), sendBtn = 
 const growWrapEl = document.querySelector(".grow-wrap");
 const scrollBottomBtn = $("scroll-bottom");
 const settingsEl = $("settings"), placeholderEl = $("placeholder");
+const heroWsChip = $("hero-ws-chip"), heroWsLabel = $("hero-ws-label"), heroWsMenu = $("hero-ws-menu");
+const detailsPanel = $("details-panel"), detailsTitle = $("details-title"),
+  detailsCloseBtn = $("details-close"), detailsEmptyEl = $("details-empty"), detailsSelEl = $("details-selection");
 
 // ---- state ---------------------------------------------------------------
 let currentID = localStorage.getItem(KEY_CURRENT) || "";
 let layout = { sidebar: SIDEBAR_DEFAULT, manual: false, narrowViewport: false, dragging: false };
+let details = { open: false, width: DETAILS_DEFAULT }; // right details column (dsh layout details)
+let heroWorkspace = "";             // selected hero workspace id ("" = pick a workspace)
+let heroMenuOpen = false;           // hero workspace picker popover state
+let wsList = [];                    // [{id,title}] for the hero picker (from /api/workspaces)
+let toolMeta = {};                  // callId -> {name, args} captured from assistant tool_call
+let selectedTool = null;            // {callId,name,args,output,error} shown in the details panel
 let sseAbort = null;            // AbortController for the current session stream
 let sseReconnect = null;        // timer handle
 let streamState = null;         // {seq, node} for the assistant bubble being built
@@ -106,13 +118,20 @@ function initThemeSystem() {
 function sidebarCollapsed() { return layout.narrowViewport || layout.manual; }
 function renderColumns() {
   const collapsed = sidebarCollapsed();
+  const detailsW = details.open ? details.width : 0;
   frameEl.style.gridTemplateColumns =
-    (collapsed ? SIDEBAR_COLLAPSED : layout.sidebar) + "px minmax(0, 1fr) 0px";
+    (collapsed ? SIDEBAR_COLLAPSED : layout.sidebar) + "px minmax(0, 1fr) " + detailsW + "px";
   frameEl.dataset.sidebarCollapsed = String(collapsed);
-  frameEl.dataset.detailsCollapsed = "true";
+  frameEl.dataset.detailsCollapsed = String(detailsW === 0);
   const h = document.querySelector(".drag-handle");
   if (h) h.style.left = (collapsed ? SIDEBAR_COLLAPSED : layout.sidebar) + "px";
+  const dh = document.querySelector(".drag-handle-details");
+  if (dh) {
+    dh.style.display = details.open ? "" : "none";
+    dh.style.right = detailsW + "px";
+  }
 }
+function clampDetails(v) { return Math.max(DETAILS_MIN, Math.min(DETAILS_MAX, v)); }
 function clampSidebar(v) { return Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, v)); }
 function syncSidebarToggle() {
   const collapsed = sidebarCollapsed();
@@ -163,6 +182,43 @@ function setupDrag() {
   };
   handle.addEventListener("pointerup", end);
   handle.addEventListener("pointercancel", end);
+
+  // Details-column resize handle (right edge; only while the panel is open).
+  const dhandle = document.createElement("div");
+  dhandle.className = "drag-handle drag-handle-details";
+  dhandle.dataset.side = "details";
+  frameEl.appendChild(dhandle);
+  dhandle.style.right = (details.open ? details.width : 0) + "px";
+
+  let dorigin = 0, dbase = details.width, dframe = null;
+  dhandle.addEventListener("pointerdown", (e) => {
+    if (!details.open) return;
+    e.preventDefault();
+    dhandle.setPointerCapture(e.pointerId);
+    dorigin = e.clientX;
+    dbase = details.width;
+    layout.dragging = true;
+    frameEl.dataset.dragging = "true";
+    dhandle.dataset.dragging = "true";
+  });
+  dhandle.addEventListener("pointermove", (e) => {
+    if (!dhandle.hasPointerCapture(e.pointerId)) return;
+    dframe ??= requestAnimationFrame(() => {
+      dframe = null;
+      details.width = clampDetails(dbase - (e.clientX - dorigin));
+      renderColumns();
+    });
+  });
+  const dend = () => {
+    if (!dhandle.hasPointerCapture(dhandle.pointerId)) return;
+    dhandle.releasePointerCapture(dhandle.pointerId);
+    if (dframe) { cancelAnimationFrame(dframe); dframe = null; }
+    layout.dragging = false;
+    delete frameEl.dataset.dragging;
+    delete dhandle.dataset.dragging;
+  };
+  dhandle.addEventListener("pointerup", dend);
+  dhandle.addEventListener("pointercancel", dend);
 }
 
 function setupNarrow() {
@@ -352,6 +408,9 @@ function addToolEvent(ev) {
   const isErr = ev.type === "tool/error";
   node.className = "msg tool" + (isErr ? " error" : "");
   const body = isErr ? ev.summary : ev.tool_output || ev.summary || "（无输出）";
+  const seq = ev.seq == null ? "" : String(ev.seq);
+  node.dataset.seq = seq;
+  toolMeta[seq] = { name: ev.tool_name || "Tool call", args: ev.tool_args || "", output: body, error: isErr };
   node.innerHTML = `
     <div class="tool-card">
       <span class="tool-icon">🔧</span>
@@ -362,7 +421,8 @@ function addToolEvent(ev) {
     </div>
     <div class="tool-body${isErr ? " error" : ""}">${esc(body)}</div>`;
   node.querySelector(".tool-card").addEventListener("click", () => {
-    node.classList.toggle("open");
+    node.classList.add("open");
+    openDetails(seq);
     scrollToBottom();
   });
   inner.appendChild(node);
@@ -1245,16 +1305,29 @@ async function deleteSession(id) {
   loadSessions();
 }
 
-async function newSession() {
-  try {
-    const res = await api("/api/sessions", { method: "POST" });
-    const body = await res.json();
-    if (!body.id) throw new Error("no id");
-    localStorage.setItem(KEY_CURRENT, body.id);
-    currentID = body.id;
-    await openSession(body.id);
-    loadSessions();
-  } catch (e) { if (e.message !== "unauthorized") console.error(e); }
+// newSession shows the dsh new-session hero (workspace chip + composer); no
+// session is created until the user picks a workspace (see pickHeroWorkspace)
+// or the composer is sent from an existing session. This matches dsh, where
+// "New Session" lands on the explore hero and the blank session is materialized
+// on the workspace pick.
+function newSession() {
+  closeDetails();
+  currentID = "";
+  localStorage.removeItem(KEY_CURRENT);
+  if (sseAbort) { sseAbort.abort(); sseAbort = null; }
+  if (sseReconnect) { clearTimeout(sseReconnect); sseReconnect = null; }
+  streamState = null;
+  runningNode = null;
+  streamActive = false;
+  messagesEl.querySelector(".messages-inner")?.remove();
+  curSessionEl.textContent = "";
+  heroEl.classList.remove("hidden");
+  // Hero composer is inert until a workspace is picked (dsh: choose-workspace
+  // placeholder), unless a hero workspace was already chosen previously.
+  loadWorkspaces().then(() => { syncHeroChip(); syncHeroPickState(); });
+  syncHeroPickState();
+  updatePlaceholder();
+  syncGrow();
 }
 
 async function switchSession(id) {
@@ -1264,8 +1337,159 @@ async function switchSession(id) {
   } catch (e) { if (e.message !== "unauthorized") console.error(e); return; }
   localStorage.setItem(KEY_CURRENT, id);
   currentID = id;
+  closeDetails();
   await openSession(id);
   loadSessions();
+}
+
+// ---- new-session hero workspace chip (dsh WorkspaceChip + picker) ----------
+// The hero exposes the workspace the next session lands in. Picking one
+// materializes the blank session there (dsh connectWorkspace → open), then the
+// composer activates. "未分组" keeps the ungrouped option (workspace_id "").
+async function loadWorkspaces() {
+  try {
+    const res = await api("/api/workspaces");
+    const data = await res.json();
+    wsList = data.workspaces || [];
+  } catch (e) { if (e.message !== "unauthorized") console.error(e); wsList = []; }
+  return wsList;
+}
+function heroMenuHTML() {
+  const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  let html = `<button class="hm-item" role="menuitem" data-ws="" data-label="${esc("未分组")}">
+      <span class="hm-ico">${htmlEscapeIcon(PA_ICONS.folderclose16)}</span><span class="hm-label">${esc("未分组")}</span>
+    </button>`;
+  for (const w of wsList) {
+    const sel = heroWorkspace === w.id ? " hm-active" : "";
+    const ico = heroWorkspace === w.id ? PA_ICONS.folderopen16 : PA_ICONS.folderclose16;
+    html += `<button class="hm-item${sel}" role="menuitem" data-ws="${esc(w.id)}" data-label="${esc(w.title || "工作区")}">
+      <span class="hm-ico">${htmlEscapeIcon(ico)}</span><span class="hm-label">${esc(w.title || "工作区")}</span>
+    </button>`;
+  }
+  return html;
+}
+// icons are pre-escaped static strings (no user content), safe to inject raw.
+function htmlEscapeIcon(svg) { return svg || ""; }
+function renderHeroMenu() {
+  if (!heroWsMenu) return;
+  heroWsMenu.innerHTML = heroMenuHTML();
+  heroWsMenu.querySelectorAll(".hm-item").forEach((btn) => {
+    btn.addEventListener("click", () => pickHeroWorkspace(btn.dataset.ws || "", btn.dataset.label || "未分组"));
+  });
+}
+function toggleHeroMenu(force) {
+  const open = force === undefined ? !heroMenuOpen : force;
+  heroMenuOpen = open;
+  if (heroWsMenu) heroWsMenu.classList.toggle("hidden", !open);
+  if (heroWsChip) heroWsChip.setAttribute("aria-expanded", String(open));
+}
+function syncHeroChip() {
+  if (heroWsChip) heroWsChip.setAttribute("aria-expanded", String(heroMenuOpen));
+  if (!heroWsLabel) return;
+  const w = wsList.find((x) => x.id === heroWorkspace);
+  const label = heroWorkspace ? (w && w.title ? w.title : "") : "";
+  if (heroWorkspace) {
+    heroWsLabel.textContent = label || "工作区";
+    heroWsChip?.querySelector(".ws-chip-ico")?.setAttribute("data-icon", "folderopen16");
+  } else {
+    heroWsLabel.textContent = "选择工作区";
+    heroWsChip?.querySelector(".ws-chip-ico")?.setAttribute("data-icon", "folderclose16");
+  }
+}
+function syncHeroPickState() {
+  // dsh: no session + no chosen workspace → inert composer (choose-workspace
+  // placeholder); a chosen workspace arms the hero composer.
+  const inert = !currentID && !heroWorkspace;
+  setComposerDisabled(inert);
+  updatePlaceholder();
+}
+async function pickHeroWorkspace(wsId, label) {
+  heroWorkspace = wsId;
+  toggleHeroMenu(false);
+  syncHeroPickState();
+  if (currentID) { await openSession(currentID); syncHeroChip(); return; }
+  // Materialize the blank session in the chosen workspace (dsh connectWorkspace).
+  const created = await createSessionInWorkspace(wsId);
+  if (!created) {
+    // Roll the pick back so the composer returns to the choose-workspace gate.
+    heroWorkspace = "";
+    syncHeroChip();
+    syncHeroPickState();
+  }
+}
+async function createSessionInWorkspace(wsId) {
+  try {
+    const res = await api("/api/sessions", { method: "POST", body: JSON.stringify({ workspace_id: wsId }) });
+    const body = await res.json();
+    if (!body.id) throw new Error("no id");
+    currentID = body.id;
+    localStorage.setItem(KEY_CURRENT, body.id);
+    await openSession(body.id);
+    loadSessions();
+    return true;
+  } catch (e) {
+    if (e.message !== "unauthorized") { console.error(e); toast("创建会话失败"); }
+    return false;
+  }
+}
+
+// ---- right details panel (dsh ui-conversation DetailsPanel) ----------------
+// Shows the selected tool call's 输入 (args) and 输出 (result); an empty hint
+// states how to select one. Opening selects; the close button collapses the
+// column back to 0 width (mount kept, column collapses — dsh concession).
+function prettyJson(raw) {
+  try { return JSON.stringify(JSON.parse(raw), null, 2); } catch (_) { return raw; }
+}
+function escCode(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function openDetails(seq) {
+  const meta = toolMeta[seq];
+  if (!meta) return;
+  selectedTool = { seq, name: meta.name, args: meta.args || "", output: meta.output || "", error: !!meta.error };
+  details.open = true;
+  if (detailsPanel) detailsPanel.classList.remove("hidden");
+  renderDetails();
+  markSelectedTool();
+  renderColumns();
+}
+function closeDetails() {
+  selectedTool = null;
+  details.open = false;
+  if (detailsPanel) detailsPanel.classList.add("hidden");
+  markSelectedTool();
+  renderColumns();
+}
+function renderDetails() {
+  if (!detailsTitle) return;
+  if (selectedTool) {
+    detailsTitle.textContent = selectedTool.name;
+    detailsEmptyEl.classList.add("hidden");
+    detailsSelEl.classList.remove("hidden");
+    let html = "";
+    if (selectedTool.args) {
+      html += `<section class="details-sec"><div class="details-sec-label">输入</div><pre class="details-pre">${escCode(prettyJson(selectedTool.args))}</pre></section>`;
+    }
+    html += `<section class="details-sec"><div class="details-sec-label">输出</div><pre class="details-pre${selectedTool.error ? " details-err" : ""}">${escCode(selectedTool.output)}</pre></section>`;
+    detailsSelEl.innerHTML = html;
+  } else {
+    detailsTitle.textContent = "详情";
+    detailsEmptyEl.classList.remove("hidden");
+    detailsSelEl.classList.add("hidden");
+  }
+}
+function markSelectedTool() {
+  document.querySelectorAll(".msg.tool[data-seq]").forEach((n) => {
+    n.classList.toggle("selected", !!selectedTool && n.dataset.seq === selectedTool.seq);
+  });
+}
+function syncHeroMenuPosition() {
+  if (heroWsMenu && heroWsChip) {
+    const r = heroWsChip.getBoundingClientRect();
+    heroWsMenu.style.left = r.left + "px";
+    heroWsMenu.style.top = (r.bottom + 6) + "px";
+    heroWsMenu.style.minWidth = Math.max(r.width, 220) + "px";
+  }
 }
 
 // ---- session view: messages + SSE ------------------------------------------
@@ -1277,7 +1501,12 @@ function openSession(id) {
   streamActive = false;
   messagesEl.querySelector(".messages-inner")?.remove();
   curSessionEl.textContent = id || "";
+  toolMeta = {};
   heroEl.classList.toggle("hidden", !!id);
+  // A real session re-enables the composer; the hero phase keeps it gated on a
+  // picked workspace. (dsh: session → composer active, hero → choose-workspace.)
+  setComposerDisabled(!id);
+  updatePlaceholder();
   if (!id) return;
   return Promise.all([loadEvents(id), connectStream(id)]);
 }
@@ -1388,7 +1617,9 @@ function setComposerDisabled(disabled) {
   composerText.disabled = disabled;
 }
 function placeholderFor() {
-  return currentID ? "给智能体发消息…" : "描述你想要构建的内容";
+  if (currentID) return "给智能体发消息…";
+  if (heroWorkspace) return "描述你想要构建的内容";
+  return "选择一个工作区开始";
 }
 function updatePlaceholder() {
   composerText.placeholder = placeholderFor();
@@ -2910,7 +3141,11 @@ function boot() {
   loadConfig();
   loadSessions();
   if (currentID) openSession(currentID);
-  else { heroEl.classList.remove("hidden"); }
+  else {
+    heroEl.classList.remove("hidden");
+    loadWorkspaces().then(() => { syncHeroChip(); syncHeroPickState(); });
+    syncHeroPickState();
+  }
   pollTimer = setInterval(() => loadSessions(), 30000);
   route();
 }
@@ -2937,5 +3172,19 @@ $("theme-toggle-settings").addEventListener("click", toggleTheme);
 $("settings-back").addEventListener("click", () => location.hash = "#/chat");
 $("settings-close").addEventListener("click", () => location.hash = "#/chat");
 $("back").addEventListener("click", () => location.hash = "#/chat");
+
+// New-session hero workspace chip: opens the picker popover (dsh WorkspaceChip).
+if (heroWsChip) heroWsChip.addEventListener("click", (e) => {
+  e.stopPropagation();
+  renderHeroMenu();
+  syncHeroMenuPosition();
+  toggleHeroMenu();
+});
+// Hero picker popover: a click anywhere outside closes it.
+document.addEventListener("click", (e) => {
+  if (heroMenuOpen && !e.target.closest("#hero-ws-chip, #hero-ws-menu")) toggleHeroMenu(false);
+});
+// Right details panel close button (dsh DetailsPanel close).
+if (detailsCloseBtn) detailsCloseBtn.addEventListener("click", closeDetails);
 
 boot();

@@ -585,6 +585,43 @@ func TestEventsExtendedFields(t *testing.T) {
 	}
 }
 
+// TestEventViewToolArgs verifies the details-panel input field: the events API
+// attaches a tool/result's arguments from the preceding assistant/message
+// toolCalls (read-only view field; the session log format is unchanged).
+func TestEventViewToolArgs(t *testing.T) {
+	srv, st := newTestServer(t, "tok")
+	seedSession(t, st, "s-1", []session.Event{
+		{Seq: 1, Type: "assistant/message", At: time.Now(), Version: 1,
+			Data: mustData(t, map[string]any{"Text": "答案", "toolCalls": []llm.ToolCall{
+				{ID: "call_1", Name: "get_time", Arguments: `{"zone":"UTC"}`},
+			}})},
+		{Seq: 2, Type: "tool/result", At: time.Now(), Version: 1,
+			Data: mustData(t, map[string]any{"callId": "call_1", "Name": "get_time", "Output": "12:00"})},
+		{Seq: 3, Type: "tool/result", At: time.Now(), Version: 1,
+			Data: mustData(t, map[string]any{"callId": "call_2", "Name": "unknown_tool", "Output": "x"})},
+	})
+	rec := doReq(t, srv.Handler(), "GET", "/api/sessions/s-1/events", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("events → %d, want 200", rec.Code)
+	}
+	var evs []eventView
+	if err := json.Unmarshal(rec.Body.Bytes(), &evs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(evs) != 3 {
+		t.Fatalf("events = %d, want 3", len(evs))
+	}
+	if evs[1].ToolArgs != `{"zone":"UTC"}` {
+		t.Fatalf("tool/result tool_args = %q, want the call arguments", evs[1].ToolArgs)
+	}
+	if evs[2].ToolArgs != "" {
+		t.Fatalf("unmatched tool/result tool_args = %q, want empty", evs[2].ToolArgs)
+	}
+	if evs[0].ToolArgs != "" {
+		t.Fatalf("assistant/message tool_args = %q, want empty", evs[0].ToolArgs)
+	}
+}
+
 // TestSubagentsJobsAPI verifies the M10 W4 (D-WEB2-H) status panels: a wired
 // provider answers its sanitized list; a nil provider answers 501; with a
 // configured token the route stays behind requireAuth.
