@@ -40,6 +40,7 @@
   --dsw-alias-interactive-bg-hover-danger: rgba(242, 90, 90, 0.15);
   --dsw-alias-button-info-fill: #679EFE;
   --dsw-alias-button-info-hover: #4176E6;
+  --dsw-alias-button-elevated-fill: #43454A; /* dsh bluish-750 */
   --dsw-alias-button-floating-fill: #2C2C2E;
   --dsw-alias-button-floating-hover: #353638;
   --dsw-alias-button-primary-fill: #F9FAFB;
@@ -104,6 +105,7 @@ body[data-ds-dark-theme="false"] {
   --dsw-alias-interactive-bg-active: rgba(38, 49, 72, 0.12);
   --dsw-alias-button-info-fill: #4176E6;
   --dsw-alias-button-info-hover: #3565CE;
+  --dsw-alias-button-elevated-fill: #FFFFFF; /* dsh bluish-00 */
   --dsw-alias-button-floating-fill: #FFFFFF;
   --dsw-alias-button-floating-hover: #F1F3F5;
   --dsw-alias-button-primary-fill: #0F1115;
