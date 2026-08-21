@@ -346,6 +346,9 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
 /* Icon glyphs injected from the dsh web set (icons.js) — sized by CSS. */
 .icon-button svg, .ws-header-btn svg, .foot-ico svg, .ns-ico svg, .ws-clear svg { width: 16px; height: 16px; display: block; }
 .brand-mark svg { width: 24px; height: 18px; display: block; }
+/* Brand logo is the user's monochrome PNG; light theme → logo_b (black),
+   dark theme → logo_w (white) — swapped in app.js applyTheme(). */
+.brand-mark img { width: 24px; height: 24px; display: block; object-fit: contain; }
 .gh-chevron svg { width: 10px; height: 10px; display: block; }
 .gh-folder svg { width: 14px; height: 14px; display: block; }
 .gh-act svg { width: 13px; height: 13px; display: block; }
