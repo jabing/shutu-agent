@@ -11,6 +11,7 @@
   --dsw-alias-bg-layer-2: #2C2C2E;
   --dsw-alias-bg-layer-3: #353638;
   --dsw-alias-bg-overlay: #61666B;
+  --dsw-alias-bg-module-platform: #353638; /* dsh bluish-800 */
   /* borders */
   --dsw-alias-border-l1: rgba(255, 255, 255, 0.06);
   --dsw-alias-border-l2: rgba(255, 255, 255, 0.12);
@@ -84,6 +85,7 @@ body[data-ds-dark-theme="false"] {
   --dsw-alias-bg-base: #FFFFFF;
   --dsw-alias-bg-layer-1: #F9FAFB;
   --dsw-alias-bg-layer-2: #F1F3F5;
+  --dsw-alias-bg-module-platform: #F1F3F5; /* dsh bluish-75 */
   --dsw-alias-bg-overlay: #E9ECF2;
   --dsw-alias-border-l1: rgba(0, 0, 0, 0.04);
   --dsw-alias-border-l2: rgba(0, 0, 0, 0.1);
@@ -936,18 +938,50 @@ body[data-ds-dark-theme="false"] .nav-cell.active { background: #EBEEF2; }
 .row-desc { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 .row-value { font-size: 13px; color: var(--dsw-alias-label-secondary); font-family: var(--dsw-font-code); word-break: break-all; }
 .row-control { flex: none; display: flex; align-items: center; gap: 6px; }
-/* appearance cuboid group (theme: light / dark) */
-.theme-cubes { display: flex; gap: 6px; }
+/* Appearance row (dsh ui-theme AppearanceRow): title above, then the three
+   theme cubes — icon-over-label blocks (figma 'Selector Cube' r16). */
+.appearance-group {
+  display: flex; flex-direction: column; gap: 8px; padding: 16px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+.theme-cubes { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; }
 .theme-cube {
-  min-width: 56px; padding: 6px 12px; border-radius: 12px; border: 1px solid var(--dsw-alias-border-l2);
-  background: transparent; color: var(--dsw-alias-label-secondary); font-size: 12px; cursor: pointer;
+  box-sizing: border-box; flex: 1 1 150px; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; padding: 16px 20px;
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 16px;
+  background: transparent; font: inherit; font-size: 14px; line-height: 22px;
+  color: var(--dsw-alias-label-primary); cursor: pointer;
 }
-.theme-cube:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.theme-cube.active {
-  background: var(--dsw-alias-bg-layer-3); border-color: var(--dsw-alias-border-l3);
-  color: var(--dsw-alias-label-primary);
+.theme-cube svg { width: 20px; height: 20px; display: block; }
+.theme-cube:hover:not(.selected) { background: var(--dsw-alias-interactive-bg-hover); }
+.theme-cube.selected {
+  background: var(--dsw-alias-bg-module-platform);
+  border-color: var(--dsw-alias-border-l3);
 }
-body[data-ds-dark-theme="false"] .theme-cube.active { background: #F5F6F7; }
+/* Setting-Cell (dsh LanguageRow / EnterBehaviorRow): title text left, control
+   right, 16/0 padding and a hairline separator removed on the last row. */
+.settings-row {
+  display: flex; align-items: center; gap: 8px; padding: 16px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+.settings-row:last-of-type { border-bottom: 0; }
+.row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; padding-right: 48px; }
+.row-title { font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary); }
+.row-desc { font-size: 13px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
+/* Selector pill (dsh 'Selector': h36 r18, platform fill, chevron on the right). */
+.row-select {
+  flex: none; appearance: none; -webkit-appearance: none;
+  height: 36px; padding: 0 32px 0 14px;
+  border: none; border-radius: 18px;
+  background-color: var(--dsw-alias-bg-module-platform);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14' fill='%2381858C'><path d='M2 5l5 5 5-5z'/></svg>");
+  background-repeat: no-repeat; background-position: right 12px center;
+  font: inherit; font-size: 14px; line-height: 22px;
+  color: var(--dsw-alias-label-primary); cursor: pointer;
+}
+.row-select:hover { background-color: var(--dsw-alias-interactive-bg-hover); }
+.row-select:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; }
 /* capability badge */
 .cap-badge {
   font-size: 12px; line-height: 20px; padding: 0 10px; border-radius: 14px;

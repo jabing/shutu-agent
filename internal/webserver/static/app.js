@@ -1437,7 +1437,13 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
 }
 composerText.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+  // Composer send key follows the General-settings preference: "send" sends on
+  // plain Enter (Shift+Enter newline); "newline" sends on Ctrl/Cmd+Enter only.
+  const mode = localStorage.getItem("pa_enter") || "send";
+  const isSend = mode === "send"
+    ? (e.key === "Enter" && !e.shiftKey && !e.isComposing)
+    : (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing);
+  if (isSend) {
     e.preventDefault();
     sendMessage();
   }
@@ -1508,18 +1514,34 @@ function renderSettingsNav() {
 
 function renderGeneral(c) {
   const pref = localStorage.getItem(KEY_THEME) || "system";
-  const cubes = `
-    <div class="theme-cubes">
-      <button class="theme-cube${pref === "light" ? " active" : ""}" data-theme="light">浅色</button>
-      <button class="theme-cube${pref === "dark" ? " active" : ""}" data-theme="dark">深色</button>
-      <button class="theme-cube${pref === "system" ? " active" : ""}" data-theme="system">跟随系统</button>
-    </div>`;
+  const cube = (id, label, icon) =>
+    `<button class="theme-cube${pref === id ? " selected" : ""}" data-theme="${id}">${icon}<span>${label}</span></button>`;
+  // dsh AppearanceRow: title above, the three theme cubes below.
+  const appearance = `<div class="appearance-group">
+    <div class="row-title">外观</div>
+    <div class="theme-cubes">${cube("light", "浅色", PA_ICONS.light)}${cube("dark", "深色", PA_ICONS.dark)}${cube("system", "跟随系统", PA_ICONS.followsystem)}</div>
+  </div>`;
+  const enterMode = localStorage.getItem("pa_enter") || "send";
   const sec = settingsSectionEl();
-  sec.innerHTML = `<h2>通用设置</h2><p class="intro">修改 config.yaml 后重启生效（无运行时热改）。</p>` +
-    rowHTML("外观", "浅色 / 深色 / 跟随系统（仅本机浏览器记忆）", cubes) +
-    rowHTML("会话模式", "修改 config.yaml 后重启生效", `<span class="row-value">${esc(c.mode || "standard")}</span>`) +
-    (c.web_server_addr ? rowHTML("Web 服务地址", "访问本工作台的地址", `<span class="row-value">${esc(c.web_server_addr)}</span>`) : "") +
-    rowHTML("配置文件", "修改后重启生效，无运行时热改（ADR D-WEB2-D）", `<span class="row-value">config.yaml</span>`);
+  sec.innerHTML = `<h2>通用设置</h2>` +
+    appearance +
+    // dsh LanguageRow: title + selector pill (English is planned, not shipped).
+    `<div class="settings-row">
+      <div class="row-text"><div class="row-title">语言</div></div>
+      <select id="lang-select" class="row-select">
+        <option value="zh" selected>中文</option>
+        <option value="en" disabled>English（规划中）</option>
+      </select>
+    </div>` +
+    // dsh EnterBehaviorRow: title + description + selector pill.
+    `<div class="settings-row">
+      <div class="row-text"><div class="row-title">回车发送</div><div class="row-desc">Enter 直接发送，Shift+Enter 换行；或改为 Ctrl+Enter 发送。</div></div>
+      <select id="enter-select" class="row-select">
+        <option value="send"${enterMode === "send" ? " selected" : ""}>Enter 发送</option>
+        <option value="newline"${enterMode === "newline" ? " selected" : ""}>Ctrl+Enter 发送</option>
+      </select>
+    </div>` +
+    `<p class="notice">配置文件：config.yaml —— 修改后重启生效（无运行时热改）。</p>`;
   sec.querySelectorAll(".theme-cube").forEach((b) => {
     b.addEventListener("click", () => {
       localStorage.setItem(KEY_THEME, b.dataset.theme);
@@ -1527,6 +1549,8 @@ function renderGeneral(c) {
       renderGeneral(c);
     });
   });
+  const enter = sec.querySelector("#enter-select");
+  if (enter) enter.addEventListener("change", (e) => { localStorage.setItem("pa_enter", e.target.value); });
 }
 
 function renderModel(c) {
