@@ -343,6 +343,27 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
 .ws-view-menu { min-width: 140px; }
 .ws-view-menu button { width: 100%; }
 
+/* Icon glyphs injected from the dsh web set (icons.js) — sized by CSS. */
+.icon-button svg, .ws-header-btn svg, .foot-ico svg, .ns-ico svg, .ws-clear svg { width: 16px; height: 16px; display: block; }
+.brand-mark svg { width: 24px; height: 18px; display: block; }
+.gh-chevron svg { width: 10px; height: 10px; display: block; }
+.gh-folder svg { width: 14px; height: 14px; display: block; }
+.gh-act svg { width: 13px; height: 13px; display: block; }
+
+/* Icon-led menu rows (dsh Menu: icon + label). */
+.si-pop button { display: flex; align-items: center; gap: 8px; }
+.si-pop button svg { width: 14px; height: 14px; flex: none; }
+.si-pop button.danger svg { color: inherit; }
+
+/* Drag & drop insertion line (dsh dropLine, 2px business line). */
+.drop-indicator {
+  position: absolute; z-index: 8; height: 2px; border-radius: 1px;
+  background: var(--dsw-alias-state-business-primary);
+  opacity: 0; pointer-events: none; transition: opacity 120ms;
+}
+.drop-indicator.visible { opacity: 1; }
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .drop-indicator { display: none; }
+
 /* session rows: dsh ui-workspace single-line rows (32px, radius 8), state
    dot + title + relative time, hover reveals the ⋯ menu (rename / delete).
    The selected row reuses the hover fill (dsh .sessionRow.selected), not a

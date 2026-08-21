@@ -51,6 +51,8 @@ func migrateSchema(db *sql.DB) error {
 	steps := []struct{ table, col, ddl string }{
 		{"sessions", "title", `ALTER TABLE sessions ADD COLUMN title TEXT`},
 		{"sessions", "workspace_id", `ALTER TABLE sessions ADD COLUMN workspace_id TEXT`},
+		{"sessions", "archived_at", `ALTER TABLE sessions ADD COLUMN archived_at INTEGER`},
+		{"sessions", "sort", `ALTER TABLE sessions ADD COLUMN sort INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, st := range steps {
 		if _, err := db.Exec(st.ddl); err != nil {
@@ -189,9 +191,11 @@ func (s *SQLiteStore) LoadSession(ctx context.Context, sessionID string) ([]sess
 }
 
 // ListSessions returns every session's metadata, most recently updated first.
+// Archived sessions are included (the webserver filters them out of the active
+// list); Sort is the manual drag order within the group.
 func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT s.id, s.created_at, s.updated_at, s.title, s.workspace_id, COUNT(e.seq)
+		SELECT s.id, s.created_at, s.updated_at, s.title, s.workspace_id, s.archived_at, s.sort, COUNT(e.seq)
 		FROM sessions s LEFT JOIN events e ON e.session_id = s.id
 		GROUP BY s.id
 		ORDER BY s.updated_at DESC, s.created_at DESC`)
@@ -204,14 +208,18 @@ func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 		var m SessionMeta
 		var created, updated int64
 		var title, workspaceID sql.NullString
+		var archived sql.NullInt64
 		var count int
-		if err := rows.Scan(&m.ID, &created, &updated, &title, &workspaceID, &count); err != nil {
+		if err := rows.Scan(&m.ID, &created, &updated, &title, &workspaceID, &archived, &m.Sort, &count); err != nil {
 			return nil, fmt.Errorf("store: scan session meta: %w", err)
 		}
 		m.CreatedAt = time.Unix(0, created).UTC()
 		m.UpdatedAt = time.Unix(0, updated).UTC()
 		m.Title = title.String
 		m.WorkspaceID = workspaceID.String
+		if archived.Valid {
+			m.ArchivedAt = time.Unix(0, archived.Int64).UTC()
+		}
 		m.EventCount = count
 		metas = append(metas, m)
 	}
@@ -219,6 +227,53 @@ func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 		return nil, fmt.Errorf("store: read session metas: %w", err)
 	}
 	return metas, nil
+}
+
+// ArchiveSession toggles the archived mark on a session (archived_at NULL
+// clears it).
+func (s *SQLiteStore) ArchiveSession(ctx context.Context, sessionID string, archived bool) error {
+	var stmt string
+	var args []any
+	if archived {
+		stmt = `UPDATE sessions SET archived_at = ? WHERE id = ?`
+		args = []any{time.Now().UTC().UnixNano(), sessionID}
+	} else {
+		stmt = `UPDATE sessions SET archived_at = NULL WHERE id = ?`
+		args = []any{sessionID}
+	}
+	res, err := s.db.ExecContext(ctx, stmt, args...)
+	if err != nil {
+		return fmt.Errorf("store: archive session %q: %w", sessionID, err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("%w: %q", ErrNotFound, sessionID)
+	}
+	return nil
+}
+
+// ReorderSessions applies a manual drag order: each listed session moves into
+// workspaceID (empty = ungrouped) and takes sort = its index, all in one
+// transaction. Sessions of the same group not in the list keep their sort.
+func (s *SQLiteStore) ReorderSessions(ctx context.Context, workspaceID string, sessionIDs []string) error {
+	var wid any
+	if workspaceID != "" {
+		wid = workspaceID
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin reorder sessions: %w", err)
+	}
+	defer tx.Rollback()
+	for i, id := range sessionIDs {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE sessions SET workspace_id = ?, sort = ? WHERE id = ?`, wid, i, id); err != nil {
+			return fmt.Errorf("store: reorder session %q: %w", id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit reorder sessions: %w", err)
+	}
+	return nil
 }
 
 // SetSessionWorkspace moves a session into a workspace; an empty workspaceID
@@ -311,6 +366,24 @@ func (s *SQLiteStore) SetWorkspaceTitle(ctx context.Context, id, title string) e
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
 		return fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
+	return nil
+}
+
+// ReorderWorkspaces applies a manual drag order: sort is rewritten 0..n-1.
+func (s *SQLiteStore) ReorderWorkspaces(ctx context.Context, ids []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin reorder workspaces: %w", err)
+	}
+	defer tx.Rollback()
+	for i, id := range ids {
+		if _, err := tx.ExecContext(ctx, `UPDATE workspaces SET sort = ? WHERE id = ?`, i, id); err != nil {
+			return fmt.Errorf("store: reorder workspace %q: %w", id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit reorder workspaces: %w", err)
 	}
 	return nil
 }

@@ -494,6 +494,16 @@ async function loadSessions() {
   renderGrouped(list);
 }
 
+// injectIcons fills every [data-icon] element with the dsh web SVG glyphs
+// (icons.js holds the exact paths — user requested the same icons as dsh web).
+function injectIcons() {
+  const icons = window.PA_ICONS || {};
+  document.querySelectorAll("[data-icon]").forEach((el) => {
+    const svg = icons[el.dataset.icon];
+    if (svg) el.innerHTML = svg;
+  });
+}
+
 // appendSessionItem appends one session row into a container (shared by the
 // flat list and the grouped sublists). dsh SessionNodeItem row contract.
 function appendSessionItem(container, s) {
@@ -502,11 +512,12 @@ function appendSessionItem(container, s) {
   const li = document.createElement("li");
   li.className = "session-item" + (s.id === currentID ? " active" : "");
   li.dataset.id = s.id;
+  li.draggable = true;
   li.innerHTML = `
     <span class="si-dot" data-state="${state}"></span>
     <span class="si-title${s.blank ? " empty" : ""}">${esc(s.title || s.id)}</span>
     <span class="si-time">${fmtShort(s.updated_at)}</span>
-    <button class="si-menu" title="会话操作">⋯</button>`;
+    <button class="si-menu" title="会话操作">${PA_ICONS.ellipsis}</button>`;
   li.addEventListener("click", (e) => {
     if (e.target.closest(".si-menu")) return;
     switchSession(s.id);
@@ -549,19 +560,25 @@ function renderGrouped(list) {
     wrap.dataset.key = g.key;
     const head = document.createElement("button");
     head.className = "group-head";
+    head.draggable = true;
+    const open = wsOpenState(g.key);
     head.innerHTML = `
-      <span class="gh-chevron" aria-hidden="true">▸</span>
-      <span class="gh-folder" aria-hidden="true">${g.ws ? "📁" : "🗂"}</span>
+      <span class="gh-chevron" aria-hidden="true">${PA_ICONS.triangleright}</span>
+      <span class="gh-folder" aria-hidden="true">${g.ws ? (open ? PA_ICONS.folderopen16 : PA_ICONS.folderclose16) : PA_ICONS.folderclose16}</span>
       <span class="gh-title">${esc(g.title)}</span>
       <span class="gh-count">${g.ids.length}</span>
       ${g.ws ? `<span class="gh-actions">
-        <span class="gh-act gh-add" title="在此新建会话">＋</span>
-        <span class="gh-act gh-menu" title="工作区操作">⋯</span>
+        <span class="gh-act gh-add" title="在此新建会话">${PA_ICONS.plus}</span>
+        <span class="gh-act gh-menu" title="工作区操作">${PA_ICONS.ellipsis}</span>
       </span>` : ""}`;
     head.addEventListener("click", (e) => {
       if (e.target.closest(".gh-add") || e.target.closest(".gh-menu")) return;
-      setWsOpen(g.key, !wsOpenState(g.key));
-      wrap.classList.toggle("closed", !wsOpenState(g.key));
+      const next = !wsOpenState(g.key);
+      setWsOpen(g.key, next);
+      wrap.classList.toggle("closed", !next);
+      head.querySelector(".gh-folder").innerHTML = g.ws
+        ? (next ? PA_ICONS.folderopen16 : PA_ICONS.folderclose16)
+        : PA_ICONS.folderclose16;
     });
     if (g.ws) {
       head.querySelector(".gh-add").addEventListener("click", async (e) => {
@@ -610,24 +627,175 @@ function renderGrouped(list) {
   }
 }
 
-// openWorkspaceMenu shows the workspace header action menu (rename / delete).
+// openWorkspaceMenu shows the workspace header action menu (dsh WorkspaceMenu:
+// rename / delete, icon-led).
 function openWorkspaceMenu(g) {
   closeAnyMenu();
   const pop = document.createElement("div");
   pop.className = "si-pop";
   pop.innerHTML = `
-    <button data-act="rename">✏️ 重命名</button>
-    <button data-act="delete" class="danger">🗑 删除工作区</button>`;
-  pop.addEventListener("click", async (e) => {
-    const act = e.target.dataset.act;
+    <button data-act="rename">${PA_ICONS.edit}<span>重命名</span></button>
+    <button data-act="delete" class="danger">${PA_ICONS.trash}<span>删除工作区</span></button>`;
+  pop.addEventListener("click", (e) => {
+    const act = e.target.closest("button")?.dataset.act;
     if (!act) return;
     closeAnyMenu();
     if (act === "rename") openWsDialog("rename", g.key, g.title);
-    if (act === "delete") await deleteWorkspace(g.key);
+    if (act === "delete") deleteWorkspace(g.key);
   });
   document.querySelector(`.ws-group[data-key="${CSS.escape(g.key)}"] .group-head`).appendChild(pop);
   openMenuEl = pop;
 }
+
+// ---- P6.2 drag & drop ordering (dsh DnD: workspace rows + session rows) ----
+// HTML5 native DnD, no dependencies. Only the grouped view is draggable; the
+// flat view keeps its updated_at order (honest boundary). A drop rewrites the
+// whole target group's order via PATCH /api/sessions/order so the manual Sort
+// is consistent, and dragging a session onto another group's header moves it.
+let dragState = null; // {kind:'workspace'|'session', id, groupKey}
+let dropPos = null;   // {kind, anchor, el, groupKey}
+let dropInd = null;
+
+function ensureDropInd() {
+  if (!dropInd) {
+    dropInd = document.createElement("div");
+    dropInd.className = "drop-indicator";
+    document.querySelector(".col-sidebar").appendChild(dropInd);
+  }
+  return dropInd;
+}
+function showDropInd(anchorEl, atBottom) {
+  const ind = ensureDropInd();
+  const col = document.querySelector(".col-sidebar");
+  const cr = col.getBoundingClientRect();
+  const r = anchorEl.getBoundingClientRect();
+  ind.style.top = ((atBottom ? r.bottom : r.top) - cr.top - 2) + "px";
+  ind.style.left = "0px";
+  ind.style.width = cr.width + "px";
+  ind.classList.add("visible");
+}
+function hideDropInd() { if (dropInd) dropInd.classList.remove("visible"); }
+
+function onDragStart(e) {
+  if (groupBy !== "workspace") return;
+  if (e.target.closest(".gh-act")) return;
+  const head = e.target.closest(".group-head");
+  const item = e.target.closest(".session-item");
+  if (head && head.closest(".ws-group") && head.closest(".ws-group").dataset.key !== "__u") {
+    dragState = { kind: "workspace", id: head.closest(".ws-group").dataset.key, groupKey: null };
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", dragState.id);
+    return;
+  }
+  if (item) {
+    dragState = {
+      kind: "session",
+      id: item.dataset.id,
+      groupKey: item.closest(".ws-group")?.dataset.key || "__u",
+    };
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", dragState.id);
+  }
+}
+
+function onDragOver(e) {
+  if (!dragState) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  const item = e.target.closest(".session-item");
+  const head = e.target.closest(".group-head");
+  if (dragState.kind === "session" && item) {
+    const r = item.getBoundingClientRect();
+    const before = e.clientY < r.top + r.height / 2;
+    dropPos = { kind: "session", anchor: before ? "before" : "after", el: item, groupKey: item.closest(".ws-group")?.dataset.key || "__u" };
+    if (before) showDropInd(item);
+    else if (item.nextElementSibling && item.nextElementSibling.classList.contains("session-item")) showDropInd(item.nextElementSibling);
+    else showDropInd(item, true);
+    return;
+  }
+  if (dragState.kind === "session" && head) {
+    const gkey = head.closest(".ws-group").dataset.key;
+    const first = head.parentElement.querySelector(".group-sessions .session-item");
+    dropPos = { kind: "session", anchor: "top", el: first, groupKey: gkey };
+    if (first) showDropInd(first);
+    else showDropInd(head);
+    return;
+  }
+  if (dragState.kind === "workspace" && head && head.closest(".ws-group").dataset.key !== "__u") {
+    const wrap = head.closest(".ws-group");
+    const r = head.getBoundingClientRect();
+    const before = e.clientY < r.top + r.height / 2;
+    dropPos = { kind: "workspace", anchor: before ? "before" : "after", el: wrap };
+    const next = wrap.nextElementSibling;
+    if (before) showDropInd(head);
+    else if (next && next.classList.contains("ws-group")) showDropInd(next.querySelector(".group-head"));
+    else showDropInd(wrap, true);
+    return;
+  }
+  hideDropInd();
+  dropPos = null;
+}
+
+async function onDrop(e) {
+  e.preventDefault();
+  const d = dragState;
+  const pos = dropPos;
+  hideDropInd();
+  dragState = null;
+  dropPos = null;
+  if (!d || !pos) return;
+  try {
+    if (d.kind === "workspace" && pos.kind === "workspace") {
+      const order = [...sessionList.querySelectorAll(".ws-group")]
+        .map((w) => w.dataset.key)
+        .filter((k) => k !== "__u");
+      const from = order.indexOf(d.id);
+      if (from === -1) return;
+      order.splice(from, 1);
+      const to = order.indexOf(pos.el.dataset.key);
+      order.splice(to + (pos.anchor === "after" ? 1 : 0), 0, d.id);
+      await api("/api/workspaces/order", { method: "PATCH", body: JSON.stringify({ ids: order }) });
+      loadSessions();
+      return;
+    }
+    if (d.kind === "session") {
+      const gkey = pos.groupKey;
+      const gEl = sessionList.querySelector(`.ws-group[data-key="${CSS.escape(gkey)}"]`);
+      const visible = gEl ? [...gEl.querySelectorAll(".session-item")].map((li) => li.dataset.id) : [];
+      const shown = new Set(visible);
+      let tail = [];
+      if (gkey !== "__u") {
+        const w = wsGroups.find((x) => x.id === gkey);
+        if (w) tail = w.session_ids.filter((id) => !shown.has(id));
+      } else {
+        tail = wsUngrouped.filter((id) => !shown.has(id));
+      }
+      const at = pos.el ? visible.indexOf(pos.el.dataset.id) : -1;
+      let idx = pos.anchor === "after" ? at + 1 : at;
+      if (pos.anchor === "top") idx = 0;
+      const newOrder = visible.filter((id) => id !== d.id);
+      if (at !== -1 && visible.indexOf(d.id) !== -1 && visible.indexOf(d.id) < at) idx -= 1;
+      if (idx < 0) idx = 0;
+      newOrder.splice(idx, 0, d.id);
+      const full = newOrder.concat(tail);
+      await api("/api/sessions/order", {
+        method: "PATCH",
+        body: JSON.stringify({ workspace_id: gkey === "__u" ? "" : gkey, session_ids: full }),
+      });
+      loadSessions();
+    }
+  } catch (err) { if (err.message !== "unauthorized") console.error(err); }
+}
+
+function onDragEnd() {
+  hideDropInd();
+  dragState = null;
+  dropPos = null;
+}
+sessionList.addEventListener("dragstart", onDragStart);
+sessionList.addEventListener("dragover", onDragOver);
+sessionList.addEventListener("drop", onDrop);
+sessionList.addEventListener("dragend", onDragEnd);
 
 async function deleteWorkspace(id) {
   if (!confirm("删除工作区？其中的会话将移回「未分组」，会话本身不会被删除。")) return;
@@ -710,18 +878,47 @@ function openMenu(li, s) {
   closeAnyMenu();
   const pop = document.createElement("div");
   pop.className = "si-pop";
+  // dsh SessionRowMenu: rename / fork / archive (+ delete as a local extra —
+  // dsh has no delete UI, this is personal-agent's own destructive action).
   pop.innerHTML = `
-    <button data-act="rename">✏️ 重命名</button>
-    <button data-act="delete" class="danger">🗑 删除会话</button>`;
+    <button data-act="rename">${PA_ICONS.edit}<span>重命名</span></button>
+    <button data-act="fork">${PA_ICONS.branch}<span>派生会话</span></button>
+    <button data-act="archive">${PA_ICONS.archive}<span>归档</span></button>
+    <button data-act="delete" class="danger">${PA_ICONS.trash}<span>删除会话</span></button>`;
   pop.addEventListener("click", (e) => {
-    const act = e.target.dataset.act;
+    const act = e.target.closest("button")?.dataset.act;
     if (!act) return;
     closeAnyMenu();
     if (act === "rename") startRename(li, s);
+    if (act === "fork") forkSession(s.id);
+    if (act === "archive") archiveSession(s.id);
     if (act === "delete") deleteSession(s.id);
   });
   li.appendChild(pop);
   openMenuEl = pop;
+}
+
+// forkSession clones the session (POST /api/sessions/{id}/fork, P6.2) and
+// switches to the fresh copy.
+async function forkSession(id) {
+  try {
+    const res = await api(`/api/sessions/${encodeURIComponent(id)}/fork`, { method: "POST" });
+    const body = await res.json();
+    if (!body.id) throw new Error("no id");
+    localStorage.setItem(KEY_CURRENT, body.id);
+    currentID = body.id;
+    await openSession(body.id);
+    loadSessions();
+  } catch (e) { if (e.message !== "unauthorized") console.error(e); }
+}
+
+// archiveSession hides the session from the active tree (P6.2); the log is
+// preserved in the store.
+async function archiveSession(id) {
+  try {
+    await api(`/api/sessions/${encodeURIComponent(id)}/archive`, { method: "POST" });
+    loadSessions();
+  } catch (e) { if (e.message !== "unauthorized") console.error(e); }
 }
 
 function startRename(li, s) {
@@ -1481,6 +1678,7 @@ document.addEventListener("visibilitychange", () => {
 
 // ---- boot ------------------------------------------------------------------------
 function boot() {
+  injectIcons();
   hideLogin();
   workspaceEl.classList.remove("hidden");
   setupDrag();

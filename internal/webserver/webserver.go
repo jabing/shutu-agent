@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"time"
 
@@ -134,12 +135,18 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	// and the SSE event stream all sit behind the same bearer middleware.
 	mux.Handle("POST /api/sessions", s.requireAuth(http.HandlerFunc(s.handleSessionCreate)))
 	mux.Handle("POST /api/sessions/{id}/resume", s.requireAuth(http.HandlerFunc(s.handleSessionResume)))
+	// P6.2: fork (clone into a new session), archive/unarchive, manual order.
+	mux.Handle("POST /api/sessions/{id}/fork", s.requireAuth(http.HandlerFunc(s.handleSessionFork)))
+	mux.Handle("POST /api/sessions/{id}/archive", s.requireAuth(http.HandlerFunc(s.handleSessionArchive)))
+	mux.Handle("POST /api/sessions/{id}/unarchive", s.requireAuth(http.HandlerFunc(s.handleSessionUnarchive)))
+	mux.Handle("PATCH /api/sessions/order", s.requireAuth(http.HandlerFunc(s.handleSessionsOrder)))
 	// P6 workspace grouping (dsh grouped sidebar view): list, create, rename,
-	// delete. The sessions list carries workspace_id so the sidebar groups.
+	// delete, order. The sessions list carries workspace_id so the sidebar groups.
 	mux.Handle("GET /api/workspaces", s.requireAuth(http.HandlerFunc(s.handleWorkspaces)))
 	mux.Handle("POST /api/workspaces", s.requireAuth(http.HandlerFunc(s.handleWorkspaceCreate)))
 	mux.Handle("PATCH /api/workspaces/{id}", s.requireAuth(http.HandlerFunc(s.handleWorkspaceTitle)))
 	mux.Handle("DELETE /api/workspaces/{id}", s.requireAuth(http.HandlerFunc(s.handleWorkspaceDelete)))
+	mux.Handle("PATCH /api/workspaces/order", s.requireAuth(http.HandlerFunc(s.handleWorkspacesOrder)))
 	mux.Handle("POST /api/sessions/{id}/message", s.requireAuth(http.HandlerFunc(s.handleMessage)))
 	// M10 P2 (ADR D-WEB2-I): sidebar session management — rename (PATCH) and
 	// delete (DELETE). PATCH body is {"title": "..."}; an empty title clears the
@@ -374,7 +381,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 // sessionView is the API's minimal owned session metadata (no store refs).
 // M10 W4 (D-WEB2-H) adds the session-list fields the dsh-style sidebar needs:
 // title (first user message, bounded) and blank (no events yet). P6 adds
-// workspace_id for the grouped sidebar view.
+// workspace_id for the grouped sidebar view; P6.2 adds archived and sort.
 type sessionView struct {
 	ID          string    `json:"id"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -383,6 +390,8 @@ type sessionView struct {
 	Title       string    `json:"title,omitempty"`
 	Blank       bool      `json:"blank"`
 	WorkspaceID string    `json:"workspace_id,omitempty"`
+	Archived    bool      `json:"archived,omitempty"`
+	Sort        int       `json:"sort,omitempty"`
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -393,7 +402,11 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]sessionView, 0, len(metas))
 	for _, m := range metas {
-		v := sessionView{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, EventCount: m.EventCount, Blank: m.EventCount == 0, WorkspaceID: m.WorkspaceID}
+		// P6.2: archived sessions leave the active sidebar list (dsh archive).
+		if !m.ArchivedAt.IsZero() {
+			continue
+		}
+		v := sessionView{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, EventCount: m.EventCount, Blank: m.EventCount == 0, WorkspaceID: m.WorkspaceID, Sort: m.Sort}
 		if m.Title != "" {
 			// User-set title (P2 rename) wins over inference.
 			v.Title = boundRunes(m.Title, maxTitle)
@@ -670,6 +683,129 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": newID})
 }
 
+// handleSessionFork implements POST /api/sessions/{id}/fork (P6.2, dsh fork):
+// the session's full event log is cloned into a brand-new session in the same
+// workspace, so the user gets a diverging copy. The clone keeps the title.
+func (s *Server) handleSessionFork(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	events, err := s.store.LoadSession(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "session not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	// Carry the source title and workspace membership over to the clone.
+	srcTitle, srcWorkspace := "", ""
+	if all, err := s.store.ListSessions(r.Context()); err == nil {
+		for _, m := range all {
+			if m.ID == id {
+				srcTitle, srcWorkspace = m.Title, m.WorkspaceID
+				break
+			}
+		}
+	}
+	forkID, err := newSessionID()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := s.store.CreateSession(r.Context(), forkID, time.Now().UTC()); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	// Clone the log with re-sequenced events (the store appends in order).
+	cloned := make([]session.Event, len(events))
+	for i, e := range events {
+		c := e
+		c.Seq = uint64(i + 1)
+		cloned[i] = c
+	}
+	if err := s.store.AppendEvents(r.Context(), forkID, cloned); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if srcTitle != "" {
+		_ = s.store.SetSessionTitle(r.Context(), forkID, srcTitle)
+	}
+	if srcWorkspace != "" {
+		_ = s.store.SetSessionWorkspace(r.Context(), forkID, srcWorkspace)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": forkID})
+}
+
+// newSessionID returns a short random session id (e.g. "s-1a2b3c4d").
+func newSessionID() (string, error) {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return "s-" + hex.EncodeToString(b[:]), nil
+}
+
+// handleSessionArchive implements POST /api/sessions/{id}/archive (P6.2):
+// the session leaves the active sidebar tree; the log is preserved.
+func (s *Server) handleSessionArchive(w http.ResponseWriter, r *http.Request) {
+	s.setArchived(w, r, true)
+}
+
+// handleSessionUnarchive implements POST /api/sessions/{id}/unarchive.
+func (s *Server) handleSessionUnarchive(w http.ResponseWriter, r *http.Request) {
+	s.setArchived(w, r, false)
+}
+
+func (s *Server) setArchived(w http.ResponseWriter, r *http.Request, archived bool) {
+	id := r.PathValue("id")
+	if err := s.store.ArchiveSession(r.Context(), id, archived); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "session not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id, "archived": archived})
+}
+
+// handleSessionsOrder implements PATCH /api/sessions/order
+// {"workspace_id":..., "session_ids":[...]} (P6.2 drag & drop): every listed
+// session moves into the target workspace (empty = ungrouped) and takes the
+// manual sort order 0..n-1, so the grouped tree follows the drop.
+func (s *Server) handleSessionsOrder(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		WorkspaceID string   `json:"workspace_id"`
+		SessionIDs  []string `json:"session_ids"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad request: " + err.Error()})
+		return
+	}
+	if err := s.store.ReorderSessions(r.Context(), body.WorkspaceID, body.SessionIDs); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleWorkspacesOrder implements PATCH /api/workspaces/order {"ids":[...]}
+// (P6.2 drag & drop of workspace rows): sort is rewritten 0..n-1.
+func (s *Server) handleWorkspacesOrder(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad request: " + err.Error()})
+		return
+	}
+	if err := s.store.ReorderWorkspaces(r.Context(), body.IDs); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // maxWorkspaceTitle is the rune cap on workspace titles (P6).
 const maxWorkspaceTitle = 60
 
@@ -696,20 +832,39 @@ func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	metaByID := map[string]store.SessionMeta{}
 	byWorkspace := map[string][]string{}
 	var ungrouped []string
+	// Archived sessions leave every group (dsh archive) — they stay in the DB
+	// for future restore, but the active tree ignores them.
 	for _, m := range metas {
+		if !m.ArchivedAt.IsZero() {
+			continue
+		}
+		metaByID[m.ID] = m
 		if m.WorkspaceID == "" {
 			ungrouped = append(ungrouped, m.ID)
 		} else {
 			byWorkspace[m.WorkspaceID] = append(byWorkspace[m.WorkspaceID], m.ID)
 		}
 	}
-	// ListSessions is already updated_at DESC, so the appended order is recent
-	// first; the ungrouped bucket is a flat account (dsh UNGROUPED_KEY).
+	// A group's session order follows the manual drag (Sort asc, then recent
+	// activity). ReorderSessions rewrites the whole dragged group, so an
+	// untouched group (all Sort 0) degrades to updated_at DESC here.
+	orderGroup := func(ids []string) {
+		sort.SliceStable(ids, func(i, j int) bool {
+			a, b := metaByID[ids[i]], metaByID[ids[j]]
+			if a.Sort != b.Sort {
+				return a.Sort < b.Sort
+			}
+			return a.UpdatedAt.After(b.UpdatedAt)
+		})
+	}
+	orderGroup(ungrouped)
 	out := make([]workspaceView, 0, len(ws))
 	for _, m := range ws {
 		ids := byWorkspace[m.ID]
+		orderGroup(ids)
 		if ids == nil {
 			ids = []string{} // always a JSON array, never null
 		}

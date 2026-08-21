@@ -819,6 +819,96 @@ func TestWorkspaceAPI(t *testing.T) {
 	}
 }
 
+// TestSessionForkArchiveOrder covers P6.2: fork clones the event log, archive
+// leaves the active list, unarchive restores it, and drag order moves/orders
+// sessions and workspaces.
+func TestSessionForkArchiveOrder(t *testing.T) {
+	srv, st := newTestServer(t, "")
+	h := srv.Handler()
+	seedSession(t, st, "s1", []session.Event{
+		{Seq: 1, Type: session.EventUserMessage, Version: 1, At: time.Now().UTC(), Data: []byte(`{"text":"hi"}`)},
+		{Seq: 2, Type: session.EventAssistantMessage, Version: 1, At: time.Now().UTC(), Data: []byte(`{"text":"yo"}`)},
+	})
+	if err := st.CreateWorkspace(context.Background(), "w1", "研究"); err != nil {
+		t.Fatalf("create w1: %v", err)
+	}
+
+	// Fork clones the log into a new session in the same workspace.
+	rec := doReq(t, h, "POST", "/api/sessions/s1/fork", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fork → %d: %s", rec.Code, rec.Body.String())
+	}
+	var fork struct{ ID string `json:"id"` }
+	if err := json.Unmarshal(rec.Body.Bytes(), &fork); err != nil || fork.ID == "" {
+		t.Fatalf("fork resp = %s", rec.Body.String())
+	}
+	events, err := st.LoadSession(context.Background(), fork.ID)
+	if err != nil {
+		t.Fatalf("load fork: %v", err)
+	}
+	if len(events) != 2 || events[0].Seq != 1 || events[1].Seq != 2 || events[0].Type != session.EventUserMessage {
+		t.Fatalf("fork events = %+v", events)
+	}
+	// unknown → 404
+	if rec := doReq(t, h, "POST", "/api/sessions/nope/fork", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("fork unknown → %d, want 404", rec.Code)
+	}
+
+	// Archive removes from the active list; unarchive brings it back.
+	if rec := doReq(t, h, "POST", "/api/sessions/s1/archive", ""); rec.Code != http.StatusOK {
+		t.Fatalf("archive → %d", rec.Code)
+	}
+	rec = doReq(t, h, "GET", "/api/sessions", "")
+	var sl []struct{ ID string `json:"id"` }
+	if err := json.Unmarshal(rec.Body.Bytes(), &sl); err != nil {
+		t.Fatalf("list decode: %v", err)
+	}
+	for _, s := range sl {
+		if s.ID == "s1" {
+			t.Fatal("archived s1 still in active list")
+		}
+	}
+	if rec := doReq(t, h, "POST", "/api/sessions/s1/unarchive", ""); rec.Code != http.StatusOK {
+		t.Fatalf("unarchive → %d", rec.Code)
+	}
+	rec = doReq(t, h, "GET", "/api/sessions", "")
+	sl = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &sl); err != nil {
+		t.Fatalf("list decode 2: %v", err)
+	}
+	found := false
+	for _, s := range sl {
+		if s.ID == "s1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("s1 not restored after unarchive")
+	}
+
+	// Manual order moves sessions into w1 and reorders; then workspace order.
+	if rec := doReqBody(t, h, "PATCH", "/api/sessions/order", "", `{"workspace_id":"w1","session_ids":["s1"]}`); rec.Code != http.StatusOK {
+		t.Fatalf("order sessions → %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, "GET", "/api/workspaces", "")
+	var groups struct {
+		Workspaces []struct {
+			ID         string   `json:"id"`
+			SessionIDs []string `json:"session_ids"`
+		} `json:"workspaces"`
+		UngroupedIDs []string `json:"ungrouped_ids"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &groups); err != nil {
+		t.Fatalf("groups decode: %v", err)
+	}
+	if len(groups.Workspaces[0].SessionIDs) != 1 || groups.Workspaces[0].SessionIDs[0] != "s1" {
+		t.Fatalf("group after order = %+v", groups.Workspaces[0])
+	}
+	if rec := doReqBody(t, h, "PATCH", "/api/workspaces/order", "", `{"ids":["w1"]}`); rec.Code != http.StatusOK {
+		t.Fatalf("order workspaces → %d", rec.Code)
+	}
+}
+
 // TestModelSwitch covers the P5.1 live model switch (POST /api/config/model):
 // an injected switcher receives provider/model and answers 200; an empty body
 // answers 400; a rejected switch (switcher error) answers 400; an unwired

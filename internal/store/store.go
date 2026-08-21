@@ -27,6 +27,12 @@ type SessionMeta struct {
 	// WorkspaceID is the owning workspace (P6 grouping), empty for the
 	// ungrouped bucket.
 	WorkspaceID string
+	// ArchivedAt is non-zero once the session is archived (P6.2 dsh archive):
+	// archived sessions leave the active sidebar list.
+	ArchivedAt time.Time
+	// Sort is the manual drag order (P6.2): zero means "fall back to updated
+	// activity"; a drag sets the whole bucket's order.
+	Sort int
 }
 
 // WorkspaceMeta is the durable metadata of one workspace (P6, dsh workspace
@@ -63,6 +69,15 @@ type Store interface {
 	// workspaceID returns it to the ungrouped bucket. ErrNotFound when the
 	// session id has no row.
 	SetSessionWorkspace(ctx context.Context, sessionID, workspaceID string) error
+	// ArchiveSession marks a session archived (dsh archive: it leaves the
+	// active sidebar list). Unarchive clears the mark. ErrNotFound when the id
+	// has no row.
+	ArchiveSession(ctx context.Context, sessionID string, archived bool) error
+	// ReorderSessions applies a manual order: every listed session is moved
+	// into workspaceID (empty = ungrouped) and assigned sort 0..n-1 in list
+	// order, so the grouped sidebar follows the drag. The group's other
+	// sessions keep their sort untouched.
+	ReorderSessions(ctx context.Context, workspaceID string, sessionIDs []string) error
 	// DeleteSession removes a session and all of its events. ErrNotFound when
 	// the id has no row.
 	DeleteSession(ctx context.Context, sessionID string) error
@@ -76,6 +91,9 @@ type Store interface {
 	// SetWorkspaceTitle stores a workspace's title. ErrNotFound when the id
 	// has no row.
 	SetWorkspaceTitle(ctx context.Context, id, title string) error
+	// ReorderWorkspaces applies a manual order: sort is rewritten 0..n-1 in
+	// list order.
+	ReorderWorkspaces(ctx context.Context, ids []string) error
 	// DeleteWorkspace removes a workspace; its sessions return to the
 	// ungrouped bucket. ErrNotFound when the id has no row.
 	DeleteWorkspace(ctx context.Context, id string) error

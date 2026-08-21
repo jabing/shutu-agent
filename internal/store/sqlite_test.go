@@ -306,3 +306,84 @@ func TestWorkspaceLifecycle(t *testing.T) {
 		}
 	}
 }
+
+// TestArchiveAndOrder covers the P6.2 additions: archive/unarchive toggling,
+// manual session order (with cross-workspace move) and manual workspace order.
+func TestArchiveAndOrder(t *testing.T) {
+	st := openSQLite(t)
+	ctx := context.Background()
+	if err := st.CreateWorkspace(ctx, "w1", "研究"); err != nil {
+		t.Fatalf("create w1: %v", err)
+	}
+	if err := st.CreateWorkspace(ctx, "w2", "日常"); err != nil {
+		t.Fatalf("create w2: %v", err)
+	}
+	for _, id := range []string{"s1", "s2", "s3"} {
+		if err := st.CreateSession(ctx, id, time.Now().UTC()); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+
+	// Archive hides a session from the active set (ArchivedAt set, cleared on
+	// unarchive).
+	if err := st.ArchiveSession(ctx, "s2", true); err != nil {
+		t.Fatalf("archive s2: %v", err)
+	}
+	if err := st.ArchiveSession(ctx, "nope", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("archive unknown: %v, want ErrNotFound", err)
+	}
+	metas, err := st.ListSessions(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, m := range metas {
+		if m.ID == "s2" && m.ArchivedAt.IsZero() {
+			t.Fatal("s2 should be archived")
+		}
+		if m.ID != "s2" && !m.ArchivedAt.IsZero() {
+			t.Fatalf("%s should not be archived", m.ID)
+		}
+	}
+	if err := st.ArchiveSession(ctx, "s2", false); err != nil {
+		t.Fatalf("unarchive s2: %v", err)
+	}
+
+	// Manual session order moves sessions across workspaces and assigns Sort.
+	if err := st.ReorderSessions(ctx, "w1", []string{"s2", "s1", "s3"}); err != nil {
+		t.Fatalf("reorder sessions: %v", err)
+	}
+	metas, _ = st.ListSessions(ctx)
+	byID := map[string]SessionMeta{}
+	for _, m := range metas {
+		byID[m.ID] = m
+	}
+	for i, id := range []string{"s2", "s1", "s3"} {
+		if byID[id].WorkspaceID != "w1" || byID[id].Sort != i {
+			t.Fatalf("%s = ws %q sort %d, want w1 sort %d", id, byID[id].WorkspaceID, byID[id].Sort, i)
+		}
+	}
+	// Moving back to ungrouped with a new order.
+	if err := st.ReorderSessions(ctx, "", []string{"s3", "s2"}); err != nil {
+		t.Fatalf("reorder to ungrouped: %v", err)
+	}
+	metas, _ = st.ListSessions(ctx)
+	byID = map[string]SessionMeta{}
+	for _, m := range metas {
+		byID[m.ID] = m
+	}
+	if byID["s3"].WorkspaceID != "" || byID["s3"].Sort != 0 {
+		t.Fatalf("s3 after move = ws %q sort %d, want ungrouped sort 0", byID["s3"].WorkspaceID, byID["s3"].Sort)
+	}
+
+	// Manual workspace order.
+	if err := st.ReorderWorkspaces(ctx, []string{"w2", "w1"}); err != nil {
+		t.Fatalf("reorder workspaces: %v", err)
+	}
+	ws, err := st.ListWorkspaces(ctx)
+	if err != nil {
+		t.Fatalf("list ws: %v", err)
+	}
+	if ws[0].ID != "w2" || ws[1].ID != "w1" {
+		t.Fatalf("workspace order = %s,%s, want w2,w1", ws[0].ID, ws[1].ID)
+	}
+}
