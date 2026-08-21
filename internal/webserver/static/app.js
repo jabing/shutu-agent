@@ -32,7 +32,7 @@ const settingsEl = $("settings"), placeholderEl = $("placeholder");
 
 // ---- state ---------------------------------------------------------------
 let currentID = localStorage.getItem(KEY_CURRENT) || "";
-let layout = { sidebar: SIDEBAR_DEFAULT, narrow: false, dragging: false };
+let layout = { sidebar: SIDEBAR_DEFAULT, manual: false, narrowViewport: false, dragging: false };
 let sseAbort = null;            // AbortController for the current session stream
 let sseReconnect = null;        // timer handle
 let streamState = null;         // {seq, node} for the assistant bubble being built
@@ -92,25 +92,45 @@ function initThemeSystem() {
   });
 }
 
-// ---- layout: frame grid + drag + narrow -----------------------------------
+// ---- layout: frame grid + drag + narrow (dsh ui-layout columns + the
+//      sidebar toggle from the logo row) -------------------------------------
+// The rail is reached either automatically (viewport < SIDEBAR_AUTO_COLLAPSE)
+// or by the manual panel toggle; auto-collapse is the only force when the
+// viewport is narrow, manual is the only force otherwise.
+function sidebarCollapsed() { return layout.narrowViewport || layout.manual; }
 function renderColumns() {
+  const collapsed = sidebarCollapsed();
   frameEl.style.gridTemplateColumns =
-    (layout.narrow ? SIDEBAR_COLLAPSED : layout.sidebar) + "px minmax(0, 1fr) 0px";
-  frameEl.dataset.sidebarCollapsed = String(layout.narrow);
+    (collapsed ? SIDEBAR_COLLAPSED : layout.sidebar) + "px minmax(0, 1fr) 0px";
+  frameEl.dataset.sidebarCollapsed = String(collapsed);
   frameEl.dataset.detailsCollapsed = "true";
+  const h = document.querySelector(".drag-handle");
+  if (h) h.style.left = (collapsed ? SIDEBAR_COLLAPSED : layout.sidebar) + "px";
 }
 function clampSidebar(v) { return Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, v)); }
+function syncSidebarToggle() {
+  const collapsed = sidebarCollapsed();
+  const t = $("sidebar-toggle");
+  if (t) t.title = collapsed ? "展开侧栏" : "折叠侧栏";
+  const b = $("brand");
+  if (b) b.title = collapsed ? "展开侧栏" : "新建会话";
+}
+function toggleSidebar() {
+  layout.manual = !sidebarCollapsed();
+  renderColumns();
+  syncSidebarToggle();
+}
 
 function setupDrag() {
   const handle = document.createElement("div");
   handle.className = "drag-handle";
   handle.dataset.side = "sidebar";
   frameEl.appendChild(handle);
-  handle.style.left = (layout.narrow ? SIDEBAR_COLLAPSED : layout.sidebar) + "px";
+  handle.style.left = (sidebarCollapsed() ? SIDEBAR_COLLAPSED : layout.sidebar) + "px";
 
   let origin = 0, base = layout.sidebar, frame = null;
   handle.addEventListener("pointerdown", (e) => {
-    if (layout.narrow) return; // no handle while collapsed
+    if (sidebarCollapsed()) return; // no handle while collapsed
     e.preventDefault();
     handle.setPointerCapture(e.pointerId);
     origin = e.clientX;
@@ -125,7 +145,6 @@ function setupDrag() {
       frame = null;
       layout.sidebar = clampSidebar(base + (e.clientX - origin));
       renderColumns();
-      handle.style.left = layout.sidebar + "px";
     });
   });
   const end = () => {
@@ -143,10 +162,9 @@ function setupDrag() {
 function setupNarrow() {
   const ro = new ResizeObserver(() => {
     const w = frameEl.clientWidth;
-    layout.narrow = w < SIDEBAR_AUTO_COLLAPSE;
+    layout.narrowViewport = w < SIDEBAR_AUTO_COLLAPSE;
     renderColumns();
-    const h = document.querySelector(".drag-handle");
-    if (h) h.style.left = (layout.narrow ? SIDEBAR_COLLAPSED : layout.sidebar) + "px";
+    syncSidebarToggle();
   });
   ro.observe(frameEl);
 }
@@ -375,6 +393,45 @@ scrollBottomBtn.addEventListener("click", () => { scrollToBottom(true); });
 // ---- session list (P2: dsh ui-workspace single-line rows) -------------------
 let searchQuery = "";
 let streamActive = false; // a streaming assistant turn is in flight
+// dsh ui-workspace search affordance: a section-header icon that expands into
+// an inline input (wide), and a 36px rail icon that expands the sidebar and
+// lands focus in the input (rail). A non-empty query pins the expansion open.
+const wsSearchEl = $("ws-search"), searchToggle = $("search-toggle"),
+  searchInput = $("session-search"), searchClear = $("search-clear");
+function setSearchExpanded(on) {
+  wsSearchEl.classList.toggle("expanded", on);
+  searchClear.hidden = !on;
+  if (on) { searchInput.tabIndex = 0; searchInput.focus(); }
+  else { searchInput.tabIndex = -1; searchInput.blur(); }
+}
+searchToggle.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (sidebarCollapsed()) toggleSidebar();   // rail gesture: expand first
+  setSearchExpanded(true);
+});
+searchInput.addEventListener("input", (e) => {
+  searchQuery = e.target.value;
+  loadSessions();
+});
+searchClear.addEventListener("click", (e) => {
+  e.stopPropagation();
+  searchQuery = ""; searchInput.value = "";
+  loadSessions();
+  setSearchExpanded(false);
+});
+searchInput.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  e.stopPropagation();
+  searchQuery = ""; searchInput.value = "";
+  loadSessions();
+  setSearchExpanded(false);
+});
+document.addEventListener("click", (e) => {
+  if (!wsSearchEl.classList.contains("expanded")) return;
+  if (e.target.closest("#ws-search")) return;
+  if (searchQuery) return; // keep a live filter pinned
+  setSearchExpanded(false);
+});
 
 // fmtShort: sidebar relative/compact time (dsh ui-workspace relativeTime).
 function fmtShort(iso) {
@@ -440,10 +497,6 @@ function closeAnyMenu() {
   document.querySelectorAll(".session-item.renaming").forEach((el) => el.classList.remove("renaming"));
 }
 document.addEventListener("click", (e) => { if (!e.target.closest(".si-pop")) closeAnyMenu(); });
-$("session-search").addEventListener("input", (e) => {
-  searchQuery = e.target.value;
-  loadSessions();
-});
 
 function openMenu(li, s) {
   closeAnyMenu();
@@ -1225,6 +1278,7 @@ function boot() {
   setupDrag();
   setupNarrow();
   renderColumns();
+  syncSidebarToggle();
   initThemeSystem();
   applyTheme();
   syncGrow();
@@ -1246,6 +1300,13 @@ loginForm.addEventListener("submit", async (e) => {
   await boot();
 });
 newSessionBtn.addEventListener("click", () => newSession());
+// Brand button: a New-Session shortcut while wide, an expand affordance in the
+// rail (dsh SidebarRoot brand). The panel toggle folds/expands the column.
+$("brand").addEventListener("click", () => {
+  if (sidebarCollapsed()) toggleSidebar();
+  else newSession();
+});
+$("sidebar-toggle").addEventListener("click", toggleSidebar);
 $("settings-link").addEventListener("click", () => location.hash = "#/settings");
 $("theme-toggle").addEventListener("click", toggleTheme);
 $("theme-toggle-settings").addEventListener("click", toggleTheme);

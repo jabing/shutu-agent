@@ -164,7 +164,14 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
   background: var(--dsw-specific-sidebar-fill);
   border-right: 1px solid var(--dsw-alias-border-l1);
   position: relative;
+  /* dsh ui-sidebar root: 6px 12px inset; the rail block overrides it. */
+  padding: 6px 12px; box-sizing: border-box;
 }
+/* sidebar scroll regions draw a slim themed bar (dsh quiet scrollbars). */
+.col-sidebar ::-webkit-scrollbar { width: 8px; }
+.col-sidebar ::-webkit-scrollbar-thumb { background: var(--dsw-alias-scrollbar-bg-l2); border-radius: 4px; }
+.col-sidebar ::-webkit-scrollbar-thumb:hover { background: var(--dsw-alias-scrollbar-hover-l2); }
+.col-sidebar { scrollbar-width: thin; scrollbar-color: var(--dsw-alias-scrollbar-bg-l2) transparent; }
 .frame > .col-center {
   min-width: 0; display: flex; flex-direction: column; overflow: hidden;
   position: relative;
@@ -190,45 +197,103 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
   border-color: var(--dsw-alias-border-l3);
 }
 
-/* ---- sidebar ---- */
-.sidebar-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px 6px;
+/* ---- sidebar (dsh ui-sidebar shell: logo row 60px, 38px New Session bar,
+   section header 36px, session rows 32px, foot) ---- */
+.logo-row {
+  flex: none; display: flex; align-items: center; justify-content: flex-end;
+  gap: 8px; height: 60px; padding: 8px 0; margin-bottom: 8px;
+  box-sizing: border-box; overflow: hidden;
 }
-.brand { font-weight: 600; font-size: 15px; white-space: nowrap; }
-.btn-new {
-  background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-bg-base);
-  border: none; border-radius: var(--dsw-radius-s);
-  font-size: 12px; font-weight: 500; padding: 4px 10px;
+.brand {
+  flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 8px;
+  height: 24px; padding: 0; border: none; background: transparent;
+  color: var(--dsw-alias-label-primary); cursor: pointer; overflow: hidden;
 }
-.btn-new:hover { filter: brightness(1.1); }
+.brand-mark { flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.brand-name {
+  display: inline-flex; align-items: center; min-width: 0; height: 24px;
+  font-size: 18px; font-weight: 600; line-height: 24px; letter-spacing: 0.04em;
+  white-space: nowrap; overflow: hidden;
+}
+.icon-button {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border: none; border-radius: 50%; padding: 0;
+  background: transparent; cursor: pointer; color: var(--dsw-alias-label-secondary);
+}
+.icon-button:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 
-/* search box (ui-workspace search affordance) */
-.session-search { padding: 0 14px 8px; }
-.session-search input {
-  width: 100%; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
-  border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-s);
-  padding: 5px 10px; font-size: 12px; outline: none;
+/* New Session: 38px elevated bar (dsh ui-sidebar .newSession) */
+.new-session-bar {
+  flex: none; display: flex; align-items: center; justify-content: center; gap: 6px;
+  height: 38px; padding: 8px 16px; margin: 0 0 8px; box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px;
+  background: var(--dsw-alias-button-elevated-fill);
+  color: var(--dsw-alias-label-primary); font-size: 14px; font-weight: 500;
+  line-height: 22px; cursor: pointer; overflow: hidden;
 }
-.session-search input:focus { border-color: var(--dsw-alias-state-business-primary); }
-.session-search input::placeholder { color: var(--dsw-alias-label-caption); }
+.new-session-bar:hover { background: var(--dsw-alias-button-floating-hover); }
+.ns-label { max-width: 200px; overflow: hidden; white-space: nowrap; }
 
-/* session rows: dsh ui-workspace single-line rows (32px), state dot + title
-   + relative time, hover reveals the ⋯ menu (rename / delete). */
+/* Section header (dsh WorkspaceBrowser .sectionHeader): 会话 label + an inline
+   search icon that expands into an input (180ms width transition). */
+.ws-header {
+  flex: none; display: flex; align-items: center; justify-content: flex-end;
+  gap: 4px; height: 36px; padding-left: 0; margin: 2px 0 4px;
+  box-sizing: border-box; border-radius: 12px; overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+}
+.ws-label {
+  flex: none; min-width: 0; overflow: hidden; white-space: nowrap;
+  line-height: 20px; color: var(--dsw-alias-label-tertiary);
+  transition: max-width 180ms cubic-bezier(0.4, 0, 0.2, 1), opacity 120ms, margin-right 180ms;
+}
+.ws-search {
+  flex: 1; min-width: 0; display: flex; align-items: center; margin-left: auto;
+  height: 28px; border: none; border-radius: 50%; background: transparent;
+  color: var(--dsw-alias-label-secondary); cursor: text; overflow: hidden;
+  transition: max-width 180ms cubic-bezier(0.4, 0, 0.2, 1), border-color 180ms, border-radius 180ms, background-color 180ms;
+}
+.ws-search-btn {
+  width: 28px; height: 28px; color: inherit; flex: none;
+}
+.ws-search.expanded {
+  max-width: 100%; height: 30px; border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px; color: var(--dsw-alias-label-caption);
+}
+/* Expanded search hides the section label (dsh sectionLabelHidden) */
+.ws-header:has(.ws-search.expanded) .ws-label {
+  max-width: 0; margin-right: -4px; opacity: 0;
+}
+.ws-search input {
+  flex: 1; min-width: 0; width: 0; border: none; outline: none; background: transparent;
+  opacity: 0; pointer-events: none; font-size: 13px; line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+  transition: opacity 120ms;
+}
+.ws-search.expanded input { margin-left: -2px; opacity: 1; pointer-events: auto; }
+.ws-search input::placeholder { color: var(--dsw-alias-label-tertiary); }
+.ws-clear {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border: none; border-radius: 50%; padding: 0;
+  background: transparent; cursor: pointer; color: var(--dsw-alias-label-secondary);
+}
+.ws-clear:hover { background: var(--dsw-alias-interactive-bg-hover); }
+
+/* session rows: dsh ui-workspace single-line rows (32px, radius 8), state
+   dot + title + relative time, hover reveals the ⋯ menu (rename / delete).
+   The selected row reuses the hover fill (dsh .sessionRow.selected), not a
+   brand-tinted highlight. */
 .session-list {
-  list-style: none; margin: 0; padding: 4px 8px; flex: 1; overflow-y: auto;
+  list-style: none; margin: 0; padding: 4px 0 16px; flex: 1; overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .session-item {
   position: relative;
-  display: flex; align-items: center; gap: 8px;
-  height: 32px; padding: 0 8px; margin-bottom: 1px;
-  border-radius: var(--dsw-radius-s); cursor: pointer;
+  display: flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 8px; margin-bottom: 2px;
+  border-radius: 8px; cursor: pointer; user-select: none;
 }
-.session-item:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.session-item.active {
-  background: var(--dsw-alias-state-business-tertiary);
-}
-.session-item.active .si-title { color: var(--dsw-alias-label-primary); }
+.session-item:hover, .session-item.active { background: var(--dsw-alias-interactive-bg-hover); }
 .si-dot {
   flex: none; width: 6px; height: 6px; border-radius: 50%;
   background: var(--dsw-alias-label-caption);
@@ -237,18 +302,20 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
 .si-dot[data-state="done"] { background: var(--dsw-alias-state-success-primary); }
 .si-title {
   flex: 1; min-width: 0;
-  font-size: 13px; color: var(--dsw-alias-label-secondary);
+  font-size: 14px; color: var(--dsw-alias-label-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .si-title.empty { color: var(--dsw-alias-label-caption); font-style: italic; }
-.si-time { font-size: 11px; color: var(--dsw-alias-label-caption); flex: none; }
+.si-time { font-size: 12px; color: var(--dsw-alias-label-tertiary); flex: none; }
 .si-menu {
-  flex: none; width: 22px; height: 22px; border: none; border-radius: var(--dsw-radius-s);
+  flex: none; width: 22px; height: 22px; border: none; border-radius: 4px;
   background: transparent; color: var(--dsw-alias-label-tertiary); font-size: 14px;
-  opacity: 0; line-height: 1;
+  display: none; line-height: 1;
 }
-.session-item:hover .si-menu, .session-item.active .si-menu { opacity: 1; }
-.si-menu:hover { background: var(--dsw-alias-interactive-bg-hover-solid); color: var(--dsw-alias-label-primary); }
+/* dsh row hover: time yields to the actions button */
+.session-item:hover .si-menu { display: inline-flex; align-items: center; justify-content: center; }
+.session-item:hover .si-time { display: none; }
+.si-menu:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 
 /* inline rename input replaces the title row */
 .session-item.renaming { cursor: text; }
@@ -274,17 +341,25 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
 .si-pop button.danger { color: var(--dsw-alias-state-error-primary); }
 .si-pop button.danger:hover { background: var(--dsw-alias-interactive-bg-hover-danger); }
 
+/* Sidebar foot (dsh ui-sidebar footArea): additive actions stack above
+   settings; both collapse to centered icons in the rail. */
 .sidebar-foot {
-  display: flex; gap: 12px; padding: 10px 14px;
-  border-top: 1px solid var(--dsw-alias-border-l1);
-  font-size: 13px; color: var(--dsw-alias-label-tertiary);
+  flex: none; display: flex; flex-direction: column; gap: 0;
+  padding: 8px 0 10px; border-top: 1px solid var(--dsw-alias-border-l1);
 }
-.sidebar-foot a, .sidebar-foot .foot-tab { color: var(--dsw-alias-label-tertiary); }
-.sidebar-foot a:hover, .sidebar-foot .foot-tab:hover { color: var(--dsw-alias-label-primary); }
-.foot-tab {
-  background: transparent; border: none; padding: 0; font: inherit; cursor: pointer;
+.foot-actions, .foot-settings {
+  display: flex; gap: 2px; min-width: 0; width: 100%;
 }
-.foot-tab.active { color: var(--dsw-alias-state-business-primary); }
+.foot-action {
+  flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px; height: 32px; padding: 0 8px; border: none; border-radius: 8px;
+  background: transparent; font: inherit; font-size: 13px; cursor: pointer;
+  color: var(--dsw-alias-label-tertiary); text-decoration: none; overflow: hidden;
+}
+.foot-action:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.foot-ico { flex: none; font-size: 14px; }
+.foot-label { min-width: 0; white-space: nowrap; overflow: hidden; }
+#runs-tab.active { color: var(--dsw-alias-state-business-primary); }
 
 /* ---- P4: runs panel (subagents + background jobs) ---- */
 .runs-panel {
@@ -380,22 +455,62 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
   .runs-refresh.spinning { animation: none; }
 }
 
-/* narrow rail (56px): brand / new / search / rows / foot text collapse */
-.frame[data-sidebar-collapsed="true"] > .col-sidebar .brand,
-.frame[data-sidebar-collapsed="true"] > .col-sidebar .btn-new,
-.frame[data-sidebar-collapsed="true"] > .col-sidebar .session-search,
-.frame[data-sidebar-collapsed="true"] > .col-sidebar .session-item,
-.frame[data-sidebar-collapsed="true"] > .col-sidebar .sidebar-foot a { display: none; }
+/* narrow rail (56px, dsh ui-sidebar rail): the logo row keeps the brand mark
+   (the expand affordance) and drops the name + panel toggle; the New Session
+   bar, section-header search, session rows and foot collapse to icons. */
+.frame[data-sidebar-collapsed="true"] > .col-sidebar { padding: 18px 10px 6px; }
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .logo-row {
+  height: 36px; padding: 0; margin-bottom: 12px; justify-content: flex-start;
+}
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .brand-name,
+.frame[data-sidebar-collapsed="true"] > .col-sidebar #sidebar-toggle,
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .ns-label,
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .ws-label { display: none; }
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .icon-button {
+  width: 36px; height: 36px; color: var(--dsw-alias-label-primary);
+}
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .brand {
+  flex: none; justify-content: center; width: 36px; height: 36px;
+}
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .new-session-bar {
+  align-self: flex-start; width: 36px; height: 36px; padding: 0; margin: 0 0 12px;
+  gap: 0; border-color: transparent; background: transparent;
+}
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .new-session-bar:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .ws-header {
+  margin-bottom: 12px; padding-left: 0; justify-content: flex-start;
+}
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .ws-search {
+  flex: none; max-width: 36px; margin-left: 0;
+}
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .ws-search.expanded { max-width: 36px; border-radius: 50%; border-color: transparent; }
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .ws-search-btn { width: 36px; height: 36px; }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .session-list { padding: 8px 0; }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .session-item {
-  display: block; height: 40px; margin: 2px 8px; padding: 0;
-  border-radius: var(--dsw-radius-s); position: relative;
+  display: flex; align-items: center; justify-content: center; height: 40px;
+  margin: 2px 8px; padding: 0; border-radius: 8px; position: relative;
 }
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .session-item .si-title,
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .session-item .si-time,
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .session-item .si-menu { display: none; }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .session-item.active::after {
   content: ""; position: absolute; left: 50%; top: 50%;
   transform: translate(-50%, -50%); width: 6px; height: 6px; border-radius: 50%;
   background: var(--dsw-alias-state-business-primary);
 }
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .sidebar-foot {
+  align-items: center; padding: 8px 0 10px;
+}
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .foot-actions,
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .foot-settings {
+  justify-content: center; width: auto;
+}
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .foot-action {
+  flex: none; width: 36px; height: 36px; padding: 0;
+}
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .foot-label { display: none; }
 
 /* ---- topbar ---- */
 .topbar {

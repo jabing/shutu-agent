@@ -25,15 +25,66 @@
        below 1024px; details stays mounted at 0 width. -->
   <div id="workspace" class="workspace hidden">
     <div id="frame" class="frame" data-sidebar-collapsed="false" data-details-collapsed="true">
-      <!-- Sidebar column: session list (P1) + new button + foot nav. -->
+      <!-- Sidebar column (dsh ui-sidebar shell: logoRow → New Session bar →
+           section header → session list → foot). -->
       <section class="col-sidebar" aria-label="会话侧栏">
-        <div class="sidebar-head">
-          <div class="brand" id="brand">Personal&nbsp;Agent</div>
-          <button id="new-session" class="btn-new" title="新建会话">＋ 新建</button>
+        <!-- Brand row (dsh SidebarRoot logoRow, 60px): the brand button is a
+             New-Session shortcut; the panel toggle folds to the 56px rail. -->
+        <div class="logo-row">
+          <button id="brand" class="brand" title="新建会话" type="button">
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24">
+                <defs>
+                  <linearGradient id="pa-grad" x1="4" y1="4" x2="20" y2="20" gradientUnits="userSpaceOnUse">
+                    <stop stop-color="var(--dsw-alias-state-business-primary)"/>
+                    <stop offset="1" stop-color="#7c6cf0"/>
+                  </linearGradient>
+                </defs>
+                <circle cx="12" cy="12" r="10" fill="url(#pa-grad)"/>
+                <circle cx="12" cy="12" r="3.4" fill="var(--dsw-alias-bg-base)"/>
+              </svg>
+            </span>
+            <span class="brand-name">Personal Agent</span>
+          </button>
+          <button id="sidebar-toggle" class="icon-button" title="折叠侧栏" type="button">
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor"
+                 stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
+              <path d="M2 3.2h12M2 8h7M2 12.8h12"/>
+            </svg>
+          </button>
         </div>
-        <div class="session-search">
-          <input id="session-search" type="search" placeholder="搜索会话…" autocomplete="off" spellcheck="false">
+
+        <!-- New Session bar (dsh 38px elevated bar; rail keeps the icon). -->
+        <button id="new-session" class="new-session-bar" title="新建会话" type="button">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+            <path d="M8 3.5v9M3.5 8h9"/>
+          </svg>
+          <span class="ns-label">新会话</span>
+        </button>
+
+        <!-- Section header (dsh WorkspaceBrowser sectionHeader): 会话 label +
+             a search icon that expands into an inline input. -->
+        <div class="ws-header">
+          <span class="ws-label">会话</span>
+          <div class="ws-search" id="ws-search">
+            <button id="search-toggle" class="icon-button ws-search-btn" title="搜索会话" type="button">
+              <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor"
+                   stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
+                <circle cx="7" cy="7" r="4.4"/><path d="M10.6 10.6 14 14"/>
+              </svg>
+            </button>
+            <input id="session-search" type="text" placeholder="搜索会话…" autocomplete="off"
+                   spellcheck="false" tabindex="-1" aria-label="搜索会话">
+            <button id="search-clear" class="ws-clear" title="清除" type="button" tabindex="-1" hidden>
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
+                   stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+                <path d="M4 4l8 8M12 4l-8 8"/>
+              </svg>
+            </button>
+          </div>
         </div>
+
         <ul id="session-list" class="session-list"></ul>
         <!-- P4: runs panel (subagents + background jobs), anchored above the
              sidebar foot. Global snapshot view — dsh renders these as popover
@@ -52,10 +103,17 @@
             <div id="runs-jobs" class="runs-body" aria-live="polite"></div>
           </div>
         </div>
+        <!-- Sidebar foot (dsh footArea): additive actions stack above settings. -->
         <nav class="sidebar-foot">
-          <button id="runs-tab" class="foot-tab" title="子代理与后台任务">🧩 运行</button>
-          <a href="#/settings" title="设置">⚙ 设置</a>
-          <a href="#/kb" title="知识库">📚 知识库</a>
+          <div class="foot-actions">
+            <button id="runs-tab" class="foot-action" title="子代理与后台任务" type="button">
+              <span class="foot-ico" aria-hidden="true">🧩</span><span class="foot-label">运行</span>
+            </button>
+          </div>
+          <div class="foot-settings">
+            <a href="#/settings" class="foot-action" title="设置"><span class="foot-ico" aria-hidden="true">⚙</span><span class="foot-label">设置</span></a>
+            <a href="#/kb" class="foot-action" title="知识库"><span class="foot-ico" aria-hidden="true">📚</span><span class="foot-label">知识库</span></a>
+          </div>
         </nav>
       </section>
 
