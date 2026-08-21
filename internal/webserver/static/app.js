@@ -1648,6 +1648,8 @@ async function route() {
 window.addEventListener("hashchange", () => route());
 
 // ---- P4: runs panel (subagents + background jobs, dsh ui-subagent / ui-jobs)
+// The sidebar shortcut was removed on user request; the panel logic stays for
+// a future entry (runs-tab is gone, so the panel is currently unreachable).
 // ----------------------------------------------------------------------------
 const runsPanel = $("runs-panel"), runsTab = $("runs-tab"),
       runsSubs = $("runs-subs"), runsJobs = $("runs-jobs"), runsRefresh = $("runs-refresh");
@@ -1675,7 +1677,7 @@ function toggleRuns(force) {
   if (next === runsOpen) return;
   runsOpen = next;
   runsPanel.classList.toggle("hidden", !runsOpen);
-  runsTab.classList.toggle("active", runsOpen);
+  if (runsTab) runsTab.classList.toggle("active", runsOpen);
   if (runsOpen) {
     loadRuns();
     startRunsTimers();
@@ -1790,11 +1792,10 @@ async function loadRuns() {
   }
 }
 
-runsTab.addEventListener("click", (e) => { e.stopPropagation(); toggleRuns(); });
+if (runsTab) runsTab.addEventListener("click", (e) => { e.stopPropagation(); toggleRuns(); });
 runsRefresh.addEventListener("click", (e) => { e.stopPropagation(); loadRuns(); });
 runsPanel.addEventListener("click", (e) => e.stopPropagation());
-document.addEventListener("click", (e) => { if (!e.target.closest("#runs-panel, #runs-tab")) toggleRuns(false); });
-document.addEventListener("visibilitychange", () => {
+document.addEventListener("click", (e) => { if (!e.target.closest("#runs-panel, #runs-tab")) toggleRuns(false); });document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") stopRunsTimers();
   else if (runsOpen) startRunsTimers();
 });
