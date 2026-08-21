@@ -1604,17 +1604,21 @@ function renderGeneral(c) {
 
 // Model settings page (M11: dsh ModelsSection) — provider row-cards, one per
 // known provider: every built-in (deepseek always; openai/anthropic even when
-// their env key is absent, so the 增加提供方 setup flow can configure them) plus
-// every M11 custom OpenAI-compatible provider. Each row shows the display name,
-// a 自定义 tag for custom providers, the active tag, a credential dot
-// (configured = a key is present in settings or env → green, missing → red),
-// the configured model, and a 编辑 action that opens the provider's editor card
-// in place (model ID + base URL + API Key input, Apply switches provider/model
-// live — P5.1 — and saves the key — M11). Keys default from the environment
-// variable; a key entered here takes precedence (配置后以配置的为准, user 2026-09).
+// their env key is absent) plus every M11 custom OpenAI-compatible provider.
+// Each row shows the display name, a 自定义 tag for custom providers, the active
+// tag, a credential dot (configured = a key is present in settings or env →
+// green, missing → red), the configured model, and actions: 编辑 (registered
+// provider, opens model + key editor), 增加 (dormant built-in, opens the key-only
+// setup card), 删除 (custom only). The 增加提供方 button opens a picker of the
+// existing dormant built-in providers — dsh's add flow: choose a provider, then
+// just enter its API key. 增加自定义提供方 declares a brand-new OpenAI-compatible
+// endpoint. Keys default from the environment variable; a key entered here takes
+// precedence (配置后以配置的为准, user 2026-09).
 const PROVIDER_ENV = { deepseek: "DEEPSEEK_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY" };
-let modelEditing = null; // provider id currently open in its editor card
-let customAdding = false; // true while the 增加自定义提供方 create card is open
+let modelEditing = null;   // provider id currently open in its full editor card
+let addingPicker = false;  // true while the 增加提供方 provider picker is open
+let addingKeyId = null;    // provider id currently open in its key-only setup card
+let customAdding = false;  // true while the 增加自定义提供方 create card is open
 
 function renderModel(c) {
   const sec = settingsSectionEl();
@@ -1625,6 +1629,9 @@ function renderModel(c) {
   // active one keeps its place among the configured rows.
   const sorted = providers.sort((a, b) => (Number(b.configured) - Number(a.configured)) || (Number(b.registered) - Number(a.registered)));
   const envName = (id) => PROVIDER_ENV[id] || (id.toUpperCase().replace(/-/g, "_") + "_API_KEY");
+  // Dormant built-in providers = known but not yet registered (no key): these
+  // are the dsh "addable" providers offered by 增加提供方.
+  const dormant = sorted.filter((p) => !p.custom && !p.registered);
 
   let t = `<h2>模型</h2>
     <p class="intro">配置 API Key 后即可使用以下提供方。切换提供方 / 模型即时生效（下一条消息即用新模型）；Key 默认从环境变量读取，在本页填入的 Key 以配置值为准（覆盖环境变量）。</p>
@@ -1634,7 +1641,7 @@ function renderModel(c) {
     const name = PROVIDER_DISPLAY[p.id] || p.name || p.id;
     const active = p.id === currentProvider;
     if (modelEditing === p.id) {
-      // Editor card (dsh rowCard→editor swap): the one open card owns its state.
+      // Full editor card (dsh rowCard→editor swap): model + base URL + API Key.
       const candOpts = (p.candidates || []).map((m) => `<option value="${esc(m)}">${esc(MODEL_DISPLAY[m] || m)}</option>`).join("");
       const curModel = active ? currentModel : (p.model || "");
       t += `<li class="m-rowcard m-editing">
@@ -1676,12 +1683,72 @@ function renderModel(c) {
           </span>
           <span class="m-rowmodel muted">${esc(p.model || "")}</span>
           <span class="m-rowactions">
-            <button type="button" class="m-btn m-secondary" data-edit="${esc(p.id)}">${p.registered ? "编辑" : "增加"}</button>
+            ${p.registered
+              ? `<button type="button" class="m-btn m-secondary" data-edit="${esc(p.id)}">编辑</button>`
+              : `<button type="button" class="m-btn m-secondary" data-addkey="${esc(p.id)}">增加</button>`}
             ${p.custom ? `<button type="button" class="m-btn m-secondary m-danger" data-del="${esc(p.id)}">删除</button>` : ""}
           </span>
         </div>
       </li>`;
     }
+  }
+
+  // 增加提供方 picker: choose an existing dormant built-in provider.
+  if (addingPicker) {
+    t += `<li class="m-rowcard m-editing">
+      <div class="m-editor">
+        <div class="m-editorhead">
+          <span class="m-editortitle">增加提供方</span>
+          <span class="m-editorroute">选择已有提供方</span>
+        </div>
+        ${dormant.length
+          ? `<p class="m-notice">选择要启用的提供方，然后只需输入 API Key。</p>
+             <div class="m-picklist">` + dormant.map((p) => `
+               <button type="button" class="m-btn m-secondary m-pick" data-pick="${esc(p.id)}">
+                 <span>${esc(PROVIDER_DISPLAY[p.id] || p.id)}</span>
+                 <span class="m-pickhint">${esc(envName(p.id))}</span>
+               </button>`).join("") + `</div>`
+          : `<p class="m-notice">没有可增加的内置提供方（已全部配置）。可改用「增加自定义提供方」。</p>`}
+        <div class="m-editoractions">
+          <button type="button" class="m-btn m-secondary" id="m-model-cancel">取消</button>
+        </div>
+      </div>
+    </li>`;
+  }
+
+  // Key-only setup card for a picked dormant provider (dsh addCard): just the
+  // API key — the model/base URL come from the built-in defaults.
+  if (addingKeyId) {
+    const p = sorted.find((x) => x.id === addingKeyId);
+    const name = p ? (PROVIDER_DISPLAY[p.id] || p.name || p.id) : addingKeyId;
+    const model = p ? p.model : "";
+    const base = p ? (p.base_url || "提供方默认") : "";
+    t += `<li class="m-rowcard m-editing">
+      <div class="m-editor">
+        <div class="m-editorhead">
+          <span class="m-editortitle">增加 ${esc(name)}</span>
+          <span class="m-editorroute">${esc(addingKeyId)}</span>
+        </div>
+        <div class="m-field">
+          <span class="m-fieldlabel">模型</span>
+          <span class="m-fieldvalue">${esc(model || "提供方默认")}</span>
+        </div>
+        <div class="m-field">
+          <span class="m-fieldlabel">API 地址</span>
+          <span class="m-fieldvalue">${esc(base)}</span>
+        </div>
+        <div class="m-field">
+          <span class="m-fieldlabel">API Key</span>
+          <input id="m-addkey-value" class="m-input" type="password" autocomplete="off" value="" placeholder="默认读取环境变量 ${esc(envName(addingKeyId))}">
+          <span class="m-fieldhint">留空使用环境变量 ${esc(envName(addingKeyId))}；填入后以配置值为准。</span>
+        </div>
+        <div class="m-editoractions">
+          <button type="button" class="m-btn m-secondary" id="m-model-cancel">取消</button>
+          <button type="button" class="m-btn m-primary" id="m-addkey-save">保存</button>
+          <span id="m-model-status" class="model-status"></span>
+        </div>
+      </div>
+    </li>`;
   }
 
   // 增加自定义提供方 create card (rendered after the rows, above the add row).
@@ -1722,8 +1789,7 @@ function renderModel(c) {
     </li>`;
   }
 
-  // dsh addButton row: 增加提供方 (opens the first dormant built-in's setup
-  // card) + 增加自定义提供方 (opens the custom-provider create card).
+  // dsh addButton row: 增加提供方 (opens the picker) + 增加自定义提供方.
   t += `</ul>
     <div class="m-addrow">
       <button type="button" class="m-btn m-add" id="m-add-provider">增加提供方</button>
@@ -1732,10 +1798,17 @@ function renderModel(c) {
     <p class="notice">API Key 默认从环境变量读取（不落 config.yaml）；本页填入的 Key 以配置值为准并持久化保存。修改 config.yaml 重启后回到文件配置。</p>`;
   sec.innerHTML = t;
 
-  // Open the editor card for a provider row (增加提供方 opens the first dormant
-  // built-in, i.e. a built-in that is not yet configured).
+  // Open the full editor card for a registered provider row.
   sec.querySelectorAll("[data-edit]").forEach((btn) => {
-    btn.addEventListener("click", () => { modelEditing = btn.dataset.edit; customAdding = false; renderModel(c); });
+    btn.addEventListener("click", () => { modelEditing = btn.dataset.edit; addingPicker = false; addingKeyId = null; customAdding = false; renderModel(c); });
+  });
+  // Open the key-only setup card for a dormant built-in row.
+  sec.querySelectorAll("[data-addkey]").forEach((btn) => {
+    btn.addEventListener("click", () => { addingKeyId = btn.dataset.addkey; modelEditing = null; addingPicker = false; customAdding = false; renderModel(c); });
+  });
+  // Pick a provider in the 增加提供方 picker → key-only setup card.
+  sec.querySelectorAll("[data-pick]").forEach((btn) => {
+    btn.addEventListener("click", () => { addingKeyId = btn.dataset.pick; addingPicker = false; renderModel(c); });
   });
   // Delete a custom provider (dsh remove, with confirm).
   sec.querySelectorAll("[data-del]").forEach((btn) => {
@@ -1755,23 +1828,48 @@ function renderModel(c) {
   const addProvider = sec.querySelector("#m-add-provider");
   if (addProvider) {
     addProvider.addEventListener("click", () => {
-      const dormant = sorted.find((p) => !p.custom && !p.registered);
-      if (dormant) { modelEditing = dormant.id; customAdding = false; renderModel(c); }
+      addingPicker = true; modelEditing = null; addingKeyId = null; customAdding = false; renderModel(c);
     });
   }
   const addCustom = sec.querySelector("#m-add-custom");
   if (addCustom) {
     addCustom.addEventListener("click", () => {
-      modelEditing = null; customAdding = true; renderModel(c);
+      modelEditing = null; addingPicker = false; addingKeyId = null; customAdding = true; renderModel(c);
     });
   }
 
-  // Wire the editor card actions (built-in / custom edit / custom create).
+  // Key-only setup save (dsh addCard): POST /api/config/provider {id, api_key}.
+  const addKeySave = sec.querySelector("#m-addkey-save");
+  if (addKeySave) {
+    const cancel = sec.querySelector("#m-model-cancel");
+    const status = sec.querySelector("#m-model-status");
+    cancel.addEventListener("click", () => { addingKeyId = null; renderModel(c); });
+    addKeySave.addEventListener("click", async () => {
+      const key = (sec.querySelector("#m-addkey-value").value || "").trim();
+      if (!key) { status.textContent = "请输入 API Key（留空没有意义）"; return; }
+      status.textContent = "保存中…";
+      addKeySave.disabled = true;
+      try {
+        const res = await api("/api/config/provider", { method: "POST", body: JSON.stringify({ id: addingKeyId, api_key: key }) });
+        if (res.status === 401) { showLogin("令牌无效或已过期"); return; }
+        if (!res.ok) { const eb = await res.json().catch(() => ({})); throw new Error(eb.error || ("HTTP " + res.status)); }
+        status.textContent = "已保存并生效 ✓";
+        addingKeyId = null;
+        await loadConfig();
+        renderModel(config);
+      } catch (e) {
+        status.textContent = "失败：" + e.message;
+      } finally { addKeySave.disabled = false; }
+    });
+    return;
+  }
+
+  // Wire the editor / custom-create actions.
   const apply = sec.querySelector("#m-model-apply");
   if (!apply) return;
   const cancel = sec.querySelector("#m-model-cancel");
   const status = sec.querySelector("#m-model-status");
-  cancel.addEventListener("click", () => { modelEditing = null; customAdding = false; renderModel(c); });
+  cancel.addEventListener("click", () => { modelEditing = null; customAdding = false; addingPicker = false; addingKeyId = null; renderModel(c); });
 
   if (customAdding) {
     // 增加自定义提供方: POST /api/config/provider {custom:true, ...}
