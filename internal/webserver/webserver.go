@@ -162,6 +162,8 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	mux.Handle("GET /api/sessions/{id}/attachments/{attID}", s.requireAuth(http.HandlerFunc(s.handleAttachmentGet)))
 	// P5.1: live model switch (provider/model), answers the new config state.
 	mux.Handle("POST /api/config/model", s.requireAuth(http.HandlerFunc(s.handleModelSwitch)))
+	mux.Handle("GET /api/settings", s.requireAuth(http.HandlerFunc(s.handleSettingsGet)))
+	mux.Handle("PATCH /api/settings", s.requireAuth(http.HandlerFunc(s.handleSettingsPatch)))
 	mux.Handle("GET /api/sessions/{id}/events/stream", s.requireAuth(http.HandlerFunc(s.handleEventStream)))
 	// M10 W2 (ADR D-WEB2-D): the read-only sanitized config view.
 	mux.Handle("GET /api/config", s.requireAuth(http.HandlerFunc(s.handleConfig)))
@@ -379,6 +381,82 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.cfgFn())
+}
+
+// handleSettingsGet implements GET /api/settings (the General-settings rows:
+// agent preset / permission preset / default terminal). Stored values come
+// from the durable settings table; the *_current values come from the config
+// view so the UI can show what is actually in effect after the next restart.
+func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
+	stored, err := s.store.GetSettings(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	resp := map[string]any{
+		"agent_preset":       stored["agent_preset"],
+		"permission_preset":  stored["permission_preset"],
+		"terminal_enabled":   stored["terminal_enabled"],
+		"mode_options":       []string{"minimal", "standard", "code"},
+		"permission_options": []string{"readonly", "standard", "full"},
+		"terminal_options":   []string{"true", "false"},
+		"restart_required":   true,
+	}
+	if s.cfgFn != nil {
+		if cfg := s.cfgFn(); cfg != nil {
+			if m, ok := cfg["mode"].(string); ok {
+				resp["mode_current"] = m
+			}
+			if t, ok := cfg["terminal_enabled"].(bool); ok {
+				resp["terminal_current"] = t
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleSettingsPatch implements PATCH /api/settings: it stores the changed
+// General-settings rows (only non-empty fields are written, so a partial body
+// updates just those rows). The composition root applies them at startup —
+// they take effect after restart (D-WEB2-D: no runtime hot reload).
+func (s *Server) handleSettingsPatch(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		AgentPreset      string `json:"agent_preset"`
+		PermissionPreset string `json:"permission_preset"`
+		TerminalEnabled  string `json:"terminal_enabled"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body)
+	if body.AgentPreset != "" {
+		if body.AgentPreset != "minimal" && body.AgentPreset != "standard" && body.AgentPreset != "code" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid agent_preset"})
+			return
+		}
+		if err := s.store.SetSetting(r.Context(), "agent_preset", body.AgentPreset); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	if body.PermissionPreset != "" {
+		if body.PermissionPreset != "readonly" && body.PermissionPreset != "standard" && body.PermissionPreset != "full" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid permission_preset"})
+			return
+		}
+		if err := s.store.SetSetting(r.Context(), "permission_preset", body.PermissionPreset); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	if body.TerminalEnabled != "" {
+		if body.TerminalEnabled != "true" && body.TerminalEnabled != "false" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid terminal_enabled"})
+			return
+		}
+		if err := s.store.SetSetting(r.Context(), "terminal_enabled", body.TerminalEnabled); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "restart_required": true})
 }
 
 // sessionView is the API's minimal owned session metadata (no store refs).

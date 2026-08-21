@@ -67,6 +67,27 @@ func main() {
 	}
 	defer st.Close()
 
+	// Runtime General-settings rows (durable in the SQLite settings table,
+	// applied at startup; D-WEB2-D: config changes need a restart, no hot
+	// reload). agent_preset overrides the mode preset (D-MODE), and
+	// terminal_enabled the terminal switch — but a minimal preset keeps its
+	// mandatory terminal (D-MODE-2). permission_preset is applied to the
+	// execution whitelist after registration (see below).
+	settings, err := st.GetSettings(context.Background())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "pa: settings:", err)
+		os.Exit(1)
+	}
+	permissionPreset := settings["permission_preset"] // "" | "readonly" | "standard" | "full"
+	if v, ok := settings["agent_preset"]; ok &&
+		(v == config.ModeMinimal || v == config.ModeStandard || v == config.ModeCode) {
+		cfg.Mode = v
+		config.ApplyModePreset(&cfg)
+	}
+	if v, ok := settings["terminal_enabled"]; ok && cfg.Mode != config.ModeMinimal {
+		cfg.Terminal.Enabled = v == "true"
+	}
+
 	// M3: the Execute pipeline's safety policy — whitelist, deadline, output
 	// cap with spill to <data_dir>/spill (design.md §5).
 	reg := tools.New()
@@ -76,6 +97,12 @@ func main() {
 	// applyDefaults, is authoritative for sandbox runs.
 	pol.CodeRun.Timeout = cfg.Code.Timeout.Duration
 	reg.SetPolicy(pol)
+	// The permission preset's readonly tier narrows the whitelist to the
+	// read-only tools (whitelist semantics: a name not listed is rejected).
+	if permissionPreset == "readonly" {
+		pol.Enabled = config.ReadOnlyTools()
+		reg.SetPolicy(pol)
+	}
 	// The read-only built-ins are always registered; the whitelist gates their
 	// execution. The execution-class tool is registered only when enabled
 	// (默认关闭, D10).
@@ -361,6 +388,17 @@ func main() {
 	}
 	if app.interacts != nil {
 		defer app.interacts.Close()
+	}
+	// The permission preset's "full" tier opens the whitelist to every
+	// registered (and therefore enabled) tool, applied only after all
+	// register* calls so reg.Specs() is complete (bridged MCP tools included).
+	if permissionPreset == "full" {
+		var all []string
+		for _, s := range reg.Specs() {
+			all = append(all, s.Name)
+		}
+		pol.Enabled = all
+		reg.SetPolicy(pol)
 	}
 	// eval: wire the task-evaluation seam — the CompositeEvaluator (rule → LLM
 	// judge → human fallback) over a.llm/a.interacts + the three eval_* tools +

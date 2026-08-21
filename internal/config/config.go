@@ -170,6 +170,11 @@ const (
 // It intentionally contains only the read-only tools (D10: 白名单先行).
 var defaultEnabledTools = []string{"get_time", "read_file"}
 
+// ReadOnlyTools returns the read-only execution whitelist (D10): the tools
+// that are always safe to expose. The General-settings "permission" preset's
+// readonly tier whitelists exactly these (the composition root applies it).
+func ReadOnlyTools() []string { return append([]string(nil), defaultEnabledTools...) }
+
 // minimalEnabledTools is the minimal preset's exact execution whitelist (ADR
 // 2026-08-20-mode-presets.md D-MODE-2): M1 基础只读 + 持久 shell (terminal_*)
 // + 文件编辑 (fs_*). 工具名须与各包常量一致 (terminal.go/fs.go).
@@ -1236,33 +1241,44 @@ func applyDefaults(cfg *Config) {
 	// 整体重置为 minimal 集合。register* 的 D10 门读这些 Enabled, 因此注册面
 	// 与白名单面自动收敛。standard/code 不触碰 (现状). 必须放在所有既有
 	// append 之后, 否则后续 append 会把用户开启的其余工具加回白名单.
-	if cfg.Mode == ModeMinimal {
-		cfg.Terminal.Enabled = true
-		cfg.Fs.Enabled = true
-		cfg.FsSearch.Enabled = false  // minimal 不含搜索 (D-MODE-2)
-		cfg.Ralph.Enabled = false     // minimal 不含 fresh-agent 循环 (D-MODE-2)
-		cfg.Workflow.Enabled = false  // minimal 不含 workflow DAG 编排 (D-MODE-2)
-		cfg.WebServer.Enabled = false // minimal 不含 web 门户 (D-MODE-2)
-		cfg.KB.Enabled = false
-		cfg.Jobs.Enabled = false
-		cfg.Subagent.Enabled = false
-		cfg.Compaction.Enabled = false
-		cfg.Skill.Enabled = false
-		cfg.Schedule.Enabled = false
-		cfg.Plan.Enabled = false
-		cfg.Spill.Enabled = false
-		cfg.Interact.Enabled = false
-		cfg.Code.Enabled = false
-		cfg.Mcp.Enabled = false
-		cfg.Web.Enabled = false
-		cfg.Eval.Enabled = false
-		{
-			v := false
-			cfg.LLM.Multimodal.Enabled = &v // minimal 无多模态 (D-MODE-2)
-		}
-		cfg.Tools.RunCommand.Enabled = false
-		cfg.Tools.Enabled = append([]string(nil), minimalEnabledTools...)
+	ApplyModePreset(cfg)
+}
+
+// ApplyModePreset applies the D-MODE mode preset to cfg (ADR
+// 2026-08-20-mode-presets.md): minimal is preset-first and resets every
+// capability switch plus the whole execution whitelist; standard/code leave the
+// switches untouched. Exported so the composition root can re-apply a mode
+// chosen at runtime (the General-settings Agent-preset row, which is durable
+// and takes effect after restart).
+func ApplyModePreset(cfg *Config) {
+	if cfg.Mode != ModeMinimal {
+		return
 	}
+	cfg.Terminal.Enabled = true
+	cfg.Fs.Enabled = true
+	cfg.FsSearch.Enabled = false  // minimal 不含搜索 (D-MODE-2)
+	cfg.Ralph.Enabled = false     // minimal 不含 fresh-agent 循环 (D-MODE-2)
+	cfg.Workflow.Enabled = false  // minimal 不含 workflow DAG 编排 (D-MODE-2)
+	cfg.WebServer.Enabled = false // minimal 不含 web 门户 (D-MODE-2)
+	cfg.KB.Enabled = false
+	cfg.Jobs.Enabled = false
+	cfg.Subagent.Enabled = false
+	cfg.Compaction.Enabled = false
+	cfg.Skill.Enabled = false
+	cfg.Schedule.Enabled = false
+	cfg.Plan.Enabled = false
+	cfg.Spill.Enabled = false
+	cfg.Interact.Enabled = false
+	cfg.Code.Enabled = false
+	cfg.Mcp.Enabled = false
+	cfg.Web.Enabled = false
+	cfg.Eval.Enabled = false
+	{
+		v := false
+		cfg.LLM.Multimodal.Enabled = &v // minimal 无多模态 (D-MODE-2)
+	}
+	cfg.Tools.RunCommand.Enabled = false
+	cfg.Tools.Enabled = append([]string(nil), minimalEnabledTools...)
 }
 
 // kbToolNames are the knowledge-base consumer tools (design.md §8 Consumer /

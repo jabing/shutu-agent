@@ -1522,6 +1522,14 @@ function renderGeneral(c) {
     <div class="theme-cubes">${cube("light", "浅色", PA_ICONS.light)}${cube("dark", "深色", PA_ICONS.dark)}${cube("system", "跟随系统", PA_ICONS.followsystem)}</div>
   </div>`;
   const enterMode = localStorage.getItem("pa_enter") || "send";
+  // General-settings rows backed by the durable settings table (PATCH
+  // /api/settings, applied at startup → restart required, D-WEB2-D). The
+  // selectors fall back to localStorage while the API round-trip completes.
+  const sel = (id, cur, opts) =>
+    `<select id="${id}" class="row-select">${opts.map(([v, label]) => `<option value="${v}"${cur === v ? " selected" : ""}>${label}</option>`).join("")}</select>`;
+  const ap = localStorage.getItem("pa_agent_preset") || "standard";
+  const pp = localStorage.getItem("pa_permission_preset") || "standard";
+  const te = localStorage.getItem("pa_terminal_enabled") || "false";
   const sec = settingsSectionEl();
   sec.innerHTML = `<h2>通用设置</h2>` +
     appearance +
@@ -1532,6 +1540,21 @@ function renderGeneral(c) {
         <option value="zh" selected>中文</option>
         <option value="en" disabled>English（规划中）</option>
       </select>
+    </div>` +
+    // dsh AgentPresetRow (数驼语义): the mode preset new sessions compose from.
+    `<div class="settings-row">
+      <div class="row-text"><div class="row-title">Agent 预设</div><div class="row-desc">新会话默认模式（极简 / 标准 / 编程），重启后生效。</div></div>
+      ${sel("agent-preset-select", ap, [["minimal", "极简 minimal"], ["standard", "标准 standard"], ["code", "编程 code"]])}
+    </div>` +
+    // dsh PermissionRow (数驼语义): the tool-whitelist tier for new sessions.
+    `<div class="settings-row">
+      <div class="row-text"><div class="row-title">权限</div><div class="row-desc">新会话默认工具权限（只读 / 标准 / 全部），重启后生效。</div></div>
+      ${sel("permission-select", pp, [["readonly", "只读"], ["standard", "标准"], ["full", "全部"]])}
+    </div>` +
+    // Default terminal (数驼 M9): the persistent-shell switch.
+    `<div class="settings-row">
+      <div class="row-text"><div class="row-title">默认终端</div><div class="row-desc">启用持久终端（terminal.enabled），重启后生效。</div></div>
+      ${sel("terminal-select", te, [["false", "关闭"], ["true", "启用"]])}
     </div>` +
     // dsh EnterBehaviorRow: title + description + selector pill.
     `<div class="settings-row">
@@ -1551,6 +1574,31 @@ function renderGeneral(c) {
   });
   const enter = sec.querySelector("#enter-select");
   if (enter) enter.addEventListener("change", (e) => { localStorage.setItem("pa_enter", e.target.value); });
+  // Durably persist the three host-backed rows on change.
+  [["#agent-preset-select", "agent_preset"], ["#permission-select", "permission_preset"], ["#terminal-select", "terminal_enabled"]]
+    .forEach(([q, key]) => {
+      const el = sec.querySelector(q);
+      if (!el) return;
+      el.addEventListener("change", async () => {
+        localStorage.setItem("pa_" + key, el.value);
+        try {
+          const res = await api("/api/settings", { method: "PATCH", body: JSON.stringify({ [key]: el.value }) });
+          if (res.status === 401) { showLogin("令牌无效或已过期"); return; }
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          renderGeneral(c); // reflect the saved value
+        } catch (e) { console.error("save setting", key, e); }
+      });
+    });
+  // Backfill the stored values (and the in-effect values) from the backend.
+  (async () => {
+    try {
+      const res = await api("/api/settings");
+      const d = await res.json();
+      if (d.agent_preset && sec.querySelector("#agent-preset-select")) sec.querySelector("#agent-preset-select").value = d.agent_preset;
+      if (d.permission_preset && sec.querySelector("#permission-select")) sec.querySelector("#permission-select").value = d.permission_preset;
+      if (d.terminal_enabled && sec.querySelector("#terminal-select")) sec.querySelector("#terminal-select").value = d.terminal_enabled;
+    } catch (e) { if (e.message !== "unauthorized") console.error("load settings", e); }
+  })();
 }
 
 function renderModel(c) {

@@ -119,6 +119,13 @@ type Store interface {
 	// ungrouped bucket. ErrNotFound when the id has no row.
 	DeleteWorkspace(ctx context.Context, id string) error
 
+	// GetSettings returns every persisted runtime setting (key → value). These
+	// back the General-settings rows (Agent preset / permission preset /
+	// default terminal) and are applied at startup by the composition root.
+	GetSettings(ctx context.Context) (map[string]string, error)
+	// SetSetting stores one runtime setting, replacing any previous value.
+	SetSetting(ctx context.Context, key, value string) error
+
 	// Close releases the backend's resources.
 	Close() error
 }

@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS workspaces (
     title TEXT    NOT NULL,
     sort  INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL
+);
 `
 
 // migrateSchema brings older databases forward. CREATE TABLE IF NOT EXISTS
@@ -486,6 +490,35 @@ func (s *SQLiteStore) DeleteWorkspace(ctx context.Context, id string) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit delete workspace: %w", err)
+	}
+	return nil
+}
+
+// GetSettings returns every persisted runtime setting as a key→value map.
+func (s *SQLiteStore) GetSettings(ctx context.Context) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT key, value FROM settings`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list settings: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, fmt.Errorf("store: scan settings: %w", err)
+		}
+		out[k] = v
+	}
+	return out, rows.Err()
+}
+
+// SetSetting stores one runtime setting, replacing any previous value.
+func (s *SQLiteStore) SetSetting(ctx context.Context, key, value string) error {
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO settings (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		key, value); err != nil {
+		return fmt.Errorf("store: set setting %q: %w", key, err)
 	}
 	return nil
 }
