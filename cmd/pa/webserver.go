@@ -134,6 +134,10 @@ func (a *app) registerWebServer() error {
 	if a.attachStore != nil {
 		srv.SetAttachmentStore(a.attachStore)
 	}
+	// P5.1 (模型选择实时生效): wire the live model switch.
+	srv.SetModelSwitcher(func(ctx context.Context, provider, model string) error {
+		return a.webSwitchModel(ctx, provider, model)
+	})
 	a.webserver = srv
 	go func() {
 		if err := srv.Serve(); err != nil {
@@ -206,7 +210,9 @@ const maxWebToolsList = 30
 // gate's enabled flag, the web-server address and the tool whitelist (count +
 // bounded list). Secrets never leave — web_server.token is omitted entirely
 // (keys live in the environment, never in this config), so a compromised
-// settings page cannot leak credentials. Field names are snake_case.
+// settings page cannot leak credentials. Field names are snake_case. P5.1 adds
+// the live model panel: the currently active provider's model plus the
+// registered providers (id/available/model/candidates) for the pickers.
 func (a *app) webConfig() map[string]any {
 	enabled := a.cfg.Tools.Enabled
 	tools := enabled
@@ -215,10 +221,11 @@ func (a *app) webConfig() map[string]any {
 		tools = append(tools, "…")
 	}
 	return map[string]any{
-		"model":        a.cfg.Model,
+		"model":        llmProviderModel(a.cfg, a.cfg.LLM.Provider),
 		"base_url":     a.cfg.BaseURL,
 		"llm_provider": a.cfg.LLM.Provider,
 		"mode":         a.cfg.Mode,
+		"providers":    a.webProviders(), // P5.1 live model pickers
 
 		// Capability gates (D10: each seam is default off).
 		"terminal_enabled":   a.cfg.Terminal.Enabled,
@@ -245,6 +252,85 @@ func (a *app) webConfig() map[string]any {
 		"tools_enabled_count": len(enabled),
 		"tools_enabled":       tools,
 	}
+}
+
+// webProviders returns the registered providers for the P5.1 model pickers:
+// each provider's id, availability (key present / base_url sane), its current
+// model and the suggested model candidates. Only these leaf fields leave the
+// process — never keys, prompts or tokens.
+func (a *app) webProviders() []map[string]any {
+	a.llmMu.RLock()
+	reg := a.llmReg
+	a.llmMu.RUnlock()
+	if reg == nil {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(reg.List()))
+	for _, p := range reg.List() {
+		out = append(out, map[string]any{
+			"id":         p.ID(),
+			"available":  p.Available(),
+			"model":      llmProviderModel(a.cfg, p.ID()),
+			"candidates": modelCandidates(p.ID()),
+		})
+	}
+	return out
+}
+
+// webSwitchModel implements POST /api/config/model (P5.1, 模型选择实时生效): it
+// validates and applies a live provider/model change, then rebuilds the
+// selected LLM provider — no restart. It runs under turnMu (D5 serial: no turn
+// is in flight while the selection swaps) and registerLLM publishes the new
+// pointer under llmMu, so the very next message (buildLoop re-wires every turn)
+// talks to the new provider. The change is runtime-only: config.yaml stays the
+// source of truth for the next launch. Fail-closed: on error the previous
+// selection is fully restored.
+func (a *app) webSwitchModel(ctx context.Context, provider, model string) error {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
+	if a.llmReg == nil {
+		return fmt.Errorf("llm not registered")
+	}
+	if provider != "" {
+		p, err := a.llmReg.Get(provider)
+		if err != nil {
+			return fmt.Errorf("unknown provider %q (registered: %s)", provider, llmProviderIDs(a.llmReg))
+		}
+		if !p.Available() {
+			return fmt.Errorf("provider %q not available (missing %s)", provider, llmCredentialEnv(provider))
+		}
+	}
+	target := provider
+	if target == "" {
+		target = a.cfg.LLM.Provider
+	}
+	// Snapshot for rollback.
+	oldProvider := a.cfg.LLM.Provider
+	oldModel, oldOpenAI, oldAnthropic := a.cfg.Model, a.cfg.LLM.OpenAI.Model, a.cfg.LLM.Anthropic.Model
+	if provider != "" {
+		a.cfg.LLM.Provider = provider
+	}
+	if model != "" {
+		switch target {
+		case "openai":
+			a.cfg.LLM.OpenAI.Model = model
+		case "anthropic":
+			a.cfg.LLM.Anthropic.Model = model
+		default:
+			a.cfg.Model = model
+		}
+	}
+	if err := a.registerLLM(); err != nil {
+		// Restore the previous selection — never leave a half-applied switch.
+		a.cfg.LLM.Provider = oldProvider
+		a.cfg.Model, a.cfg.LLM.OpenAI.Model, a.cfg.LLM.Anthropic.Model = oldModel, oldOpenAI, oldAnthropic
+		return err
+	}
+	// Rebuild compaction on the new provider so auto-summaries follow the switch.
+	if a.compaction != nil {
+		_ = a.registerCompaction()
+	}
+	return nil
 }
 
 // webSubagents returns the sanitized active sub-agent views for GET

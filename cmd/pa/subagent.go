@@ -33,7 +33,7 @@ func (a *app) registerSubagent() error {
 		// subagent/* events reach the parent log through the onEvent sink
 		// below (D3, serial tool path).
 		Log:    a.log,
-		LLM:    a.llm,
+		LLM:    a.currentLLM(),
 		Tools:  a.reg,
 		Prompt: a.prompt,
 		Model:  a.cfg.Model,

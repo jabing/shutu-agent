@@ -78,6 +78,12 @@ type Server struct {
 	// root when multimodal is enabled. nil (the default) makes the attachment
 	// APIs answer 501 and message bodies with images answer 400.
 	att *attachment.Store
+
+	// P5.1 (模型选择实时生效, 用户 2026-08-20 拍板): the live model-switch
+	// dispatcher for POST /api/config/model. It validates the provider/model,
+	// rebuilds the selected LLM provider and answers the new config state. nil
+	// (the default) makes the API answer 501.
+	setModelFn func(ctx context.Context, provider, model string) error
 }
 
 // SetAttachmentStore wires the image-attachment store (P5): POST/GET
@@ -85,6 +91,13 @@ type Server struct {
 // {id}/message. Called by the composition root; nil (default) keeps the
 // attachment APIs at 501.
 func (s *Server) SetAttachmentStore(st *attachment.Store) { s.att = st }
+
+// SetModelSwitcher wires the live model switch (POST /api/config/model, P5.1):
+// the handler validates the provider/model and rebuilds the selected LLM
+// provider. Called by the composition root; nil (default) keeps the API at 501.
+func (s *Server) SetModelSwitcher(fn func(ctx context.Context, provider, model string) error) {
+	s.setModelFn = fn
+}
 
 // New validates the wiring and builds the portal handler. token is optional:
 // empty opens the portal to the local machine (dsh-style, no login); a token
@@ -129,6 +142,8 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	// byte echo (GET). Both stay behind the same bearer middleware.
 	mux.Handle("POST /api/sessions/{id}/attachments", s.requireAuth(http.HandlerFunc(s.handleAttachmentUpload)))
 	mux.Handle("GET /api/sessions/{id}/attachments/{attID}", s.requireAuth(http.HandlerFunc(s.handleAttachmentGet)))
+	// P5.1: live model switch (provider/model), answers the new config state.
+	mux.Handle("POST /api/config/model", s.requireAuth(http.HandlerFunc(s.handleModelSwitch)))
 	mux.Handle("GET /api/sessions/{id}/events/stream", s.requireAuth(http.HandlerFunc(s.handleEventStream)))
 	// M10 W2 (ADR D-WEB2-D): the read-only sanitized config view.
 	mux.Handle("GET /api/config", s.requireAuth(http.HandlerFunc(s.handleConfig)))
@@ -225,13 +240,14 @@ type InteractiveHandlers struct {
 	Config    func() map[string]any
 	Subagents func(ctx context.Context) ([]map[string]any, error)
 	Jobs      func(ctx context.Context) ([]map[string]any, error)
+	Model     func(ctx context.Context, provider, model string) error // P5.1 live switch
 }
 
 // Handlers returns the current interactive wiring.
 func (s *Server) Handlers() InteractiveHandlers {
 	return InteractiveHandlers{
 		Message: s.msgFn, Session: s.sessFn, Event: s.evSrc, Config: s.cfgFn,
-		Subagents: s.subFn, Jobs: s.jobsFn,
+		Subagents: s.subFn, Jobs: s.jobsFn, Model: s.setModelFn,
 	}
 }
 
@@ -692,6 +708,37 @@ type attachmentView struct {
 	Bytes     int64  `json:"bytes"`
 	Width     int    `json:"width"`
 	Height    int    `json:"height"`
+}
+
+// handleModelSwitch implements POST /api/config/model (P5.1, 模型选择实时生效):
+// it dispatches a live provider/model change to the injected switcher, which
+// rebuilds the selected LLM provider (no restart). An unwired switcher answers
+// 501; an empty body (neither provider nor model) answers 400; a rejected
+// switch (unknown provider / missing key / bad model) answers 400 and keeps the
+// previous selection. On success it returns the refreshed config view so the
+// frontend re-renders the settings panel.
+func (s *Server) handleModelSwitch(w http.ResponseWriter, r *http.Request) {
+	if s.setModelFn == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "model switcher not wired"})
+		return
+	}
+	var body struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
+		return
+	}
+	if strings.TrimSpace(body.Provider) == "" && strings.TrimSpace(body.Model) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "provider or model is required"})
+		return
+	}
+	if err := s.setModelFn(r.Context(), strings.TrimSpace(body.Provider), strings.TrimSpace(body.Model)); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // handleAttachmentUpload implements POST /api/sessions/{id}/attachments (P5):

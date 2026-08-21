@@ -62,8 +62,8 @@ func (a *app) registerCompaction() error {
 		return nil
 	}
 	a.compaction = compaction.NewBasic(compaction.BasicOpts{
-		LLM:            a.llm,
-		Model:          a.cfg.Model,
+		LLM:            a.currentLLM(),
+		Model:          llmProviderModel(a.cfg, a.cfg.LLM.Provider),
 		TokenThreshold: a.cfg.Compaction.TokenThreshold,
 		RetainTurns:    a.cfg.Compaction.RetainTurns,
 	})

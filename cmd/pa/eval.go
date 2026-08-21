@@ -85,7 +85,7 @@ func (a *app) evalJudge() eval.JudgeFunc {
 			{Role: llm.RoleSystem, Content: []llm.ContentBlock{llm.Text(evalJudgeSystemPrompt)}},
 			{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text(user)}},
 		}
-		reader, err := a.llm.Stream(ctx, llm.ChatRequest{Model: model, Messages: msgs})
+		reader, err := a.currentLLM().Stream(ctx, llm.ChatRequest{Model: model, Messages: msgs})
 		if err != nil {
 			return eval.VerdictManual, "", err
 		}

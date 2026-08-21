@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -701,6 +702,44 @@ var png1x1 = []byte{
 	0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x00, 0x03, 0x00,
 	0x01, 0x6D, 0x26, 0x0B, 0xBC, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
 	0xAE, 0x42, 0x60, 0x82,
+}
+
+// TestModelSwitch covers the P5.1 live model switch (POST /api/config/model):
+// an injected switcher receives provider/model and answers 200; an empty body
+// answers 400; a rejected switch (switcher error) answers 400; an unwired
+// switcher answers 501.
+func TestModelSwitch(t *testing.T) {
+	srv, _ := newTestServer(t, "tok")
+	var gotP, gotM string
+	srv.SetModelSwitcher(func(ctx context.Context, provider, model string) error {
+		gotP, gotM = provider, model
+		return nil
+	})
+	rec := doReqBody(t, srv.Handler(), "POST", "/api/config/model", "tok",
+		`{"provider":"deepseek","model":"deepseek-reasoner"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("model switch → %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if gotP != "deepseek" || gotM != "deepseek-reasoner" {
+		t.Fatalf("switcher got (%q, %q), want (deepseek, deepseek-reasoner)", gotP, gotM)
+	}
+
+	// Empty body → 400 (neither provider nor model).
+	if rec := doReqBody(t, srv.Handler(), "POST", "/api/config/model", "tok", `{}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty switch → %d, want 400", rec.Code)
+	}
+
+	// Switcher rejection → 400.
+	srv.SetModelSwitcher(func(ctx context.Context, provider, model string) error { return errors.New("unknown provider") })
+	if rec := doReqBody(t, srv.Handler(), "POST", "/api/config/model", "tok", `{"model":"x"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("rejected switch → %d, want 400", rec.Code)
+	}
+
+	// Unwired switcher → 501.
+	srv2, _ := newTestServer(t, "tok")
+	if rec := doReqBody(t, srv2.Handler(), "POST", "/api/config/model", "tok", `{"model":"x"}`); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("switch without wire → %d, want 501", rec.Code)
+	}
 }
 
 // TestAttachmentUploadGet covers the P5 attachment APIs: a multipart upload

@@ -240,6 +240,7 @@ func TestWebConfigRedacts(t *testing.T) {
 			Mode:    "standard",
 			LLM: config.LLMConfig{
 				Provider:   "openai",
+				OpenAI:     config.OpenAIProviderConfig{Model: "gpt-4o"},
 				Multimodal: config.MultimodalConfig{Enabled: boolPtr(true)},
 			},
 			Tools:      config.ToolsConfig{Enabled: []string{"get_time", "read_file", "web_search"}},
@@ -271,9 +272,10 @@ func TestWebConfigRedacts(t *testing.T) {
 		t.Fatal("webConfig leaks the token plaintext")
 	}
 
-	// Model / provider / mode / base_url.
-	if v["model"] != "deepseek-chat" || v["llm_provider"] != "openai" || v["mode"] != "standard" {
-		t.Fatalf("model/provider/mode = %v/%v/%v, want deepseek-chat/openai/standard",
+	// Model / provider / mode / base_url. "model" is the active provider's
+	// model (P5.1: llmProviderModel — openai's own field here).
+	if v["model"] != "gpt-4o" || v["llm_provider"] != "openai" || v["mode"] != "standard" {
+		t.Fatalf("model/provider/mode = %v/%v/%v, want gpt-4o/openai/standard",
 			v["model"], v["llm_provider"], v["mode"])
 	}
 	if v["base_url"] != "https://api.example.com/v1" {
@@ -309,8 +311,8 @@ func TestWebConfigRedacts(t *testing.T) {
 	if h.Config == nil {
 		t.Fatal("registerWebServer must wire SetConfigProvider(a.webConfig)")
 	}
-	if got := h.Config(); got["model"] != "deepseek-chat" {
-		t.Fatalf("wired cfgFn returned model %v, want deepseek-chat", got["model"])
+	if got := h.Config(); got["model"] != "gpt-4o" {
+		t.Fatalf("wired cfgFn returned model %v, want gpt-4o (active provider model)", got["model"])
 	}
 }
 
@@ -363,5 +365,53 @@ func TestWebSessionNewThenMessageAfterRequestCtxCancelled(t *testing.T) {
 		if !found {
 			t.Fatalf("store missing %s after message (persist failed under cancelled ctx)", typ)
 		}
+	}
+}
+
+// TestWebSwitchModel covers the P5.1 live model switch (webSwitchModel): a
+// model-only change rebuilds the provider on the same selection; a provider
+// change swaps a.llm and updates the per-provider model; an unknown provider is
+// rejected fail-closed (previous selection untouched).
+func TestWebSwitchModel(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "deepseek-key")
+	t.Setenv("OPENAI_API_KEY", "openai-key")
+	mm := true
+	a := &app{cfg: config.Config{
+		Model: "deepseek-chat",
+		LLM: config.LLMConfig{
+			Provider:   "deepseek",
+			OpenAI:     config.OpenAIProviderConfig{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o"},
+			Multimodal: config.MultimodalConfig{Enabled: &mm, MaxImageBytes: 1 << 20},
+		},
+	}}
+	if err := a.registerLLM(); err != nil {
+		t.Fatalf("registerLLM: %v", err)
+	}
+
+	// Model-only switch on deepseek.
+	if err := a.webSwitchModel(context.Background(), "", "deepseek-reasoner"); err != nil {
+		t.Fatalf("model switch: %v", err)
+	}
+	if a.cfg.Model != "deepseek-reasoner" {
+		t.Fatalf("cfg.Model = %q, want deepseek-reasoner", a.cfg.Model)
+	}
+
+	// Provider switch to openai, with its own model.
+	if err := a.webSwitchModel(context.Background(), "openai", "gpt-4o-mini"); err != nil {
+		t.Fatalf("provider switch: %v", err)
+	}
+	if a.cfg.LLM.Provider != "openai" || a.cfg.LLM.OpenAI.Model != "gpt-4o-mini" {
+		t.Fatalf("cfg = provider %q openai.model %q, want openai/gpt-4o-mini", a.cfg.LLM.Provider, a.cfg.LLM.OpenAI.Model)
+	}
+	if a.currentLLM() == nil {
+		t.Fatal("currentLLM must be non-nil after a successful switch")
+	}
+
+	// Unknown provider → fail-closed, selection untouched.
+	if err := a.webSwitchModel(context.Background(), "nope", ""); err == nil {
+		t.Fatal("unknown provider must error")
+	}
+	if a.cfg.LLM.Provider != "openai" {
+		t.Fatalf("provider after failed switch = %q, want openai (unchanged)", a.cfg.LLM.Provider)
 	}
 }

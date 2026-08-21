@@ -91,9 +91,22 @@ func (a *app) registerLLM() error {
 		return fmt.Errorf("pa: llm provider %q is not available (missing %s or invalid base_url)", p.ID(), llmCredentialEnv(p.ID()))
 	}
 
+	a.llmMu.Lock()
 	a.llm = p
 	a.llmReg = reg
+	a.llmMu.Unlock()
 	return nil
+}
+
+// currentLLM returns the currently selected provider under the read lock. Every
+// consumer that wires a.llm into a component (loop, compaction, kb extraction,
+// subagent spawn, eval judge) reads through this so the live model switch can
+// swap the pointer safely (P5.1). Loop is re-wired every turn (buildLoop), so
+// a model switch takes effect on the very next message.
+func (a *app) currentLLM() llm.LLM {
+	a.llmMu.RLock()
+	defer a.llmMu.RUnlock()
+	return a.llm
 }
 
 // llmProviderIDs returns the registered provider ids as a comma-joined list
@@ -178,4 +191,19 @@ func llmProviderModel(cfg config.Config, id string) string {
 		return cfg.LLM.Anthropic.Model
 	}
 	return cfg.Model
+}
+
+// modelCandidates returns the suggested model names for provider id (P5.1 live
+// model picker). These are honest suggestions — the picker also allows a free
+// model string. Candidates mirror the M8-1/M8-2/M8-2b defaults.
+func modelCandidates(id string) []string {
+	switch id {
+	case "deepseek":
+		return []string{"deepseek-chat", "deepseek-reasoner"}
+	case "openai":
+		return []string{"gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"}
+	case "anthropic":
+		return []string{"claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"}
+	}
+	return nil
 }

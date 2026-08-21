@@ -412,6 +412,11 @@ type app struct {
 	reg    *tools.Registry
 	prompt *prompt.Builder
 	llm    llm.LLM
+	// llmMu guards the llm/llmReg pointer swap during the live model switch
+	// (POST /api/config/model, P5.1): the switch holds turnMu (D5 serial, so no
+	// turn is in flight) and takes the write lock; consumers read the selected
+	// provider through currentLLM() (RLock). The zero value is ready.
+	llmMu sync.RWMutex
 	// baseCtx is the process-lifetime context (the main signal context). It is
 	// the ctx the persist sink uses (attachSink), decoupled from any HTTP
 	// request ctx: webSessionManager/webMessage pass r.Context() into
@@ -613,7 +618,7 @@ func (a *app) newLoopWeb() *loop.Loop {
 // are the streaming hooks: the REPL prints them, the web path is silent.
 func (a *app) buildLoop(onText func(string), onError func(error)) *loop.Loop {
 	return loop.New(loop.Config{
-		LLM:    a.llm,
+		LLM:    a.currentLLM(),
 		Log:    a.log,
 		Tools:  a.reg,
 		Prompt: a.prompt,

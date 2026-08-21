@@ -917,25 +917,72 @@ function renderGeneral(c) {
 }
 
 function renderModel(c) {
-  const provider = PROVIDER_DISPLAY[c.llm_provider] || c.llm_provider || "DeepSeek";
-  const model = MODEL_DISPLAY[c.model] || c.model || "";
   const sec = settingsSectionEl();
+  const providers = (c.providers || []).filter((p) => p.available);
+  const currentProvider = c.llm_provider || "deepseek";
+  const currentModel = c.model || "";
+  // provider options: available ones first (disabled entries cannot be picked
+  // — their key is absent, fail-closed on the backend too)
+  const sorted = [...(c.providers || [])].sort((a, b) => Number(b.available) - Number(a.available));
+  const provOptions = sorted.map((p) =>
+    `<option value="${esc(p.id)}"${p.id === currentProvider ? " selected" : ""}${p.available ? "" : " disabled"}>${esc(PROVIDER_DISPLAY[p.id] || p.id)}${p.available ? "" : "（未配置）"}</option>`).join("");
+  const cand = (providers.find((p) => p.id === currentProvider) || {}).candidates || [];
+  const candOpts = cand.map((m) => `<option value="${esc(m)}">${esc(MODEL_DISPLAY[m] || m)}</option>`).join("");
   sec.innerHTML = `
     <h2>模型</h2>
-    <p class="intro">仅展示当前使用的模型与提供方。修改 config.yaml 后重启生效。</p>
-    <p class="notice">当前部署的设置文档为只读。</p>
+    <p class="intro">切换提供方 / 模型即时生效（下一条消息即用新模型）；重启后回到 config.yaml 配置。</p>
     <div class="row-card">
-      <div class="row-head">
-        <span class="row-identity"><span class="row-name">${esc(provider)}</span><span class="row-tag">只读</span></span>
-        <span class="row-actions"><button class="sec-btn" disabled>编辑</button></span>
-      </div>
+      <div class="row-head"><span class="row-identity"><span class="row-name">LLM 提供方</span></span></div>
       <div class="row-fields">
-        <div class="field"><span class="f-label">模型 ID</span><span class="f-value">${esc(c.model || "")}</span></div>
-        <div class="field"><span class="f-label">显示名</span><span class="f-value">${esc(model)}</span></div>
+        <div class="field"><span class="f-label">提供方</span>
+          <select id="model-provider" class="f-select">${provOptions}</select>
+        </div>
+        <div class="field"><span class="f-label">模型 ID</span>
+          <input id="model-name" class="f-input" list="model-candidates" value="${esc(currentModel)}" placeholder="输入或从建议中选择">
+          <datalist id="model-candidates">${candOpts}</datalist>
+        </div>
         <div class="field"><span class="f-label">API 地址</span><span class="f-value">${esc(c.base_url || "提供方默认")}</span></div>
-        <div class="field"><span class="f-label">会话模式</span><span class="f-value">${esc(c.mode || "standard")}</span></div>
       </div>
+      <div class="row-actions"><button id="model-apply" class="sec-btn primary">应用</button>
+        <span id="model-status" class="model-status"></span></div>
     </div>`;
+  const sel = sec.querySelector("#model-provider");
+  const input = sec.querySelector("#model-name");
+  const status = sec.querySelector("#model-status");
+  const apply = sec.querySelector("#model-apply");
+  // switching the provider updates the candidate datalist for its models
+  sel.addEventListener("change", () => {
+    const p = (c.providers || []).find((x) => x.id === sel.value);
+    const cl = (p && p.candidates) || [];
+    const dl = sec.querySelector("#model-candidates");
+    dl.innerHTML = cl.map((m) => `<option value="${esc(m)}">${esc(MODEL_DISPLAY[m] || m)}</option>`).join("");
+    if (cl.length) input.value = cl.includes(input.value) ? input.value : (p.model || cl[0]);
+  });
+  apply.addEventListener("click", async () => {
+    const body = {};
+    if (sel.value !== currentProvider) body.provider = sel.value;
+    const m = input.value.trim();
+    if (m && m !== currentModel) body.model = m;
+    if (!body.provider && !body.model) { status.textContent = "未发生变化"; return; }
+    status.textContent = "应用中…";
+    apply.disabled = true;
+    try {
+      const res = await api("/api/config/model", { method: "POST", body: JSON.stringify(body) });
+      if (res.status === 401) { showLogin("令牌无效或已过期"); return; }
+      if (!res.ok) {
+        const eb = await res.json().catch(() => ({}));
+        throw new Error(eb.error || ("HTTP " + res.status));
+      }
+      status.textContent = "已生效 ✓";
+      await loadConfig();        // refresh the config view (model/provider)
+      loadConfigLabels();        // update the sidebar mode/model badge
+      renderModel(config);       // re-render with the new selection
+    } catch (e) {
+      status.textContent = "失败：" + e.message;
+    } finally {
+      apply.disabled = false;
+    }
+  });
 }
 
 function renderCaps(c) {

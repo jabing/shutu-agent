@@ -193,8 +193,8 @@ func (a *app) extractTurn(ctx context.Context, userText string) {
 		reason = "no final assistant message"
 	} else {
 		result, err := a.kb.Extract(ctx, kb.ExtractOpts{
-			LLM:           a.llm,
-			Model:         a.cfg.Model,
+			LLM:           a.currentLLM(),
+			Model:         llmProviderModel(a.cfg, a.cfg.LLM.Provider),
 			SessionID:     a.currentID,
 			Turn:          turn,
 			UserText:      userText,
