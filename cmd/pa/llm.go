@@ -147,7 +147,7 @@ func (a *app) llmStatus() error {
 	}
 	fmt.Printf("  modalities: %s\n", llmModalitiesValue(a.cfg))
 	mm := "disabled"
-	if a.cfg.LLM.Multimodal.Enabled {
+	if a.multimodalEnabled() {
 		mm = "enabled"
 	}
 	fmt.Printf("  multimodal: %s\n", mm)

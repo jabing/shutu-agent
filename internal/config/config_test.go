@@ -1833,16 +1833,16 @@ func TestLoadLLMParsesSection(t *testing.T) {
 	}
 }
 
-// M8-3: an absent multimodal section means the capability is off by default
-// (D10), model_input_modalities defaults to "text", and max_image_bytes
-// defaults to 10MiB (dispatch-m8-3 §3).
+// M8-3 + 用户拍板「图片附件默认打开」(2026-08-20): an absent multimodal section
+// means the capability is ON by default (覆盖原 D10 默认关), model_input_modalities
+// defaults to "text", and max_image_bytes defaults to 10MiB (dispatch-m8-3 §3).
 func TestLoadMultimodalDefaultsWhenAbsent(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.LLM.Multimodal.Enabled {
-		t.Error("llm.multimodal must be disabled by default (D10)")
+	if !*cfg.LLM.Multimodal.Enabled {
+		t.Error("llm.multimodal must be enabled by default (图片附件默认打开, 用户 2026-08-20 拍板)")
 	}
 	if cfg.LLM.ModelInputModalities != DefaultModelInputModalities {
 		t.Errorf("llm.model_input_modalities = %q, want default %q",
@@ -1877,7 +1877,7 @@ func TestLoadMultimodalParsesSectionAndFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.LLM.Multimodal.Enabled {
+	if !*cfg.LLM.Multimodal.Enabled {
 		t.Error("llm.multimodal.enabled should be true")
 	}
 	if cfg.LLM.ModelInputModalities != "text,image" {
@@ -1901,7 +1901,7 @@ func TestLoadMultimodalParsesSectionAndFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg2.LLM.Multimodal.Enabled {
+	if !*cfg2.LLM.Multimodal.Enabled {
 		t.Error("llm.multimodal.enabled should stay true")
 	}
 	if cfg2.LLM.ModelInputModalities != DefaultModelInputModalities {
@@ -1930,7 +1930,7 @@ func TestLoadMultimodalExplicitDisabledStaysOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.LLM.Multimodal.Enabled {
+	if *cfg.LLM.Multimodal.Enabled {
 		t.Error("llm.multimodal.enabled = true, want false (explicitly disabled)")
 	}
 	if cfg.LLM.Multimodal.MaxImageBytes != 512 {
@@ -2325,6 +2325,6 @@ func modeCapStates(cfg Config) map[string]bool {
 		"plan":           cfg.Plan.Enabled,
 		"spill":          cfg.Spill.Enabled,
 		"mcp":            cfg.Mcp.Enabled,
-		"llm.multimodal": cfg.LLM.Multimodal.Enabled,
+		"llm.multimodal": *cfg.LLM.Multimodal.Enabled,
 	}
 }

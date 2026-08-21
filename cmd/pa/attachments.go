@@ -1,7 +1,8 @@
 // attachments.go — the M8-3 multimodal image-attachment wiring
 // (dispatch-m8-3 §4 / ADR 2026-08-20-m8-message-model.md 决策 M8-3). registerAttachments
 // creates the attachment store under <data_dir>/attachments/ only when
-// llm.multimodal.enabled (默认关 D10); /attach validates a local image file
+// llm.multimodal.enabled (默认开——用户 2026-08-20 拍板「图片附件默认打开」, *bool 区分
+// 未设置与显式关; /attach validates a local image file
 // (extension in SupportedMediaTypes, bytes ≤ max_image_bytes — fail-closed),
 // stores it via Store.SaveImage, and logs a user/message event whose content
 // carries the image block — only the ImageRef is logged, never the bytes (dsh
@@ -24,6 +25,14 @@ import (
 	"personal-agent/internal/session"
 )
 
+// multimodalEnabled reports whether the image-attachment capability is on
+// (llm.multimodal.enabled). The config layer defaults it to true (用户
+// 2026-08-20 拍板「图片附件默认打开」, *bool 区分未设置与显式关); nil here means a
+// caller bypassed ApplyDefaults, so we fail closed to false rather than panic.
+func (a *app) multimodalEnabled() bool {
+	return a.cfg.LLM.Multimodal.Enabled != nil && *a.cfg.LLM.Multimodal.Enabled
+}
+
 // registerAttachments wires the image-attachment store when multimodal is
 // enabled (dispatch-m8-3 §4): llm.multimodal.enabled=false ⇒ no store is
 // created and /attach is unavailable (D10). The store lives at
@@ -31,7 +40,7 @@ import (
 // config always carries a DataDir default, but NewStore keeps its own default
 // for robustness).
 func (a *app) registerAttachments() error {
-	if !a.cfg.LLM.Multimodal.Enabled {
+	if !a.multimodalEnabled() {
 		return nil // 默认关（D10）：不创建 store，/attach 不可用
 	}
 	st, err := attachment.NewStore(filepath.Join(a.cfg.DataDir, "attachments"))
@@ -51,7 +60,7 @@ func (a *app) registerAttachments() error {
 // is user-provided and stays a local read, no bytes are ever sent out (凭证/数据
 // 安全: env 不外泄).
 func (a *app) attachCommand(ctx context.Context, args []string) error {
-	if !a.cfg.LLM.Multimodal.Enabled || a.attachStore == nil {
+	if !a.multimodalEnabled() || a.attachStore == nil {
 		return fmt.Errorf("multimodal disabled (llm.multimodal.enabled=false)")
 	}
 	if len(args) != 1 {

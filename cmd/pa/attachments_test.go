@@ -24,10 +24,11 @@ var attachTestPNG = []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00,
 // store in a temp dir (dispatch-m8-3 §4: disabled ⇒ no store is created).
 func makeAttachApp(t *testing.T, enabled bool) *app {
 	t.Helper()
+	mmEnabled := enabled
 	a := &app{
 		cfg: config.Config{
 			LLM: config.LLMConfig{
-				Multimodal: config.MultimodalConfig{Enabled: enabled, MaxImageBytes: 10 * 1024 * 1024},
+				Multimodal: config.MultimodalConfig{Enabled: &mmEnabled, MaxImageBytes: 10 * 1024 * 1024},
 			},
 		},
 		log: session.New(),

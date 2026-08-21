@@ -15,6 +15,10 @@ import (
 	"personal-agent/internal/llm"
 )
 
+// boolPtr returns a pointer to v (test helper for *bool config fields, e.g.
+// llm.multimodal.enabled which defaults to on — 用户拍板「图片附件默认打开」).
+func boolPtr(v bool) *bool { return &v }
+
 // TestRegisterLLMDefaultDeepseekRegression verifies the M8-2 default-provider
 // regression (dispatch-m8-2 §7): with no OPENAI_API_KEY only deepseek is
 // registered, and with the default llm.provider (deepseek) the selected
@@ -314,13 +318,14 @@ func TestLLMStatusShowsAnthropic(t *testing.T) {
 // llm.multimodal.enabled is true (vs the disabled default elsewhere).
 func TestLLMStatusMultimodalEnabled(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	mm := true
 	a := &app{
 		cfg: config.Config{
 			Model: "deepseek-chat",
 			LLM: config.LLMConfig{
 				Provider:             "deepseek",
 				ModelInputModalities: "text,image",
-				Multimodal:           config.MultimodalConfig{Enabled: true, MaxImageBytes: 1 << 20},
+				Multimodal:           config.MultimodalConfig{Enabled: &mm, MaxImageBytes: 1 << 20},
 			},
 		},
 	}
@@ -451,7 +456,7 @@ func TestRegisterLLMWiresMaxRequestImageBytes(t *testing.T) {
 				Provider:             "deepseek",
 				ModelInputModalities: "text,image",
 				Multimodal: config.MultimodalConfig{
-					Enabled:              true,
+					Enabled:              boolPtr(true),
 					MaxImageBytes:        1 << 20,
 					MaxRequestImageBytes: 5, // tiny budget so the 100-byte image offloads
 				},

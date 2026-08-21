@@ -160,7 +160,7 @@ func (a *app) webMessage(ctx context.Context, sessionID, text string, images []l
 		}
 	}
 	if len(images) > 0 {
-		if !a.cfg.LLM.Multimodal.Enabled || a.attachStore == nil {
+		if !a.multimodalEnabled() || a.attachStore == nil {
 			return fmt.Errorf("multimodal disabled (llm.multimodal.enabled=false)")
 		}
 		blocks := make([]llm.ContentBlock, 0, len(images))
@@ -239,7 +239,7 @@ func (a *app) webConfig() map[string]any {
 		"plan_enabled":       a.cfg.Plan.Enabled,
 		"spill_enabled":      a.cfg.Spill.Enabled,
 		"compaction_enabled": a.cfg.Compaction.Enabled,
-		"multimodal_enabled": a.cfg.LLM.Multimodal.Enabled,
+		"multimodal_enabled": a.multimodalEnabled(),
 
 		"web_server_addr":     a.cfg.WebServer.Addr,
 		"tools_enabled_count": len(enabled),

@@ -240,7 +240,7 @@ func TestWebConfigRedacts(t *testing.T) {
 			Mode:    "standard",
 			LLM: config.LLMConfig{
 				Provider:   "openai",
-				Multimodal: config.MultimodalConfig{Enabled: true},
+				Multimodal: config.MultimodalConfig{Enabled: boolPtr(true)},
 			},
 			Tools:      config.ToolsConfig{Enabled: []string{"get_time", "read_file", "web_search"}},
 			Web:        config.WebConfig{Enabled: true},

@@ -748,7 +748,7 @@ func (a *app) printHelp() {
 startup:  pa [--config <path>]   config defaults to config.yaml`)
 	fmt.Printf("llm: provider=%s model=%s modalities=%s\n",
 		a.cfg.LLM.Provider, llmProviderModel(a.cfg, a.cfg.LLM.Provider), llmModalitiesValue(a.cfg))
-	if a.cfg.LLM.Multimodal.Enabled {
+	if a.multimodalEnabled() {
 		fmt.Printf("multimodal: enabled (max_image_bytes=%d)\n", a.cfg.LLM.Multimodal.MaxImageBytes)
 	} else {
 		fmt.Println("multimodal: disabled (llm.multimodal.enabled=false)")
