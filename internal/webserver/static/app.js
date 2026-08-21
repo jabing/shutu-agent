@@ -1582,13 +1582,12 @@ async function loadConfig() {
 }
 
 // ---- settings page (P3: dsh SettingsRoot two-column panel, read-only) -------
-// Section registry: general / model / caps / tools. Every control is read-only
+// Section registry: general / model / caps / skills. Every control is read-only
 // (ADR D-WEB2-D: no runtime editing — config changes need a restart).
 const SETTINGS_SECTIONS = [
   { id: "general", label: "通用设置", icon: "⚙" },
   { id: "model", label: "模型", icon: "◈" },
   { id: "caps", label: "能力开关", icon: "⚡" },
-  { id: "tools", label: "工具", icon: "🧰" },
   { id: "skills", label: "技能", icon: "📚" },
 ];
 const CAPABILITY_NAMES = {
@@ -2294,23 +2293,6 @@ function renderCaps(c) {
   }
 }
 
-function renderTools(c) {
-  const list = Array.isArray(c.tools_enabled) ? c.tools_enabled : [];
-  const sec = settingsSectionEl();
-  let t = `<h2>工具白名单</h2>
-    <p class="intro">当前白名单放行的工具（只读列表）。</p>
-    <p class="notice">修改 config.yaml 后重启生效（无运行时热改）。</p>
-    <div class="tools-count">已启用 ${esc(String(c.tools_enabled_count ?? list.length))} 个工具</div>`;
-  if (list.length > 0) {
-    t += `<div class="tool-list">`;
-    for (const tool of list) t += `<div class="tool-row"><span class="tool-dot"></span>${esc(tool)}</div>`;
-    t += `</div>`;
-  } else {
-    t += `<div class="muted" style="margin-top:6px">白名单为空（仅内置只读工具可用）</div>`;
-  }
-  sec.innerHTML = t;
-}
-
 // ---- 技能 settings page (dsh-skill-mcp-panel 对齐; user 2026-09) -----------
 // Boots via GET /api/config/skills (list + groups + scopes in one round trip),
 // then drives every action through POST /api/config/skills { action }.
@@ -2723,7 +2705,6 @@ function renderSettingsSec() {
   if (settingsSec === "general") renderGeneral(c);
   else if (settingsSec === "model") renderModel(c);
   else if (settingsSec === "caps") renderCaps(c);
-  else if (settingsSec === "tools") renderTools(c);
   else if (settingsSec === "skills") renderSkills(c);
 }
 

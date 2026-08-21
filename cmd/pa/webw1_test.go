@@ -297,15 +297,6 @@ func TestWebConfigRedacts(t *testing.T) {
 		t.Fatalf("web_server_addr = %v, want 127.0.0.1:0", v["web_server_addr"])
 	}
 
-	// Tool whitelist: count + bounded list.
-	if v["tools_enabled_count"] != 3 {
-		t.Fatalf("tools_enabled_count = %v, want 3", v["tools_enabled_count"])
-	}
-	tl, ok := v["tools_enabled"].([]string)
-	if !ok || len(tl) != 3 || tl[0] != "get_time" {
-		t.Fatalf("tools_enabled = %#v, want the whitelist list", v["tools_enabled"])
-	}
-
 	// The config provider is wired into the webserver.
 	h := a.webserver.Handlers()
 	if h.Config == nil {

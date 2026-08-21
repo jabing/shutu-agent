@@ -502,7 +502,6 @@ func TestConfigAPI(t *testing.T) {
 			"web_server_addr":  "127.0.0.1:8080",
 			"web_server.token": "***",
 			"web_enabled":      true,
-			"tools_enabled":    []string{"get_time", "read_file"},
 		}
 	})
 

@@ -261,26 +261,15 @@ func (a *app) webSessionManager(ctx context.Context, action, id string) (string,
 	}
 }
 
-// maxWebToolsList caps the tool-whitelist entries served by webConfig (M10 W2):
-// the settings page shows the count plus a bounded sample, so a huge whitelist
-// never floods the payload (the "…" tail marks a truncation).
-const maxWebToolsList = 30
-
 // webConfig returns the sanitized, flat configuration view served by
 // GET /api/config (M10 W2, ADR D-WEB2-D): model/provider/mode, each capability
-// gate's enabled flag, the web-server address and the tool whitelist (count +
-// bounded list). Secrets never leave — web_server.token is omitted entirely
+// gate's enabled flag and the web-server address. Secrets never leave —
+// web_server.token is omitted entirely
 // (keys live in the environment, never in this config), so a compromised
 // settings page cannot leak credentials. Field names are snake_case. P5.1 adds
 // the live model panel: the currently active provider's model plus the
 // registered providers (id/available/model/candidates) for the pickers.
 func (a *app) webConfig() map[string]any {
-	enabled := a.cfg.Tools.Enabled
-	tools := enabled
-	if len(enabled) > maxWebToolsList {
-		tools = append([]string(nil), enabled[:maxWebToolsList]...)
-		tools = append(tools, "…")
-	}
 	return map[string]any{
 		"model":        llmProviderModel(a.cfg, a.cfg.LLM.Provider),
 		"base_url":     a.cfg.BaseURL,
@@ -310,8 +299,6 @@ func (a *app) webConfig() map[string]any {
 		"multimodal_enabled": a.multimodalEnabled(),
 
 		"web_server_addr":     a.cfg.WebServer.Addr,
-		"tools_enabled_count": len(enabled),
-		"tools_enabled":       tools,
 	}
 }
 
