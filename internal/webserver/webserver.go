@@ -100,14 +100,16 @@ type Server struct {
 // /api/config/provider: id plus the optional custom-provider profile fields and
 // an API-key override. For a built-in provider only api_key is honored (the
 // profile fields stay config-driven); for a custom provider the profile is
-// persisted with it.
+// persisted with it. Protocol is the custom provider's wire protocol (M11-pi-ai
+// 四协议); empty defaults to openai-completions.
 type ProviderEdit struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	BaseURL string `json:"base_url"`
-	Model   string `json:"model"`
-	APIKey  string `json:"api_key"`
-	Custom  bool   `json:"custom"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	BaseURL  string `json:"base_url"`
+	Model    string `json:"model"`
+	APIKey   string `json:"api_key"`
+	Protocol string `json:"protocol"`
+	Custom   bool   `json:"custom"`
 }
 
 // SetAttachmentStore wires the image-attachment store (P5): POST/GET

@@ -1651,7 +1651,7 @@ function renderModel(c) {
     return `<div class="m-editor">
       <div class="m-editorhead">
         <span class="m-editortitle">${title}</span>
-        <span class="m-editorroute">${esc(p.id)}</span>
+        <span class="m-editorroute">${esc(p.id)}${p.custom && p.protocol_label ? ` · ${esc(p.protocol_label)}` : ""}</span>
       </div>
       <div class="m-field">
         <span class="m-fieldlabel">API Key</span>
@@ -1738,35 +1738,68 @@ function renderModel(c) {
     </li>`;
   }
 
-  // 增加自定义提供方 create card (dsh CustomProviderCard).
+  // 增加自定义提供方 create card (dsh CustomProviderCard 对齐): route id being
+  // chosen here (not edited later), optional display name (defaults to the
+  // route), base URL, wire protocol (四协议), model, and the API key. The
+  // route and key fields validate inline as you type (dsh ROUTE_PATTERN +
+  // apiKeyFailure 范式).
+  const ROUTE_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+  const LEGAL_API_KEY = /^[\x21-\x7E]+$/;
+  const ENV_LINE = /^[A-Z][A-Z0-9_]*=[^=]/;
+  const isQuotedKey = (v) => {
+    const f = v[0];
+    if (f !== '"' && f !== "'" && f !== "`") return false;
+    return v.length > 1 && v.endsWith(f);
+  };
+  const apiKeyFailure = (draft) => {
+    if (draft.length === 0) return undefined;
+    const value = draft.trim();
+    if (value.length === 0) return "keyBlank";
+    if (ENV_LINE.test(value) || isQuotedKey(value)) return "keyIllegalCharacters";
+    if (!LEGAL_API_KEY.test(value)) return "keyIllegalCharacters";
+    return undefined;
+  };
+  const PROTOCOL_OPTIONS = [
+    ["openai-completions", "OpenAI 兼容"],
+    ["anthropic-messages", "Anthropic Messages"],
+    ["google-generative-ai", "Google Generative AI"],
+    ["openai-responses", "OpenAI Responses"],
+  ];
   if (customAdding) {
     t += `<li class="m-rowcard m-editing">
       <div class="m-editor">
         <div class="m-editorhead">
           <span class="m-editortitle">增加自定义提供方</span>
-          <span class="m-editorroute">OpenAI 兼容端点</span>
+          <span class="m-editorroute">声明一个自定义端点</span>
         </div>
         <div class="m-field">
           <span class="m-fieldlabel">路由 ID</span>
-          <input id="m-custom-route" class="m-input" value="my-provider" placeholder="如 ollama、vllm（小写字母/数字/-）">
+          <input id="m-custom-route" class="m-input" value="" placeholder="acme-gateway" autocomplete="off">
         </div>
+        <p id="m-custom-route-msg" class="m-fieldhint">小写字母开头，仅小写字母 / 数字 / 单个连字符分隔（如 acme-gateway）。</p>
         <div class="m-field">
           <span class="m-fieldlabel">显示名称</span>
-          <input id="m-custom-name" class="m-input" value="" placeholder="如 Ollama">
+          <input id="m-custom-name" class="m-input" value="" placeholder="留空使用路由 ID" autocomplete="off">
         </div>
         <div class="m-field">
           <span class="m-fieldlabel">API 地址</span>
-          <input id="m-custom-base" class="m-input" value="" placeholder="https://api.example.com/v1">
+          <input id="m-custom-base" class="m-input" value="" placeholder="https://gateway.example/v1" autocomplete="off">
+        </div>
+        <div class="m-field">
+          <span class="m-fieldlabel">协议</span>
+          <select id="m-custom-protocol" class="m-input m-select">
+            ${PROTOCOL_OPTIONS.map(([v, label]) => `<option value="${v}">${esc(label)}（${v}）</option>`).join("")}
+          </select>
         </div>
         <div class="m-field">
           <span class="m-fieldlabel">模型 ID</span>
-          <input id="m-custom-model" class="m-input" value="" placeholder="如 gpt-4o-mini">
+          <input id="m-custom-model" class="m-input" value="" placeholder="如 gpt-4o-mini" autocomplete="off">
         </div>
         <div class="m-field">
           <span class="m-fieldlabel">API Key</span>
-          <input id="m-custom-key" class="m-input" type="password" autocomplete="off" value="" placeholder="留空使用环境变量 [ROUTE]_API_KEY">
-          <span class="m-fieldhint">Key 默认读取环境变量（大写路由名 + _API_KEY，如 OLLAMA_API_KEY）；填入后以配置值为准。</span>
+          <input id="m-custom-key" class="m-input" type="password" autocomplete="off" value="" placeholder="留空使用环境变量">
         </div>
+        <p id="m-custom-key-msg" class="m-fieldhint">Key 默认读取环境变量（大写路由名 + _API_KEY，如 ACME_GATEWAY_API_KEY）；填入后以配置值为准。</p>
         <div class="m-editoractions">
           <button type="button" class="m-btn m-secondary" id="m-model-cancel">取消</button>
           <button type="button" class="m-btn m-primary" id="m-model-apply">创建</button>
@@ -1835,19 +1868,53 @@ function renderModel(c) {
   cancel.addEventListener("click", () => { modelEditing = null; customAdding = false; adding = false; addingId = null; renderModel(c); });
 
   if (customAdding) {
+    // Live inline validation (dsh apiKeyFailure / ROUTE_PATTERN 范式): the
+    // route and key fields report their own fault beneath themselves; the
+    // submit button stays disabled until the whole card is ready.
+    const routeMsg = sec.querySelector("#m-custom-route-msg");
+    const keyMsg = sec.querySelector("#m-custom-key-msg");
+    const routeInput = sec.querySelector("#m-custom-route");
+    const keyInput = sec.querySelector("#m-custom-key");
+    const customRouteMsg = (route) => {
+      if (route.length === 0) return { ok: false, msg: "小写字母开头，仅小写字母 / 数字 / 单个连字符分隔（如 acme-gateway）。" };
+      if (!ROUTE_PATTERN.test(route)) return { ok: false, msg: "路由 ID 非法：小写字母开头，仅小写字母 / 数字 / 单个连字符分隔。" };
+      if (providers.some((p) => p.id === route)) return { ok: false, msg: "该路由 ID 已被占用。" };
+      return { ok: true, msg: "" };
+    };
+    const refreshCustomState = () => {
+      const r = customRouteMsg(routeInput.value.trim());
+      const kf = apiKeyFailure(keyInput.value);
+      routeMsg.textContent = r.msg || "小写字母开头，仅小写字母 / 数字 / 单个连字符分隔（如 acme-gateway）。";
+      routeMsg.classList.toggle("m-fielderror", r.msg.startsWith("路由 ID 非法") || r.msg.startsWith("该路由 ID"));
+      keyMsg.textContent = kf === "keyBlank" ? "Key 不能为纯空白。" : kf === "keyIllegalCharacters" ? "Key 含非法字符（不能有环境变量行、引号或非打印字符）。" : "Key 默认读取环境变量（大写路由名 + _API_KEY，如 ACME_GATEWAY_API_KEY）；填入后以配置值为准。";
+      keyMsg.classList.toggle("m-fielderror", !!kf);
+      const ready = r.ok && sec.querySelector("#m-custom-base").value.trim().length > 0
+        && sec.querySelector("#m-custom-model").value.trim().length > 0 && !kf;
+      apply.disabled = !ready;
+    };
+    routeInput.addEventListener("input", refreshCustomState);
+    keyInput.addEventListener("input", refreshCustomState);
+    sec.querySelector("#m-custom-base").addEventListener("input", refreshCustomState);
+    sec.querySelector("#m-custom-model").addEventListener("input", refreshCustomState);
+    refreshCustomState();
     // 增加自定义提供方: POST /api/config/provider {custom:true, ...}
     apply.addEventListener("click", async () => {
-      const route = (sec.querySelector("#m-custom-route").value || "").trim();
+      const route = routeInput.value.trim();
       const name = (sec.querySelector("#m-custom-name").value || "").trim();
       const base = (sec.querySelector("#m-custom-base").value || "").trim();
       const model = (sec.querySelector("#m-custom-model").value || "").trim();
-      const key = (sec.querySelector("#m-custom-key").value || "").trim();
-      if (!route || !name || !base || !model) { status.textContent = "路由 / 名称 / API 地址 / 模型 均必填"; return; }
+      const protocol = sec.querySelector("#m-custom-protocol").value;
+      const key = keyInput.value.trim();
+      const r = customRouteMsg(route);
+      if (!r.ok) { status.textContent = r.msg; return; }
+      if (!base || !model) { status.textContent = "API 地址 / 模型 ID 必填"; return; }
+      const kf = apiKeyFailure(keyInput.value);
+      if (kf) { status.textContent = kf === "keyBlank" ? "Key 不能为纯空白" : "Key 含非法字符"; return; }
       status.textContent = "保存中…";
       apply.disabled = true;
       try {
         const res = await api("/api/config/provider", { method: "POST", body: JSON.stringify({
-          id: route, name, base_url: base, model, api_key: key, custom: true,
+          id: route, name, base_url: base, model, protocol, api_key: key, custom: true,
         }) });
         if (res.status === 401) { showLogin("令牌无效或已过期"); return; }
         if (!res.ok) { const eb = await res.json().catch(() => ({})); throw new Error(eb.error || ("HTTP " + res.status)); }

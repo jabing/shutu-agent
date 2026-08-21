@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -92,7 +93,7 @@ func TestWebCustomProviderLifecycle(t *testing.T) {
 	a, st := m11App(t)
 	t.Setenv("OLLAMA_API_KEY", "ollama-key")
 
-	if err := a.webSaveCustomProvider(context.Background(), "ollama", "Ollama", "http://localhost:11434/v1", "llama3.1", ""); err != nil {
+	if err := a.webSaveCustomProvider(context.Background(), "ollama", "Ollama", "http://localhost:11434/v1", "llama3.1", "", ""); err != nil {
 		t.Fatalf("webSaveCustomProvider: %v", err)
 	}
 
@@ -149,10 +150,13 @@ func TestWebCustomProviderValidation(t *testing.T) {
 		name string
 		edit func() error
 	}{
-		{"missing fields", func() error { return a.webSaveCustomProvider(context.Background(), "x", "", "", "", "") }},
-		{"builtin shadow", func() error { return a.webSaveCustomProvider(context.Background(), "openai", "X", "http://x/v1", "m", "") }},
-		{"invalid route", func() error { return a.webSaveCustomProvider(context.Background(), "Bad Route!", "X", "http://x/v1", "m", "") }},
-		{"trailing dash", func() error { return a.webSaveCustomProvider(context.Background(), "bad-", "X", "http://x/v1", "m", "") }},
+		{"missing fields", func() error { return a.webSaveCustomProvider(context.Background(), "x", "", "", "", "", "") }},
+		{"builtin shadow", func() error { return a.webSaveCustomProvider(context.Background(), "openai", "X", "http://x/v1", "m", "", "") }},
+		{"invalid route", func() error { return a.webSaveCustomProvider(context.Background(), "Bad Route!", "X", "http://x/v1", "m", "", "") }},
+		{"trailing dash", func() error { return a.webSaveCustomProvider(context.Background(), "bad-", "X", "http://x/v1", "m", "", "") }},
+		{"doubled dash", func() error { return a.webSaveCustomProvider(context.Background(), "bad--route", "X", "http://x/v1", "m", "", "") }},
+		{"digit leading", func() error { return a.webSaveCustomProvider(context.Background(), "1st-route", "X", "http://x/v1", "m", "", "") }},
+		{"unknown protocol", func() error { return a.webSaveCustomProvider(context.Background(), "my-llm", "X", "http://x/v1", "m", "", "bogus-protocol") }},
 		{"delete builtin", func() error { return a.webDeleteCustomProvider(context.Background(), "deepseek") }},
 		{"delete unknown", func() error { return a.webDeleteCustomProvider(context.Background(), "nope") }},
 	}
@@ -162,7 +166,7 @@ func TestWebCustomProviderValidation(t *testing.T) {
 		}
 	}
 	// Valid route characters are accepted.
-	if err := a.webSaveCustomProvider(context.Background(), "my-llm-2", "X", "http://x/v1", "m", ""); err != nil {
+	if err := a.webSaveCustomProvider(context.Background(), "my-llm-2", "X", "http://x/v1", "m", "", ""); err != nil {
 		t.Errorf("valid route rejected: %v", err)
 	}
 }
@@ -295,6 +299,72 @@ func TestProviderEnvSpecialCases(t *testing.T) {
 		if got := providerEnv(id); got != want {
 			t.Errorf("providerEnv(%s) = %q, want %q", id, got, want)
 		}
+	}
+}
+
+// TestWebCustomProviderProtocolDispatch verifies the M11-pi-ai protocol field:
+// a custom provider declared with a non-completions protocol registers through
+// the matching adapter (anthropic-messages → anthropic adapter under the custom
+// route; google-generative-ai → google adapter), the profile persists the
+// protocol, webProviders surfaces protocol + protocol_label, and an empty
+// display name defaults to the route id (dsh CustomProviderCard 范式).
+func TestWebCustomProviderProtocolDispatch(t *testing.T) {
+	a, st := m11App(t)
+
+	// anthropic-messages custom provider with a key override.
+	if err := a.webSaveCustomProvider(context.Background(), "my-messages", "", "https://gw.example/anthropic", "claude-sonnet-4-5", "msg-key", "anthropic-messages"); err != nil {
+		t.Fatalf("webSaveCustomProvider(messages): %v", err)
+	}
+	// Display name defaults to the route id.
+	got, _ := st.GetSettings(context.Background())
+	var cp customProviderProfile
+	if err := json.Unmarshal([]byte(got["llm.custom.my-messages"]), &cp); err != nil {
+		t.Fatalf("unmarshal profile: %v", err)
+	}
+	if cp.Name != "my-messages" || cp.Protocol != "anthropic-messages" {
+		t.Fatalf("profile = %#v, want name defaulted to route + protocol persisted", cp)
+	}
+	// Registered under its route via the anthropic adapter.
+	p, err := a.llmReg.Get("my-messages")
+	if err != nil {
+		t.Fatalf("custom provider not registered: %v", err)
+	}
+	if p.ID() != "my-messages" || !p.Available() {
+		t.Fatalf("custom provider id = %q available=%v", p.ID(), p.Available())
+	}
+	// webProviders surfaces protocol + label.
+	op := findProvider(a.webConfig()["providers"].([]map[string]any), "my-messages")
+	if op == nil {
+		t.Fatal("custom provider missing from webProviders")
+	}
+	if op["protocol"] != "anthropic-messages" || op["protocol_label"] != "Anthropic Messages" {
+		t.Fatalf("protocol view = %#v", op)
+	}
+	if op["name"] != "my-messages" {
+		t.Fatalf("name = %v, want defaulted route", op["name"])
+	}
+
+	// google-generative-ai custom provider (no key override; env fallback).
+	t.Setenv("MY_GEMINI_API_KEY", "gem-key")
+	if err := a.webSaveCustomProvider(context.Background(), "my-gemini", "My Gemini", "https://gem.example", "gemini-2.5-flash", "", "google-generative-ai"); err != nil {
+		t.Fatalf("webSaveCustomProvider(gemini): %v", err)
+	}
+	if p, err := a.llmReg.Get("my-gemini"); err != nil {
+		t.Fatalf("gemini custom provider not registered: %v", err)
+	} else if !p.Available() {
+		t.Fatal("gemini custom provider should be available with its env key")
+	}
+	og := findProvider(a.webConfig()["providers"].([]map[string]any), "my-gemini")
+	if og == nil || og["protocol_label"] != "Google Generative AI" {
+		t.Fatalf("gemini protocol view = %#v", og)
+	}
+
+	// Delete both; registry clears.
+	if err := a.webDeleteCustomProvider(context.Background(), "my-messages"); err != nil {
+		t.Fatalf("delete my-messages: %v", err)
+	}
+	if _, err := a.llmReg.Get("my-messages"); err == nil {
+		t.Fatal("my-messages should be gone")
 	}
 }
 

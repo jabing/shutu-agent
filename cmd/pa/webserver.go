@@ -147,7 +147,7 @@ func (a *app) registerWebServer() error {
 		switch action {
 		case "save":
 			if edit.Custom {
-				return a.webSaveCustomProvider(ctx, edit.ID, edit.Name, edit.BaseURL, edit.Model, edit.APIKey)
+				return a.webSaveCustomProvider(ctx, edit.ID, edit.Name, edit.BaseURL, edit.Model, edit.APIKey, edit.Protocol)
 			}
 			return a.webSaveProvider(ctx, edit.ID, edit.APIKey)
 		case "delete":
@@ -341,6 +341,8 @@ func (a *app) webProviders() []map[string]any {
 			"base_url":   cp.BaseURL,
 			"candidates": nil,
 			"env_var":    llmKeyEnv(cp.ID),
+			"protocol":   cp.Protocol,
+			"protocol_label": protocolLabel(providerProtocol(cp.Protocol)),
 		})
 	}
 	return out
@@ -386,11 +388,13 @@ func (a *app) webSaveProvider(ctx context.Context, id, apiKey string) error {
 	return nil
 }
 
-// webSaveCustomProvider persists a custom OpenAI-compatible provider
-// declaration (M11, POST /api/config/provider with custom:true): it validates
-// the profile, stores llm.custom.<id> + an optional llm.key.<id> override and
-// rebuilds the registry immediately.
-func (a *app) webSaveCustomProvider(ctx context.Context, id, name, baseURL, model, apiKey string) error {
+// webSaveCustomProvider persists a custom provider declaration (M11, POST
+// /api/config/provider with custom:true): it validates the profile (id/name/
+// base_url/model, wire protocol when given), stores llm.custom.<id> + an
+// optional llm.key.<id> override and rebuilds the registry immediately. The
+// protocol is one of the four supported wire protocols (M11-pi-ai); an empty
+// protocol means the OpenAI-compatible default.
+func (a *app) webSaveCustomProvider(ctx context.Context, id, name, baseURL, model, apiKey, protocol string) error {
 	a.turnMu.Lock()
 	defer a.turnMu.Unlock()
 	if a.llmReg == nil {
@@ -400,16 +404,28 @@ func (a *app) webSaveCustomProvider(ctx context.Context, id, name, baseURL, mode
 	name = strings.TrimSpace(name)
 	baseURL = strings.TrimSpace(baseURL)
 	model = strings.TrimSpace(model)
-	if id == "" || name == "" || baseURL == "" || model == "" {
-		return errors.New("id, name, base_url and model are required")
+	protocol = strings.TrimSpace(protocol)
+	if id == "" || baseURL == "" || model == "" {
+		return errors.New("id, base_url and model are required")
+	}
+	if name == "" {
+		// dsh CustomProviderCard: the display name is optional and defaults to
+		// the route id (displayName.length === 0 → omitted from the profile).
+		name = id
 	}
 	if _, ok := builtinProviderByID(id); ok {
 		return errors.New("custom provider id conflicts with a built-in provider")
 	}
 	if !validProviderRoute(id) {
-		return errors.New("provider id must be lowercase letters, digits or '-'")
+		return errors.New("provider id must start with a lowercase letter and contain only lowercase letters, digits or single '-' separators")
 	}
-	raw, err := json.Marshal(customProviderProfile{ID: id, Name: name, BaseURL: baseURL, Model: model})
+	if protocol != "" && !validProtocol(protocol) {
+		return errors.New("protocol must be one of openai-completions, anthropic-messages, google-generative-ai, openai-responses")
+	}
+	if protocol == "" {
+		protocol = string(protocolCompletions)
+	}
+	raw, err := json.Marshal(customProviderProfile{ID: id, Name: name, BaseURL: baseURL, Model: model, Protocol: protocol})
 	if err != nil {
 		return err
 	}
@@ -428,13 +444,13 @@ func (a *app) webSaveCustomProvider(ctx context.Context, id, name, baseURL, mode
 	replaced := false
 	for i := range a.customProviders {
 		if a.customProviders[i].ID == id {
-			a.customProviders[i] = customProviderProfile{ID: id, Name: name, BaseURL: baseURL, Model: model}
+			a.customProviders[i] = customProviderProfile{ID: id, Name: name, BaseURL: baseURL, Model: model, Protocol: protocol}
 			replaced = true
 			break
 		}
 	}
 	if !replaced {
-		a.customProviders = append(a.customProviders, customProviderProfile{ID: id, Name: name, BaseURL: baseURL, Model: model})
+		a.customProviders = append(a.customProviders, customProviderProfile{ID: id, Name: name, BaseURL: baseURL, Model: model, Protocol: protocol})
 	}
 	if err := a.registerLLM(); err != nil {
 		return err
@@ -491,22 +507,34 @@ func (a *app) webDeleteCustomProvider(ctx context.Context, id string) error {
 	return nil
 }
 
-// validProviderRoute reports whether id is a safe custom-provider route:
-// lowercase letters, digits and single '-' separators.
+// validProviderRoute reports whether id is a safe custom-provider route
+// (dsh ROUTE_PATTERN /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/ 对齐): lowercase letters
+// and digits, '-' only as a separator between alphanumeric runs — a leading
+// letter is required so the derived credential name (<ROUTE>_API_KEY) is a
+// valid shell identifier, and a trailing or doubled '-' is rejected.
 func validProviderRoute(id string) bool {
 	if id == "" {
 		return false
 	}
-	for i, r := range id {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			continue
-		}
-		if r == '-' && i > 0 && i < len(id)-1 {
-			continue
-		}
+	if !(id[0] >= 'a' && id[0] <= 'z') {
 		return false
 	}
-	return true
+	prevDash := false
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		switch {
+		case c >= 'a' && c <= 'z' || c >= '0' && c <= '9':
+			prevDash = false
+		case c == '-':
+			if prevDash {
+				return false // doubled '-'
+			}
+			prevDash = true
+		default:
+			return false
+		}
+	}
+	return !prevDash // no trailing '-'
 }
 
 // webSwitchModel implements POST /api/config/model (P5.1, 模型选择实时生效): it

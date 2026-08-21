@@ -110,19 +110,23 @@ func (a *app) registerLLM() error {
 		}
 	}
 
-	// M11: custom OpenAI-compatible providers declared through the Model
-	// settings page (llm.custom.<id> in the settings table). Each carries its
-	// own route id, display name, base URL and model; its key follows the same
-	// precedence (configured llm.key.<id> > env <ROUTE>_API_KEY).
+	// M11: custom providers declared through the Model settings page
+	// (llm.custom.<id> in the settings table). Each carries its own route id,
+	// display name, base URL, model and wire protocol; its key follows the same
+	// precedence (configured llm.key.<id> > env <ROUTE>_API_KEY). The protocol
+	// is dispatched to the matching adapter (M11-pi-ai 四协议); empty protocol
+	// falls back to OpenAI-compatible.
 	for _, cp := range a.customProviders {
-		if err := reg.Register(openai.New(openai.Config{
-			ID:                   cp.ID,
-			APIKey:               a.providerKey(cp.ID),
-			BaseURL:              cp.BaseURL,
-			Model:                cp.Model,
-			SupportsImages:       strings.Contains(a.cfg.LLM.ModelInputModalities, "image"),
-			MaxRequestImageBytes: a.cfg.LLM.Multimodal.MaxRequestImageBytes,
-		})); err != nil {
+		bp := builtinProvider{
+			id:       cp.ID,
+			protocol: providerProtocol(cp.Protocol),
+			baseURL:  cp.BaseURL,
+			model:    cp.Model,
+		}
+		if !validProtocol(cp.Protocol) {
+			bp.protocol = protocolCompletions
+		}
+		if err := registerBuiltinByProtocol(reg, bp, a.providerKey(cp.ID), &a.cfg); err != nil {
 			return fmt.Errorf("pa: register custom provider %q: %w", cp.ID, err)
 		}
 	}
@@ -218,15 +222,27 @@ func registerBuiltinByProtocol(reg *llm.Registry, bp builtinProvider, key string
 }
 
 // customProviderProfile is the persisted M11 custom-provider declaration
-// (settings row llm.custom.<route> = JSON). A custom provider is an
-// OpenAI-compatible endpoint: route id, display name, base URL and default
-// model. Its API key follows the standard precedence (llm.key.<route> setting
-// > env <ROUTE>_API_KEY).
+// (settings row llm.custom.<route> = JSON). A custom provider is a
+// user-declared endpoint: route id, display name, base URL, default model and
+// wire protocol (M11-pi-ai 四协议). Its API key follows the standard precedence
+// (llm.key.<route> setting > env <ROUTE>_API_KEY).
 type customProviderProfile struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	BaseURL string `json:"base_url"`
-	Model   string `json:"model"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	BaseURL  string `json:"base_url"`
+	Model    string `json:"model"`
+	Protocol string `json:"protocol"`
+}
+
+// validProtocol reports whether protocol is one of the four supported wire
+// protocols (M11-pi-ai, user 2026-09). Empty is valid and means the default
+// openai-completions.
+func validProtocol(protocol string) bool {
+	switch providerProtocol(protocol) {
+	case protocolCompletions, protocolMessages, protocolGemini, protocolResponses:
+		return true
+	}
+	return false
 }
 
 // llmKeyEnv returns the environment variable that carries provider id's API
