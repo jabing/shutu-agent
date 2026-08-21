@@ -215,6 +215,14 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
   font-size: 18px; font-weight: 600; line-height: 24px; letter-spacing: 0.04em;
   white-space: nowrap; overflow: hidden;
 }
+/* AGENT is reversed-out (reverse video): its glyphs use the sidebar backdrop
+   colour on a block of the same ink as SHUTU, at 50% of the wordmark size. */
+.brand-agent {
+  font-style: normal; font-size: 50%; line-height: 1.2; letter-spacing: 0.06em;
+  margin-left: 1px; padding: 1px 3px; border-radius: 3px;
+  color: var(--dsw-alias-bg-base);
+  background: var(--dsw-alias-label-primary);
+}
 .icon-button {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; border: none; border-radius: 50%; padding: 0;
