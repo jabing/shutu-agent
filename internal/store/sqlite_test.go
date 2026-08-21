@@ -492,3 +492,55 @@ func TestMigrateLegacyTitleBecomesUserPin(t *testing.T) {
 		t.Fatalf("legacy pin: title=%q source=%q, want user", meta.Title, meta.TitleSource)
 	}
 }
+
+// TestMarkSessionViewedAndLastViewedAt verifies the finished-but-unviewed
+// tracking: LastViewedAt surfaces through ListSessions/GetSessionMeta and
+// MarkSessionViewed clears it.
+func TestMarkSessionViewedAndLastViewedAt(t *testing.T) {
+	st := openSQLite(t)
+	ctx := context.Background()
+	if err := st.CreateSession(ctx, "s-v", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now().UTC().Add(-time.Hour)
+
+	// Unset initially.
+	meta, err := st.GetSessionMeta(ctx, "s-v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !meta.LastViewedAt.IsZero() {
+		t.Fatalf("new session LastViewedAt = %v, want zero", meta.LastViewedAt)
+	}
+
+	if err := st.MarkSessionViewed(ctx, "s-v", before); err != nil {
+		t.Fatal(err)
+	}
+	meta, err = st.GetSessionMeta(ctx, "s-v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.LastViewedAt.IsZero() || !meta.LastViewedAt.Equal(before) {
+		t.Fatalf("LastViewedAt = %v, want %v", meta.LastViewedAt, before)
+	}
+
+	// ListSessions surfaces it too.
+	metas, err := st.ListSessions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range metas {
+		if m.ID == "s-v" && !m.LastViewedAt.IsZero() {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("ListSessions did not surface LastViewedAt for s-v")
+	}
+
+	// Unknown id → ErrNotFound.
+	if err := st.MarkSessionViewed(ctx, "s-missing", time.Now().UTC()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("MarkSessionViewed(missing) err = %v, want ErrNotFound", err)
+	}
+}

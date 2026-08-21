@@ -443,17 +443,35 @@ document.addEventListener("click", (e) => {
 
 // fmtShort: sidebar relative/compact time (dsh ui-workspace relativeTime).
 function fmtShort(iso) {
-  if (!iso) return "";
+  return relTime(iso);
+}
+// dsh ui-workspace relativeTime buckets: just-now / minutes / hours / days /
+// months / years. The row label is compact ("5分钟", no 前) and the hover label
+// wraps in the ago template ("5分钟前"); the now bucket stays bare in both.
+const REL_UNIT_ZH = { minutes: "分钟", hours: "小时", days: "天", months: "个月", years: "年" };
+function relBucket(iso, nowMs) {
   const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const now = new Date();
-  const diffMin = Math.round((now - d) / 60000);
-  if (diffMin < 1) return "刚刚";
-  if (diffMin < 60) return `${diffMin} 分钟前`;
-  const diffH = Math.round(diffMin / 60);
-  if (diffH < 24) return `${diffH} 小时前`;
-  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}/${d.getDate()}`;
-  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+  if (isNaN(d.getTime())) return null;
+  const diff = Math.max(0, nowMs - d.getTime());
+  const MIN = 60000, HOUR = 3600000, DAY = 86400000;
+  if (diff < MIN) return { unit: "now", n: 0 };
+  if (diff < HOUR) return { unit: "minutes", n: Math.floor(diff / MIN) };
+  if (diff < DAY) return { unit: "hours", n: Math.floor(diff / HOUR) };
+  if (diff < 30 * DAY) return { unit: "days", n: Math.floor(diff / DAY) };
+  if (diff < 365 * DAY) return { unit: "months", n: Math.floor(diff / (30 * DAY)) };
+  return { unit: "years", n: Math.floor(diff / (365 * DAY)) };
+}
+function relTime(iso) {
+  const b = relBucket(iso, Date.now());
+  if (!b) return "";
+  if (b.unit === "now") return "刚刚";
+  return `${b.n}${REL_UNIT_ZH[b.unit]}`;
+}
+function relTimeAgo(iso) {
+  const b = relBucket(iso, Date.now());
+  if (!b) return "";
+  if (b.unit === "now") return "刚刚";
+  return `${b.n}${REL_UNIT_ZH[b.unit]}前`;
 }
 
 // ---- P6 workspace grouping (dsh grouped sidebar view) ----------------------
@@ -561,18 +579,36 @@ function injectIcons() {
   });
 }
 
+// sessionState resolves a row's dot state from the backend status (dsh
+// session-status): idle (no dot) / done / ongoing / warning. When the status
+// is absent (older API) it falls back to the pre-status blank/done heuristic.
+function sessionState(s) {
+  if (s.status && s.status.state) return s.status.state;
+  return s.blank ? "idle" : "done";
+}
+// statusLabel picks the primary human status label for the row + hover card.
+function statusLabel(s) {
+  if (s.status && s.status.statuses && s.status.statuses.length) {
+    return s.status.statuses[0].label;
+  }
+  return sessionState(s) === "idle" ? "空闲" : "已完成";
+}
+
 // appendSessionItem appends one session row into a container (shared by the
 // flat list and the grouped sublists). dsh SessionNodeItem row contract: a
 // blank (no prompt yet) session shows the localized New Session label and no
 // timestamp or rename/fork/archive verbs — only the destructive delete remains.
+// The status dot reflects the live backend state, and hovering reveals a card
+// with the full title, relative time and every status (dsh hover card).
 function appendSessionItem(container, s) {
-  let state = s.blank ? "idle" : "done";
-  if (s.id === currentID && streamActive) state = "running";
+  const state = sessionState(s);
+  const title = s.title || "新会话";
   const li = document.createElement("li");
   li.className = "session-item" + (s.id === currentID ? " active" : "");
   li.dataset.id = s.id;
+  li.dataset.idle = state === "idle" ? "1" : "";
   li.draggable = true;
-  const title = s.title || "新会话";
+  li.setAttribute("aria-label", (title + " " + statusLabel(s)).trim());
   li.innerHTML = `
     <span class="si-dot" data-state="${state}"></span>
     <span class="si-title${s.blank ? " empty" : ""}">${esc(title)}</span>
@@ -586,7 +622,69 @@ function appendSessionItem(container, s) {
     e.stopPropagation();
     openMenu(li, s);
   });
+  // dsh hover card: shows while the pointer is over the row, suppressed when a
+  // row menu is open (openMenuEl set).
+  li.addEventListener("mouseenter", () => { if (!openMenuEl) showSessionHover(li, s); });
+  li.addEventListener("mousemove", () => { if (!openMenuEl) positionSessionHover(li); });
+  li.addEventListener("mouseleave", hideSessionHover);
   container.appendChild(li);
+}
+
+// ---- dsh hover card -------------------------------------------------------
+// si-hover is a portal-style floating card (fixed, appended to body) shown over
+// the row: full title, relative time (…前 variant), every live status and a
+// copy-title button. Mirrors dsh SessionHoverContent.
+let siHoverEl = null;
+function ensureSiHover() {
+  if (siHoverEl) return siHoverEl;
+  siHoverEl = document.createElement("div");
+  siHoverEl.id = "si-hover";
+  siHoverEl.className = "si-hover";
+  siHoverEl.hidden = true;
+  document.body.appendChild(siHoverEl);
+  return siHoverEl;
+}
+function showSessionHover(rowEl, s) {
+  const card = ensureSiHover();
+  const title = s.title || "新会话";
+  const statuses = (s.status && s.status.statuses) || [];
+  const statusHtml = statuses
+    .map((st) => `<div class="shv-status"><span class="shv-dot" data-state="${st.state}"></span><span>${esc(st.label)}</span></div>`)
+    .join("");
+  card.innerHTML = `
+    <div class="shv-title">${esc(title)}</div>
+    ${s.blank ? "" : `<div class="shv-time">${relTimeAgo(s.updated_at)}</div>`}
+    ${statusHtml || `<div class="shv-status"><span class="shv-dot" data-state="idle"></span><span>空闲</span></div>`}
+    <button type="button" class="shv-copy">复制</button>`;
+  const copyBtn = card.querySelector(".shv-copy");
+  if (copyBtn) {
+    copyBtn.addEventListener("click", () => {
+      const text = s.title || "";
+      if (!text) return;
+      (navigator.clipboard && navigator.clipboard.writeText)
+        ? navigator.clipboard.writeText(text)
+        : (copyBtn.textContent = "已复制");
+      if (navigator.clipboard) copyBtn.textContent = "已复制";
+      setTimeout(() => { copyBtn.textContent = "复制"; }, 1200);
+    });
+  }
+  card.hidden = false;
+  positionSessionHover(rowEl);
+}
+function positionSessionHover(rowEl) {
+  const card = ensureSiHover();
+  if (card.hidden) return;
+  const r = rowEl.getBoundingClientRect();
+  const cw = card.offsetWidth, ch = card.offsetHeight;
+  let left = r.right + 8;
+  if (left + cw > window.innerWidth - 8) left = Math.max(8, r.left - cw - 8);
+  let top = r.top;
+  if (top + ch > window.innerHeight - 8) top = Math.max(8, window.innerHeight - ch - 8);
+  card.style.left = left + "px";
+  card.style.top = top + "px";
+}
+function hideSessionHover() {
+  if (siHoverEl) siHoverEl.hidden = true;
 }
 
 // renderFlat draws the single-list view (dsh FlatList). In manual order a
@@ -1033,6 +1131,7 @@ document.addEventListener("click", (e) => { if (!e.target.closest(".si-pop")) cl
 
 function openMenu(li, s) {
   closeAnyMenu();
+  hideSessionHover();
   const pop = document.createElement("div");
   pop.className = "si-pop";
   // dsh SessionRowMenu: rename / fork / archive for titled sessions; a blank

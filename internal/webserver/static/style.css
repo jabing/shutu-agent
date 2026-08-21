@@ -430,8 +430,14 @@ mark {
   flex: none; width: 6px; height: 6px; border-radius: 50%;
   background: var(--dsw-alias-label-caption);
 }
-.si-dot[data-state="running"] { background: var(--dsw-alias-state-business-primary); }
+/* dsh ui-workspace StateDot states: idle has no visible dot (the fixed slot
+   keeps row alignment); ongoing (running / subagents) is business blue; done
+   (finished-but-unviewed) is success green; warning (pending interaction) is
+   warn amber. */
+.si-dot[data-state="idle"] { background: transparent; }
+.si-dot[data-state="ongoing"], .si-dot[data-state="running"] { background: var(--dsw-alias-state-business-primary); }
 .si-dot[data-state="done"] { background: var(--dsw-alias-state-success-primary); }
+.si-dot[data-state="warning"] { background: var(--dsw-alias-state-warn-primary); }
 .si-title {
   flex: 1; min-width: 0;
   font-size: 14px; color: var(--dsw-alias-label-primary);
@@ -448,6 +454,36 @@ mark {
 .session-item:hover .si-menu { display: inline-flex; align-items: center; justify-content: center; }
 .session-item:hover .si-time { display: none; }
 .si-menu:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+
+/* portal-style session hover card (dsh SessionHoverContent): full title,
+   relative time (…前 variant), every live status, and a copy-title button. */
+.si-hover {
+  position: fixed; z-index: 60; min-width: 200px; max-width: 320px;
+  padding: 10px 12px; border-radius: 10px;
+  background: var(--dsw-specific-menu); border: 1px solid var(--dsw-alias-border-l2);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  color: var(--dsw-alias-label-primary); font-size: 13px;
+}
+.si-hover .shv-title {
+  font-weight: 500; margin-bottom: 4px; white-space: normal;
+  overflow-wrap: anywhere; line-height: 1.35;
+}
+.si-hover .shv-time { font-size: 12px; color: var(--dsw-alias-label-tertiary); margin-bottom: 6px; }
+.si-hover .shv-status {
+  display: flex; align-items: center; gap: 6px; margin-top: 3px;
+  color: var(--dsw-alias-label-secondary);
+}
+.si-hover .shv-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--dsw-alias-label-caption); }
+.si-hover .shv-dot[data-state="idle"] { background: transparent; }
+.si-hover .shv-dot[data-state="ongoing"], .si-hover .shv-dot[data-state="running"] { background: var(--dsw-alias-state-business-primary); }
+.si-hover .shv-dot[data-state="done"] { background: var(--dsw-alias-state-success-primary); }
+.si-hover .shv-dot[data-state="warning"] { background: var(--dsw-alias-state-warn-primary); }
+.si-hover .shv-copy {
+  margin-top: 8px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+  color: var(--dsw-alias-label-primary); background: var(--dsw-alias-button-floating-bg);
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px;
+}
+.si-hover .shv-copy:hover { background: var(--dsw-alias-interactive-bg-hover); }
 
 /* inline rename input replaces the title row */
 .session-item.renaming { cursor: text; }

@@ -58,6 +58,13 @@ type Server struct {
 	sessFn func(ctx context.Context, action, id string) (string, error)
 	evSrc  func(sessionID string, sink func(session.Event)) func()
 
+	// statusFn is the dsh-session-status alignment: it computes the live state
+	// (warning/ongoing/done/idle + labels + running-subagent count) for one
+	// session row, so the sidebar renders the status dot and the hover card
+	// without the webserver knowing any runtime state. nil (the default) leaves
+	// every row's status empty.
+	statusFn func(ctx context.Context, m store.SessionMeta) SessionStatus
+
 	// cfgFn is the M10 W2 config provider (ADR D-WEB2-D): it returns the
 	// sanitized configuration view for GET /api/config. The redaction itself is
 	// the composition root's job (cmd/pa's webConfig never exposes web_server.
@@ -355,6 +362,16 @@ func (s *Server) SetConfigProvider(fn func() map[string]any) {
 	s.cfgFn = fn
 }
 
+// SetSessionStatusProvider wires the live per-session status computation
+// (dsh-session-status alignment): given one session's durable metadata it
+// returns the dot state (warning/ongoing/done/idle) + ordered status entries so
+// the sidebar renders the status dot and the hover card without the webserver
+// knowing any runtime state. Called by the composition root; nil leaves every
+// row's status empty.
+func (s *Server) SetSessionStatusProvider(fn func(ctx context.Context, m store.SessionMeta) SessionStatus) {
+	s.statusFn = fn
+}
+
 // SetSubagentProvider wires the read-only subagent panel (GET /api/subagents,
 // M10 W4, ADR D-WEB2-H). The provider returns sanitized child-agent views
 // (id/status/timestamps only). Called by the composition root; nil makes the
@@ -581,21 +598,39 @@ func (s *Server) handleSettingsPatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "restart_required": true})
 }
 
-// sessionView is the API's minimal owned session metadata (no store refs).
+// StatusEntry is one session status the sidebar renders (dsh ui-workspace
+// SessionStatus): the dot color category (warning/ongoing/done/idle) plus the
+// localized label. The first entry is the primary status; a session can carry a
+// secondary running-subagent entry after it.
+type StatusEntry struct {
+	State string `json:"state"`
+	Label string `json:"label"`
+}
+
+// SessionStatus is the live status of one session row (dsh ui-workspace
+// sessionStatuses): the primary dot State (warning/ongoing/done/idle) and the
+// ordered statuses used for the dot, the screen-reader labels and the hover
+// card. State is empty when the webserver has no status provider wired.
+type SessionStatus struct {
+	State    string        `json:"state,omitempty"`
+	Statuses []StatusEntry `json:"statuses,omitempty"`
+}
+
 // M10 W4 (D-WEB2-H) adds the session-list fields the dsh-style sidebar needs:
 // title (first user message, bounded) and blank (no events yet). P6 adds
 // workspace_id for the grouped sidebar view; P6.2 adds archived and sort.
 type sessionView struct {
-	ID          string    `json:"id"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	EventCount  int       `json:"event_count"`
-	Title       string    `json:"title,omitempty"`
-	Blank       bool      `json:"blank"`
-	WorkspaceID string    `json:"workspace_id,omitempty"`
-	Archived    bool      `json:"archived,omitempty"`
-	Sort        int       `json:"sort,omitempty"`
-	FlatSort    int       `json:"flat_sort,omitempty"`
+	ID          string       `json:"id"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
+	EventCount  int          `json:"event_count"`
+	Title       string       `json:"title,omitempty"`
+	Blank       bool         `json:"blank"`
+	WorkspaceID string       `json:"workspace_id,omitempty"`
+	Archived    bool         `json:"archived,omitempty"`
+	Sort        int          `json:"sort,omitempty"`
+	FlatSort    int          `json:"flat_sort,omitempty"`
+	Status      SessionStatus `json:"status,omitempty"`
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -611,6 +646,9 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		v := sessionView{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, EventCount: m.EventCount, Blank: m.EventCount == 0, WorkspaceID: m.WorkspaceID, Sort: m.Sort, FlatSort: m.FlatSort}
+		if s.statusFn != nil {
+			v.Status = s.statusFn(r.Context(), m)
+		}
 		if m.Title != "" {
 			// Accepted title (fallback / LLM / user rename), normalized at
 			// write; re-normalize defensively for legacy rows.

@@ -121,6 +121,10 @@ func (a *app) registerWebServer() error {
 	srv.SetEventSource(func(sessionID string, sink func(session.Event)) func() {
 		return a.hub.SubscribeInto(sessionID, sink)
 	})
+	// dsh-session-status: wire the live per-session status computation so the
+	// sidebar renders the status dot + hover card from runtime state (running
+	// turn / running subagents / pending interaction / finished-but-unviewed).
+	srv.SetSessionStatusProvider(a.sessionStatus)
 	// M10 W2 (ADR D-WEB2-D): inject the sanitized config view. webConfig never
 	// exposes web_server.token or any key — the webserver only forwards it.
 	srv.SetConfigProvider(a.webConfig)
@@ -230,6 +234,10 @@ func (a *app) webMessage(ctx context.Context, sessionID, text string, images []l
 	// scheduled. This runs after the turn, outside turnMu, so it never delays
 	// the answer.
 	a.ensureSessionTitle(ctx, sessionID)
+	// dsh-session-status: keep this session out of the finished-but-unviewed
+	// reminder while the user is on it (the turn above bumped updated_at past
+	// the previous view, so this restores last_viewed_at >= updated_at).
+	a.markSessionViewed(ctx, sessionID)
 	return nil
 }
 

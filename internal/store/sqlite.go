@@ -60,6 +60,7 @@ func migrateSchema(db *sql.DB) error {
 		{"sessions", "archived_at", `ALTER TABLE sessions ADD COLUMN archived_at INTEGER`},
 		{"sessions", "sort", `ALTER TABLE sessions ADD COLUMN sort INTEGER NOT NULL DEFAULT 0`},
 		{"sessions", "flat_sort", `ALTER TABLE sessions ADD COLUMN flat_sort INTEGER NOT NULL DEFAULT 0`},
+		{"sessions", "last_viewed_at", `ALTER TABLE sessions ADD COLUMN last_viewed_at INTEGER`},
 	}
 	for _, st := range steps {
 		if _, err := db.Exec(st.ddl); err != nil {
@@ -212,7 +213,7 @@ func (s *SQLiteStore) LoadSession(ctx context.Context, sessionID string) ([]sess
 // manual drag order of the flat view.
 func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT s.id, s.created_at, s.updated_at, s.title, s.title_source, s.workspace_id, s.archived_at, s.sort, s.flat_sort, COUNT(e.seq)
+		SELECT s.id, s.created_at, s.updated_at, s.title, s.title_source, s.workspace_id, s.archived_at, s.sort, s.flat_sort, s.last_viewed_at, COUNT(e.seq)
 		FROM sessions s LEFT JOIN events e ON e.session_id = s.id
 		GROUP BY s.id
 		ORDER BY s.updated_at DESC, s.created_at DESC`)
@@ -225,9 +226,9 @@ func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 		var m SessionMeta
 		var created, updated int64
 		var title, titleSource, workspaceID sql.NullString
-		var archived sql.NullInt64
+		var archived, lastViewed sql.NullInt64
 		var count int
-		if err := rows.Scan(&m.ID, &created, &updated, &title, &titleSource, &workspaceID, &archived, &m.Sort, &m.FlatSort, &count); err != nil {
+		if err := rows.Scan(&m.ID, &created, &updated, &title, &titleSource, &workspaceID, &archived, &m.Sort, &m.FlatSort, &lastViewed, &count); err != nil {
 			return nil, fmt.Errorf("store: scan session meta: %w", err)
 		}
 		m.CreatedAt = time.Unix(0, created).UTC()
@@ -237,6 +238,9 @@ func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 		m.WorkspaceID = workspaceID.String
 		if archived.Valid {
 			m.ArchivedAt = time.Unix(0, archived.Int64).UTC()
+		}
+		if lastViewed.Valid {
+			m.LastViewedAt = time.Unix(0, lastViewed.Int64).UTC()
 		}
 		m.EventCount = count
 		metas = append(metas, m)
@@ -411,13 +415,13 @@ func (s *SQLiteStore) GetSessionMeta(ctx context.Context, sessionID string) (Ses
 	var m SessionMeta
 	var created, updated int64
 	var title, titleSource, workspaceID sql.NullString
-	var archived sql.NullInt64
+	var archived, lastViewed sql.NullInt64
 	var count int
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT s.id, s.created_at, s.updated_at, s.title, s.title_source, s.workspace_id, s.archived_at, s.sort, s.flat_sort, COUNT(e.seq)
+		SELECT s.id, s.created_at, s.updated_at, s.title, s.title_source, s.workspace_id, s.archived_at, s.sort, s.flat_sort, s.last_viewed_at, COUNT(e.seq)
 		FROM sessions s LEFT JOIN events e ON e.session_id = s.id
 		WHERE s.id = ?`, sessionID).Scan(
-		&m.ID, &created, &updated, &title, &titleSource, &workspaceID, &archived, &m.Sort, &m.FlatSort, &count,
+		&m.ID, &created, &updated, &title, &titleSource, &workspaceID, &archived, &m.Sort, &m.FlatSort, &lastViewed, &count,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return SessionMeta{}, fmt.Errorf("%w: %q", ErrNotFound, sessionID)
@@ -432,8 +436,25 @@ func (s *SQLiteStore) GetSessionMeta(ctx context.Context, sessionID string) (Ses
 	if archived.Valid {
 		m.ArchivedAt = time.Unix(0, archived.Int64).UTC()
 	}
+	if lastViewed.Valid {
+		m.LastViewedAt = time.Unix(0, lastViewed.Int64).UTC()
+	}
 	m.EventCount = count
 	return m, nil
+}
+
+// MarkSessionViewed records that a session was opened or messaged, clearing the
+// finished-but-unviewed reminder (dsh status.completed). ErrNotFound when the
+// id has no row.
+func (s *SQLiteStore) MarkSessionViewed(ctx context.Context, sessionID string, at time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions SET last_viewed_at = ? WHERE id = ?`, unixNano(at), sessionID)
+	if err != nil {
+		return fmt.Errorf("store: mark session %q viewed: %w", sessionID, err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("%w: %q", ErrNotFound, sessionID)
+	}
+	return nil
 }
 
 // DeleteSession removes the session row; events cascade (ON DELETE CASCADE,

@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jabing/shutu-agent/internal/attachment"
@@ -556,6 +557,12 @@ type app struct {
 	// turnMu serializes every turn (D5): the REPL and the web message API share
 	// one loop, so at most one Run executes at any moment (M10 W1, D-WEB2-A).
 	turnMu sync.Mutex
+	// runningSession is the session id whose turn is currently in flight, or ""
+	// when idle. It is published by runTurn under turnMu and read atomically by
+	// the sidebar status provider, so the webserver always sees a consistent
+	// "running" dot without touching a.currentID (which other handlers mutate).
+	// dsh-session-status alignment.
+	runningSession atomic.Value
 	// hub is the M10 W1 real-time event broadcaster (ADR D-WEB2-B): attachSink
 	// publishes each persisted event of the current session, and the web's SSE
 	// streams subscribe per session id. Always created in main; attachSink also
@@ -627,6 +634,7 @@ func (a *app) newSession(ctx context.Context) error {
 	a.log = session.New()
 	a.attachSink(ctx)
 	a.bindSpillOwner()
+	a.markSessionViewed(ctx, id)
 	return nil
 }
 
@@ -646,6 +654,9 @@ func (a *app) resumeSession(ctx context.Context, id string) error {
 	}
 	a.attachSink(ctx)
 	a.bindSpillOwner()
+	// Opening a session clears its finished-but-unviewed reminder (dsh
+	// status.completed is cleared by opening).
+	a.markSessionViewed(ctx, id)
 	return nil
 }
 
@@ -740,6 +751,11 @@ func (a *app) buildLoop(onText func(string), onError func(error)) *loop.Loop {
 func (a *app) runTurn(ctx context.Context, text string, interactive bool) error {
 	a.turnMu.Lock()
 	defer a.turnMu.Unlock()
+	// Publish the running session so the sidebar status dot reflects the live
+	// turn; cleared when the turn settles (the deferred store runs before the
+	// unlock, so a concurrent list read sees the fully-settled session).
+	defer a.runningSession.Store("")
+	a.runningSession.Store(a.currentID)
 	if interactive {
 		return a.newLoop().Run(ctx, text)
 	}

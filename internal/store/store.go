@@ -40,6 +40,11 @@ type SessionMeta struct {
 	// (P6.3): zero means "fall back to updated activity". It is independent
 	// from the per-workspace Sort.
 	FlatSort int
+	// LastViewedAt is when the session was last opened/messaged in the UI.
+	// Zero means never viewed; its presence lets the sidebar's finished-
+	// but-unviewed reminder (dsh status.completed) distinguish a session that
+	// finished work the user has not opened yet.
+	LastViewedAt time.Time
 }
 
 // SearchHit is one session that matched a body-text query, with the first
@@ -86,6 +91,10 @@ type Store interface {
 	// the stored title and its source and returns to inference. ErrNotFound
 	// when the id has no row.
 	SetSessionTitle(ctx context.Context, sessionID, title, source string) error
+	// MarkSessionViewed records that a session was opened or messaged at the
+	// given time, clearing any finished-but-unviewed reminder. ErrNotFound
+	// when the id has no row.
+	MarkSessionViewed(ctx context.Context, sessionID string, at time.Time) error
 	// SetSessionWorkspace moves a session into a workspace; an empty
 	// workspaceID returns it to the ungrouped bucket. ErrNotFound when the
 	// session id has no row.
