@@ -93,7 +93,7 @@ func mcpPolicy() tools.Policy {
 func makeMcpApp(enabled bool, servers []config.McpServer, f mcp.Factory) *app {
 	return &app{
 		cfg: config.Config{
-			Mcp: config.McpConfig{Enabled: enabled, Servers: servers},
+			Mcp: config.McpConfig{Enabled: config.Bool(enabled), Servers: servers},
 		},
 		reg:        tools.New(),
 		log:        session.New(),

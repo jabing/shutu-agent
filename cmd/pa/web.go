@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/tools"
 	"github.com/jabing/shutu-agent/internal/web"
 )
@@ -24,7 +25,7 @@ import (
 // search_enabled/fetch_enabled 开关（dispatch-m7-2 §6 决策：按 dsh
 // {search:true, fetch:true} 语义简化为 web.enabled 总开关）。
 func (a *app) registerWeb() error {
-	if !a.cfg.Web.Enabled {
+	if !config.Enabled(a.cfg.Web.Enabled) {
 		return nil
 	}
 	engine := web.NewEngine()

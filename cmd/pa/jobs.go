@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/jobs"
 	"github.com/jabing/shutu-agent/internal/tools"
 )
@@ -21,7 +22,7 @@ import (
 // when jobs.enabled, and wires the D3 event sink. When jobs is disabled it
 // creates nothing and registers nothing (D10, mirrors registerKB).
 func (a *app) registerJobs() error {
-	if !a.cfg.Jobs.Enabled {
+	if !config.Enabled(a.cfg.Jobs.Enabled) {
 		return nil
 	}
 	a.jobs = jobs.NewLocal(jobs.LocalOpts{MaxConcurrentJobsPerOwner: a.cfg.Jobs.MaxConcurrentJobsPerOwner})

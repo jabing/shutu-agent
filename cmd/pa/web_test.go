@@ -16,7 +16,7 @@ import (
 func makeWebApp(webEnabled bool) *app {
 	return &app{
 		cfg: config.Config{
-			Web: config.WebConfig{Enabled: webEnabled},
+			Web: config.WebConfig{Enabled: config.Bool(webEnabled)},
 		},
 		reg: tools.New(),
 		log: session.New(),

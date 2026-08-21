@@ -28,7 +28,7 @@ func skillWebFixture(t *testing.T) (*app, string, string) {
 		t.Fatalf("mkdir .git: %v", err)
 	}
 	a := &app{
-		cfg:              config.Config{Skill: config.SkillConfig{Enabled: true}},
+		cfg:              config.Config{Skill: config.SkillConfig{Enabled: config.Bool(true)}},
 		reg:              tools.New(),
 		log:              session.New(),
 		currentID:        "s-test",
@@ -248,7 +248,7 @@ func TestWebSkillManagerIndependentOfEnabled(t *testing.T) {
 		t.Fatalf("mkdir .git: %v", err)
 	}
 	a := &app{
-		cfg:              config.Config{Skill: config.SkillConfig{Enabled: false}},
+		cfg:              config.Config{Skill: config.SkillConfig{Enabled: config.Bool(false)}},
 		reg:              tools.New(),
 		log:              session.New(),
 		currentID:        "s-test",

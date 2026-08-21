@@ -58,7 +58,7 @@ func defaultCompactionEstimator(log *session.Log) int {
 // injector, manual through the /compact command. The engine holds no closable
 // resources (it shares the caller-owned LLM), so there is no deferred Close.
 func (a *app) registerCompaction() error {
-	if !a.cfg.Compaction.Enabled {
+	if !config.Enabled(a.cfg.Compaction.Enabled) {
 		return nil
 	}
 	a.compaction = compaction.NewBasic(compaction.BasicOpts{

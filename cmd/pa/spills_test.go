@@ -17,7 +17,7 @@ import (
 func makeSpillApp(spillEnabled bool, autoSpill *bool) *app {
 	return &app{
 		cfg: config.Config{
-			Spill: config.SpillConfig{Enabled: spillEnabled, AutoSpill: autoSpill},
+			Spill: config.SpillConfig{Enabled: config.Bool(spillEnabled), AutoSpill: autoSpill},
 		},
 		reg:       tools.New(),
 		log:       session.New(),

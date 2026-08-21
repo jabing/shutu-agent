@@ -9,6 +9,28 @@ import (
 	"time"
 )
 
+// defaultOnCaps returns the consumer-tool names appended to the whitelist when
+// every capability is at its (now enabled-by-default) state. Order matches
+// applyDefaults. Compaction is intentionally absent: it has no tools.
+func defaultOnCaps() []string {
+	var names []string
+	for _, group := range [][]string{kbToolNames, jobsToolNames, subagentToolNames,
+		skillToolNames, scheduleToolNames, planToolNames, spillToolNames,
+		interactToolNames, codeToolNames, mcpToolNames, fsToolNames,
+		webToolNames, terminalToolNames, evalToolNames, fsSearchToolNames,
+		ralphToolNames, workflowToolNames} {
+		names = append(names, group...)
+	}
+	return names
+}
+
+// defaultOnWhitelist is the full execution whitelist when every capability is
+// at its (now enabled) default: the read-only base plus all consumer tools.
+func defaultOnWhitelist() []string {
+	w := append([]string(nil), defaultEnabledTools...)
+	return append(w, defaultOnCaps()...)
+}
+
 func TestLoadDefaultsWhenFileMissing(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
 	if err != nil {
@@ -79,14 +101,15 @@ func TestLoadEmptyBaseURLMeansProviderDefault(t *testing.T) {
 	}
 }
 
-// M3: a config without a tools section must carry the safe defaults — the
-// read-only whitelist, a 30s deadline, and a 64KB output limit (dispatch-m3).
+// M3 (dsh 对齐): a config without a tools section must carry the defaults — the
+// read-only whitelist base, a 30s deadline, a 64KB output limit, and every
+// capability's consumer tools (all capabilities now default-on).
 func TestLoadToolsDefaultsWhenAbsent(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	want := []string{"get_time", "read_file"}
+	want := defaultOnWhitelist()
 	if !reflect.DeepEqual(cfg.Tools.Enabled, want) {
 		t.Errorf("enabled = %v, want %v", cfg.Tools.Enabled, want)
 	}
@@ -120,7 +143,8 @@ tools:
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !reflect.DeepEqual(cfg.Tools.Enabled, []string{"read_file", "run_command"}) {
+	want := append([]string{"read_file", "run_command"}, defaultOnCaps()...)
+	if !reflect.DeepEqual(cfg.Tools.Enabled, want) {
 		t.Errorf("enabled = %v", cfg.Tools.Enabled)
 	}
 	if cfg.Tools.Timeout.Duration != 5*time.Second {
@@ -197,8 +221,8 @@ func TestLoadKBDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.KB.Enabled {
-		t.Error("kb must be disabled by default (D10)")
+	if !Enabled(cfg.KB.Enabled) {
+		t.Error("KB must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	wantPath := filepath.Join(cfg.DataDir, "kb", "knowledge.sqlite")
 	if cfg.KB.DBPath != wantPath {
@@ -225,7 +249,7 @@ func TestLoadParsesKBSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.KB.Enabled {
+	if !Enabled(cfg.KB.Enabled) {
 		t.Error("kb.enabled should be true")
 	}
 	if cfg.KB.DBPath != "/tmp/kb.sqlite" {
@@ -339,8 +363,8 @@ func TestLoadKBEnabledAppendsToolsToWhitelist(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	for _, name := range kbToolNames {
-		if contains(cfg2.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when kb disabled", cfg2.Tools.Enabled, name)
+		if !contains(cfg2.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when kb ENABLED by default", cfg2.Tools.Enabled, name)
 		}
 	}
 }
@@ -377,8 +401,8 @@ func TestLoadKBDBPathFollowsDataDir(t *testing.T) {
 	if cfg.KB.DBPath != want {
 		t.Errorf("kb.db_path = %q, want %q", cfg.KB.DBPath, want)
 	}
-	if cfg.KB.Enabled {
-		t.Error("kb must stay disabled by default (D10)")
+	if !Enabled(cfg.KB.Enabled) {
+		t.Error("KB must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 }
 
@@ -389,8 +413,8 @@ func TestLoadJobsDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Jobs.Enabled {
-		t.Error("jobs must be disabled by default (D10)")
+	if !Enabled(cfg.Jobs.Enabled) {
+		t.Error("Jobs must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	if cfg.Jobs.MaxConcurrentJobsPerOwner != DefaultMaxConcurrentJobsPerOwner {
 		t.Errorf("jobs.max_concurrent_jobs_per_owner = %d, want default %d",
@@ -398,8 +422,8 @@ func TestLoadJobsDefaultsWhenAbsent(t *testing.T) {
 	}
 	// With jobs disabled no job tool may be whitelisted.
 	for _, name := range jobsToolNames {
-		if contains(cfg.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when jobs disabled", cfg.Tools.Enabled, name)
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when jobs ENABLED by default", cfg.Tools.Enabled, name)
 		}
 	}
 }
@@ -464,8 +488,8 @@ func TestLoadSubagentDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Subagent.Enabled {
-		t.Error("subagent must be disabled by default (D10)")
+	if !Enabled(cfg.Subagent.Enabled) {
+		t.Error("Subagent must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	if cfg.Subagent.MaxDepth != DefaultSubagentMaxDepth {
 		t.Errorf("subagent.max_depth = %d, want default %d", cfg.Subagent.MaxDepth, DefaultSubagentMaxDepth)
@@ -474,8 +498,8 @@ func TestLoadSubagentDefaultsWhenAbsent(t *testing.T) {
 		t.Errorf("subagent.default_provider = %q, want default %q", cfg.Subagent.DefaultProvider, DefaultSubagentProvider)
 	}
 	for _, name := range subagentToolNames {
-		if contains(cfg.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when subagent disabled", cfg.Tools.Enabled, name)
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when subagent ENABLED by default", cfg.Tools.Enabled, name)
 		}
 	}
 }
@@ -492,7 +516,7 @@ func TestLoadSubagentParsesSectionAndFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Subagent.Enabled {
+	if !Enabled(cfg.Subagent.Enabled) {
 		t.Error("subagent.enabled should be true")
 	}
 	if cfg.Subagent.MaxDepth != 4 {
@@ -581,8 +605,8 @@ func TestLoadCompactionDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Compaction.Enabled {
-		t.Error("compaction must be disabled by default (D10)")
+	if !Enabled(cfg.Compaction.Enabled) {
+		t.Error("Compaction must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	if cfg.Compaction.TokenThreshold != DefaultCompactionTokenThreshold {
 		t.Errorf("compaction.token_threshold = %d, want default %d",
@@ -595,9 +619,9 @@ func TestLoadCompactionDefaultsWhenAbsent(t *testing.T) {
 	if cfg.Compaction.MaxChars != 0 {
 		t.Errorf("compaction.max_chars = %d, want 0 (engine default)", cfg.Compaction.MaxChars)
 	}
-	// The default whitelist must stay exactly the read-only pair: compaction
-	// adds no tools.
-	want := []string{"get_time", "read_file"}
+	// The whitelist is the full default-on set (all capability tools):
+	// compaction adds no tools of its own.
+	want := defaultOnWhitelist()
 	if !reflect.DeepEqual(cfg.Tools.Enabled, want) {
 		t.Errorf("whitelist = %v, want %v (compaction adds nothing)", cfg.Tools.Enabled, want)
 	}
@@ -616,7 +640,7 @@ func TestLoadCompactionParsesSectionAndFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Compaction.Enabled {
+	if !Enabled(cfg.Compaction.Enabled) {
 		t.Error("compaction.enabled should be true")
 	}
 	if cfg.Compaction.TokenThreshold != 50000 {
@@ -664,9 +688,9 @@ func TestLoadCompactionEnabledDoesNotAppendToolsToWhitelist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	// Enabling compaction leaves the whitelist exactly at the read-only pair:
+	// Enabling compaction leaves the whitelist exactly at the default-on set:
 	// no compaction tool exists to add, and none is invented.
-	want := []string{"get_time", "read_file"}
+	want := defaultOnWhitelist()
 	if !reflect.DeepEqual(cfg.Tools.Enabled, want) {
 		t.Errorf("whitelist = %v, want %v (compaction.enabled adds nothing)", cfg.Tools.Enabled, want)
 	}
@@ -680,8 +704,8 @@ func TestLoadSkillDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Skill.Enabled {
-		t.Error("skill must be disabled by default (D10)")
+	if !Enabled(cfg.Skill.Enabled) {
+		t.Error("Skill must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	if len(cfg.Skill.Dirs) != 0 {
 		t.Errorf("skill.dirs = %v, want empty", cfg.Skill.Dirs)
@@ -695,8 +719,8 @@ func TestLoadSkillDefaultsWhenAbsent(t *testing.T) {
 			cfg.Skill.BodyMaxChars, DefaultSkillBodyMaxChars)
 	}
 	for _, name := range skillToolNames {
-		if contains(cfg.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when skill disabled", cfg.Tools.Enabled, name)
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when skill ENABLED by default", cfg.Tools.Enabled, name)
 		}
 	}
 }
@@ -713,7 +737,7 @@ func TestLoadSkillParsesSectionAndFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Skill.Enabled {
+	if !Enabled(cfg.Skill.Enabled) {
 		t.Error("skill.enabled should be true")
 	}
 	if len(cfg.Skill.Dirs) != 2 || cfg.Skill.Dirs[0] != `C:\skills` || cfg.Skill.Dirs[1] != `D:\more` {
@@ -772,16 +796,16 @@ func TestLoadScheduleDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Schedule.Enabled {
-		t.Error("schedule must be disabled by default (D10)")
+	if !Enabled(cfg.Schedule.Enabled) {
+		t.Error("Schedule must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	if cfg.Schedule.TickInterval.Duration != DefaultScheduleTickInterval {
 		t.Errorf("schedule.tick_interval = %v, want default %v",
 			cfg.Schedule.TickInterval.Duration, DefaultScheduleTickInterval)
 	}
 	for _, name := range scheduleToolNames {
-		if contains(cfg.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when schedule disabled", cfg.Tools.Enabled, name)
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when schedule ENABLED by default", cfg.Tools.Enabled, name)
 		}
 	}
 }
@@ -798,7 +822,7 @@ func TestLoadScheduleParsesSectionAndFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Schedule.Enabled {
+	if !Enabled(cfg.Schedule.Enabled) {
 		t.Error("schedule.enabled should be true")
 	}
 	if cfg.Schedule.TickInterval.Duration != 30*time.Second {
@@ -846,12 +870,12 @@ func TestLoadPlanDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Plan.Enabled {
-		t.Error("plan must be disabled by default (D10)")
+	if !Enabled(cfg.Plan.Enabled) {
+		t.Error("Plan must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	for _, name := range planToolNames {
-		if contains(cfg.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when plan disabled", cfg.Tools.Enabled, name)
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when plan ENABLED by default", cfg.Tools.Enabled, name)
 		}
 	}
 }
@@ -867,7 +891,7 @@ func TestLoadPlanParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Plan.Enabled {
+	if !Enabled(cfg.Plan.Enabled) {
 		t.Error("plan.enabled should be true")
 	}
 
@@ -879,7 +903,7 @@ func TestLoadPlanParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg2.Plan.Enabled {
+	if Enabled(cfg2.Plan.Enabled) {
 		t.Error("plan.enabled = true, want false (explicitly disabled)")
 	}
 	for _, name := range planToolNames {
@@ -916,15 +940,15 @@ func TestLoadSpillDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Spill.Enabled {
-		t.Error("spill must be disabled by default (D10)")
+	if !Enabled(cfg.Spill.Enabled) {
+		t.Error("Spill must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	if !cfg.Spill.AutoSpillValue() {
 		t.Error("auto_spill must default to true (absent ⇒ true)")
 	}
 	for _, name := range spillToolNames {
-		if contains(cfg.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when spill disabled", cfg.Tools.Enabled, name)
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when spill ENABLED by default", cfg.Tools.Enabled, name)
 		}
 	}
 }
@@ -941,7 +965,7 @@ func TestLoadSpillParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Spill.Enabled {
+	if Enabled(cfg.Spill.Enabled) {
 		t.Error("spill.enabled = true, want false (explicitly disabled)")
 	}
 	if cfg.Spill.AutoSpillValue() {
@@ -962,7 +986,7 @@ func TestLoadSpillParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg2.Spill.Enabled {
+	if !Enabled(cfg2.Spill.Enabled) {
 		t.Error("spill.enabled should be true")
 	}
 	if !cfg2.Spill.AutoSpillValue() {
@@ -997,15 +1021,15 @@ func TestLoadInteractDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Interact.Enabled {
-		t.Error("interact must be disabled by default (D10)")
+	if !Enabled(cfg.Interact.Enabled) {
+		t.Error("Interact must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	if len(cfg.Interact.SensitiveTools) != 0 {
 		t.Errorf("interact.sensitive_tools = %v, want empty (no gating by default)", cfg.Interact.SensitiveTools)
 	}
 	for _, name := range interactToolNames {
-		if contains(cfg.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when interact disabled", cfg.Tools.Enabled, name)
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when interact ENABLED by default", cfg.Tools.Enabled, name)
 		}
 	}
 }
@@ -1022,7 +1046,7 @@ func TestLoadInteractParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Interact.Enabled {
+	if !Enabled(cfg.Interact.Enabled) {
 		t.Error("interact.enabled should be true")
 	}
 	if len(cfg.Interact.SensitiveTools) != 2 || cfg.Interact.SensitiveTools[0] != "run_command" || cfg.Interact.SensitiveTools[1] != "job_start" {
@@ -1038,7 +1062,7 @@ func TestLoadInteractParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg2.Interact.Enabled {
+	if Enabled(cfg2.Interact.Enabled) {
 		t.Error("interact.enabled = true, want false (explicitly disabled)")
 	}
 	if len(cfg2.Interact.SensitiveTools) != 0 {
@@ -1080,8 +1104,8 @@ func TestLoadCodeDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Code.Enabled {
-		t.Error("code must be disabled by default (D10)")
+	if !Enabled(cfg.Code.Enabled) {
+		t.Error("Code must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	if cfg.Code.Timeout.Duration != DefaultCodeTimeout {
 		t.Errorf("code.timeout = %v, want default %v", cfg.Code.Timeout.Duration, DefaultCodeTimeout)
@@ -1096,8 +1120,8 @@ func TestLoadCodeDefaultsWhenAbsent(t *testing.T) {
 		t.Error("code.allow_network must default to false (declarative no-network boundary)")
 	}
 	for _, name := range codeToolNames {
-		if contains(cfg.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when code disabled", cfg.Tools.Enabled, name)
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when code ENABLED by default", cfg.Tools.Enabled, name)
 		}
 	}
 }
@@ -1114,7 +1138,7 @@ func TestLoadCodeParsesSectionAndFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Code.Enabled {
+	if !Enabled(cfg.Code.Enabled) {
 		t.Error("code.enabled should be true")
 	}
 	if cfg.Code.Timeout.Duration != 5*time.Second {
@@ -1175,7 +1199,7 @@ func TestLoadCodeEnabledAppendsToolsToWhitelist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg2.Code.Enabled {
+	if Enabled(cfg2.Code.Enabled) {
 		t.Error("code.enabled = true, want false (explicitly disabled)")
 	}
 	for _, name := range codeToolNames {
@@ -1193,15 +1217,15 @@ func TestLoadMcpDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Mcp.Enabled {
-		t.Error("mcp must be disabled by default (D10)")
+	if !Enabled(cfg.Mcp.Enabled) {
+		t.Error("Mcp must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	if len(cfg.Mcp.Servers) != 0 {
 		t.Errorf("mcp.servers = %v, want empty", cfg.Mcp.Servers)
 	}
 	for _, name := range mcpToolNames {
-		if contains(cfg.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when mcp disabled", cfg.Tools.Enabled, name)
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when mcp ENABLED by default", cfg.Tools.Enabled, name)
 		}
 	}
 }
@@ -1219,7 +1243,7 @@ func TestLoadMcpParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Mcp.Enabled {
+	if !Enabled(cfg.Mcp.Enabled) {
 		t.Error("mcp.enabled should be true")
 	}
 	if len(cfg.Mcp.Servers) != 2 {
@@ -1246,7 +1270,7 @@ func TestLoadMcpParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg2.Mcp.Enabled {
+	if Enabled(cfg2.Mcp.Enabled) {
 		t.Error("mcp.enabled = true, want false (explicitly disabled)")
 	}
 	for _, name := range mcpToolNames {
@@ -1285,15 +1309,15 @@ func TestLoadFsDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Fs.Enabled {
-		t.Error("fs must be disabled by default (D10)")
+	if !Enabled(cfg.Fs.Enabled) {
+		t.Error("Fs must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	if cfg.Fs.Root != "" {
 		t.Errorf("fs.root = %q, want empty (default <project>)", cfg.Fs.Root)
 	}
 	for _, name := range fsToolNames {
-		if contains(cfg.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when fs disabled", cfg.Tools.Enabled, name)
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when fs ENABLED by default", cfg.Tools.Enabled, name)
 		}
 	}
 }
@@ -1310,7 +1334,7 @@ func TestLoadFsParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Fs.Enabled {
+	if !Enabled(cfg.Fs.Enabled) {
 		t.Error("fs.enabled should be true")
 	}
 	if cfg.Fs.Root != `C:\workspace` {
@@ -1326,7 +1350,7 @@ func TestLoadFsParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg2.Fs.Enabled {
+	if Enabled(cfg2.Fs.Enabled) {
 		t.Error("fs.enabled = true, want false (explicitly disabled)")
 	}
 	for _, name := range fsToolNames {
@@ -1363,12 +1387,12 @@ func TestLoadFsSearchDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.FsSearch.Enabled {
-		t.Error("fs_search must be disabled by default (D10)")
+	if !Enabled(cfg.FsSearch.Enabled) {
+		t.Error("FsSearch must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	for _, name := range fsSearchToolNames {
-		if contains(cfg.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when fs_search disabled", cfg.Tools.Enabled, name)
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when fs_search ENABLED by default", cfg.Tools.Enabled, name)
 		}
 	}
 }
@@ -1384,7 +1408,7 @@ func TestLoadFsSearchParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.FsSearch.Enabled {
+	if !Enabled(cfg.FsSearch.Enabled) {
 		t.Error("fs_search.enabled should be true")
 	}
 
@@ -1396,7 +1420,7 @@ func TestLoadFsSearchParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg2.FsSearch.Enabled {
+	if Enabled(cfg2.FsSearch.Enabled) {
 		t.Error("fs_search.enabled = true, want false (explicitly disabled)")
 	}
 	for _, name := range fsSearchToolNames {
@@ -1431,12 +1455,12 @@ func TestLoadRalphDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Ralph.Enabled {
-		t.Error("ralph must be disabled by default (D10)")
+	if !Enabled(cfg.Ralph.Enabled) {
+		t.Error("Ralph must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	for _, name := range ralphToolNames {
-		if contains(cfg.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when ralph disabled", cfg.Tools.Enabled, name)
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when ralph ENABLED by default", cfg.Tools.Enabled, name)
 		}
 	}
 }
@@ -1452,7 +1476,7 @@ func TestLoadRalphParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Ralph.Enabled {
+	if !Enabled(cfg.Ralph.Enabled) {
 		t.Error("ralph.enabled should be true")
 	}
 
@@ -1464,7 +1488,7 @@ func TestLoadRalphParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg2.Ralph.Enabled {
+	if Enabled(cfg2.Ralph.Enabled) {
 		t.Error("ralph.enabled = true, want false (explicitly disabled)")
 	}
 	for _, name := range ralphToolNames {
@@ -1500,15 +1524,15 @@ func TestLoadWorkflowDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Workflow.Enabled {
-		t.Error("workflow must be disabled by default (D10)")
+	if !Enabled(cfg.Workflow.Enabled) {
+		t.Error("Workflow must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	if cfg.Workflow.MaxConcurrent != DefaultWorkflowMaxConcurrent {
 		t.Errorf("workflow.max_concurrent = %d, want %d", cfg.Workflow.MaxConcurrent, DefaultWorkflowMaxConcurrent)
 	}
 	for _, name := range workflowToolNames {
-		if contains(cfg.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when workflow disabled", cfg.Tools.Enabled, name)
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when workflow ENABLED by default", cfg.Tools.Enabled, name)
 		}
 	}
 }
@@ -1525,7 +1549,7 @@ func TestLoadWorkflowParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Workflow.Enabled {
+	if !Enabled(cfg.Workflow.Enabled) {
 		t.Error("workflow.enabled should be true")
 	}
 	if cfg.Workflow.MaxConcurrent != 2 {
@@ -1545,7 +1569,7 @@ func TestLoadWorkflowParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg2.Workflow.Enabled {
+	if Enabled(cfg2.Workflow.Enabled) {
 		t.Error("workflow.enabled = true, want false (explicitly disabled)")
 	}
 	if cfg2.Workflow.MaxConcurrent != DefaultWorkflowMaxConcurrent {
@@ -1597,8 +1621,8 @@ func TestLoadWebDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Web.Enabled {
-		t.Error("web must be disabled by default (D10)")
+	if !Enabled(cfg.Web.Enabled) {
+		t.Error("Web must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	if cfg.Web.SearchMaxResults != DefaultWebSearchMaxResults {
 		t.Errorf("web.search_max_results = %d, want %d", cfg.Web.SearchMaxResults, DefaultWebSearchMaxResults)
@@ -1635,8 +1659,8 @@ func TestLoadWebDefaultsWhenAbsent(t *testing.T) {
 		t.Errorf("web.deepseek defaults not applied: %+v", cfg.Web.DeepSeek)
 	}
 	for _, name := range webToolNames {
-		if contains(cfg.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when web disabled", cfg.Tools.Enabled, name)
+		if !contains(cfg.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when web ENABLED by default", cfg.Tools.Enabled, name)
 		}
 	}
 }
@@ -1671,7 +1695,7 @@ func TestLoadWebParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Web.Enabled {
+	if !Enabled(cfg.Web.Enabled) {
 		t.Error("web.enabled should be true")
 	}
 	if cfg.Web.SearchMaxResults != 12 || cfg.Web.SearchMaxQueries != 6 || cfg.Web.SearchTimeoutMs != 60000 {
@@ -1698,7 +1722,7 @@ func TestLoadWebParsesSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg2.Web.Enabled {
+	if Enabled(cfg2.Web.Enabled) {
 		t.Error("web.enabled = true, want false (explicitly disabled)")
 	}
 	for _, name := range webToolNames {
@@ -1991,8 +2015,8 @@ func TestLoadMultimodalMaxRequestImageBytes(t *testing.T) {
 func TestTerminalDefaults(t *testing.T) {
 	var cfg Config
 	applyDefaults(&cfg)
-	if cfg.Terminal.Enabled {
-		t.Error("terminal must be disabled by default (D10)")
+	if !Enabled(cfg.Terminal.Enabled) {
+		t.Error("Terminal must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	if cfg.Terminal.ScrollbackMaxBytes != DefaultTerminalScrollbackMaxBytes {
 		t.Errorf("terminal.scrollback_max_bytes = %d, want default %d",
@@ -2024,14 +2048,14 @@ func TestTerminalEnabledWhitelists(t *testing.T) {
 	var disabled Config
 	applyDefaults(&disabled)
 	for _, name := range terminalToolNames {
-		if contains(disabled.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when terminal disabled", disabled.Tools.Enabled, name)
+		if !contains(disabled.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when terminal ENABLED by default", disabled.Tools.Enabled, name)
 		}
 	}
 
 	// Enabled: all five terminal_* tools enter the whitelist.
 	var enabled Config
-	enabled.Terminal.Enabled = true
+	enabled.Terminal.Enabled = Bool(true)
 	applyDefaults(&enabled)
 	for _, name := range terminalToolNames {
 		if !contains(enabled.Tools.Enabled, name) {
@@ -2046,8 +2070,8 @@ func TestTerminalEnabledWhitelists(t *testing.T) {
 func TestEvalDefaults(t *testing.T) {
 	var cfg Config
 	applyDefaults(&cfg)
-	if cfg.Eval.Enabled {
-		t.Error("eval must be disabled by default (D10)")
+	if !Enabled(cfg.Eval.Enabled) {
+		t.Error("Eval must be ENABLED by default (dsh 对齐; D10 default-off is now opt-out)")
 	}
 	if cfg.Eval.ManualFallback == nil {
 		t.Fatal("eval.manual_fallback must be non-nil after applyDefaults")
@@ -2068,14 +2092,14 @@ func TestEvalEnabledWhitelists(t *testing.T) {
 	var disabled Config
 	applyDefaults(&disabled)
 	for _, name := range evalToolNames {
-		if contains(disabled.Tools.Enabled, name) {
-			t.Errorf("whitelist %v must not contain %q when eval disabled", disabled.Tools.Enabled, name)
+		if !contains(disabled.Tools.Enabled, name) {
+			t.Errorf("whitelist %v must contain %q when eval ENABLED by default", disabled.Tools.Enabled, name)
 		}
 	}
 
 	// Enabled: all three eval_* tools enter the whitelist.
 	var enabled Config
-	enabled.Eval.Enabled = true
+	enabled.Eval.Enabled = Bool(true)
 	applyDefaults(&enabled)
 	for _, name := range evalToolNames {
 		if !contains(enabled.Tools.Enabled, name) {
@@ -2136,10 +2160,10 @@ func TestModeMinimalWhitelist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Terminal.Enabled {
+	if !Enabled(cfg.Terminal.Enabled) {
 		t.Error("minimal: terminal must be enabled")
 	}
-	if !cfg.Fs.Enabled {
+	if !Enabled(cfg.Fs.Enabled) {
 		t.Error("minimal: fs must be enabled")
 	}
 	for name, enabled := range modeCapStates(cfg) {
@@ -2171,22 +2195,22 @@ func TestModeMinimalPresetFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.KB.Enabled {
+	if Enabled(cfg.KB.Enabled) {
 		t.Error("minimal must override an explicit kb.enabled: true (preset-first, D-MODE-6)")
 	}
-	if cfg.Web.Enabled {
+	if Enabled(cfg.Web.Enabled) {
 		t.Error("minimal must override an explicit web.enabled: true (preset-first, D-MODE-6)")
 	}
-	if cfg.FsSearch.Enabled {
+	if Enabled(cfg.FsSearch.Enabled) {
 		t.Error("minimal must override an explicit fs_search.enabled: true (D-MODE-2 不含搜索)")
 	}
-	if cfg.Ralph.Enabled {
+	if Enabled(cfg.Ralph.Enabled) {
 		t.Error("minimal must override an explicit ralph.enabled: true (D-MODE-2 不含 fresh-agent 循环)")
 	}
-	if cfg.Workflow.Enabled {
+	if Enabled(cfg.Workflow.Enabled) {
 		t.Error("minimal must override an explicit workflow.enabled: true (D-MODE-2 不含 workflow 编排)")
 	}
-	if !cfg.Terminal.Enabled || !cfg.Fs.Enabled {
+	if !Enabled(cfg.Terminal.Enabled) || !Enabled(cfg.Fs.Enabled) {
 		t.Error("minimal must keep terminal and fs enabled despite the explicit overrides")
 	}
 	if !reflect.DeepEqual(cfg.Tools.Enabled, minimalEnabledTools) {
@@ -2207,7 +2231,7 @@ func TestModeStandardUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.KB.Enabled {
+	if !Enabled(cfg.KB.Enabled) {
 		t.Error("standard must keep an explicit kb.enabled: true")
 	}
 	cfgDefault, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
@@ -2232,10 +2256,10 @@ func TestModeCodeKeepsCaps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.KB.Enabled {
+	if !Enabled(cfg.KB.Enabled) {
 		t.Error("code must keep kb.enabled: true (like standard)")
 	}
-	if !cfg.Terminal.Enabled {
+	if !Enabled(cfg.Terminal.Enabled) {
 		t.Error("code must keep terminal.enabled: true (like standard)")
 	}
 	pathStd := filepath.Join(t.TempDir(), "config-std.yaml")
@@ -2307,24 +2331,24 @@ func TestWebServerDefaults(t *testing.T) {
 // default), used to compare cap states across modes.
 func modeCapStates(cfg Config) map[string]bool {
 	return map[string]bool{
-		"terminal":       cfg.Terminal.Enabled,
-		"fs":             cfg.Fs.Enabled,
-		"fs_search":      cfg.FsSearch.Enabled,
-		"ralph":          cfg.Ralph.Enabled,
-		"workflow":       cfg.Workflow.Enabled,
+		"terminal":       Enabled(cfg.Terminal.Enabled),
+		"fs":             Enabled(cfg.Fs.Enabled),
+		"fs_search":      Enabled(cfg.FsSearch.Enabled),
+		"ralph":          Enabled(cfg.Ralph.Enabled),
+		"workflow":       Enabled(cfg.Workflow.Enabled),
 		"web_server":     cfg.WebServer.Enabled,
-		"jobs":           cfg.Jobs.Enabled,
-		"subagent":       cfg.Subagent.Enabled,
-		"web":            cfg.Web.Enabled,
-		"eval":           cfg.Eval.Enabled,
-		"code":           cfg.Code.Enabled,
-		"interact":       cfg.Interact.Enabled,
-		"compaction":     cfg.Compaction.Enabled,
-		"skill":          cfg.Skill.Enabled,
-		"schedule":       cfg.Schedule.Enabled,
-		"plan":           cfg.Plan.Enabled,
-		"spill":          cfg.Spill.Enabled,
-		"mcp":            cfg.Mcp.Enabled,
+		"jobs":           Enabled(cfg.Jobs.Enabled),
+		"subagent":       Enabled(cfg.Subagent.Enabled),
+		"web":            Enabled(cfg.Web.Enabled),
+		"eval":           Enabled(cfg.Eval.Enabled),
+		"code":           Enabled(cfg.Code.Enabled),
+		"interact":       Enabled(cfg.Interact.Enabled),
+		"compaction":     Enabled(cfg.Compaction.Enabled),
+		"skill":          Enabled(cfg.Skill.Enabled),
+		"schedule":       Enabled(cfg.Schedule.Enabled),
+		"plan":           Enabled(cfg.Plan.Enabled),
+		"spill":          Enabled(cfg.Spill.Enabled),
+		"mcp":            Enabled(cfg.Mcp.Enabled),
 		"llm.multimodal": *cfg.LLM.Multimodal.Enabled,
 	}
 }

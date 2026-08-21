@@ -54,7 +54,7 @@ func skillFixture(t *testing.T, enabled bool) (*app, string) {
 	a := &app{
 		cfg: config.Config{
 			Skill: config.SkillConfig{
-				Enabled:         enabled,
+				Enabled:         config.Bool(enabled),
 				CatalogMaxChars: 500,
 				BodyMaxChars:    8000,
 			},

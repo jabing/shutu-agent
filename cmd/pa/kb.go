@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/kb"
 	"github.com/jabing/shutu-agent/internal/llm"
 	"github.com/jabing/shutu-agent/internal/prompt"
@@ -33,7 +34,7 @@ const knowledgePromptOrder = 30
 // wires the kb/add session event (dispatch-m4b §3, D3): the callback is called
 // during a tool execution, when a.log is the active session's log.
 func (a *app) registerKB() error {
-	if !a.cfg.KB.Enabled {
+	if !config.Enabled(a.cfg.KB.Enabled) {
 		return nil
 	}
 	k, err := kb.NewFromConfig(a.cfg.KB)

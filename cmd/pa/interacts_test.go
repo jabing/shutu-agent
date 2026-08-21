@@ -36,7 +36,7 @@ func (f *fakeSensitiveTool) Execute(ctx context.Context, args json.RawMessage) (
 func makeInteractApp(enabled bool, sensitive []string) *app {
 	return &app{
 		cfg: config.Config{
-			Interact: config.InteractConfig{Enabled: enabled, SensitiveTools: sensitive},
+			Interact: config.InteractConfig{Enabled: config.Bool(enabled), SensitiveTools: sensitive},
 		},
 		reg:          tools.New(),
 		log:          session.New(),

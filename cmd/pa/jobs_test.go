@@ -15,7 +15,7 @@ import (
 // registerJobs touches (cfg.Jobs, reg, log, currentID) are set.
 func makeJobsApp(enabled bool) *app {
 	return &app{
-		cfg:       config.Config{Jobs: config.JobsConfig{Enabled: enabled, MaxConcurrentJobsPerOwner: 10}},
+		cfg:       config.Config{Jobs: config.JobsConfig{Enabled: config.Bool(enabled), MaxConcurrentJobsPerOwner: 10}},
 		reg:       tools.New(),
 		log:       session.New(),
 		currentID: "s-test",

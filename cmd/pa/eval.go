@@ -18,6 +18,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/eval"
 	"github.com/jabing/shutu-agent/internal/interact"
 	"github.com/jabing/shutu-agent/internal/llm"
@@ -34,7 +35,7 @@ import (
 // idempotent. The loop's turn/step structure is untouched (D4): evaluation
 // runs on the serial tool path.
 func (a *app) registerEval() error {
-	if !a.cfg.Eval.Enabled {
+	if !config.Enabled(a.cfg.Eval.Enabled) {
 		return nil
 	}
 	manualFallback := true

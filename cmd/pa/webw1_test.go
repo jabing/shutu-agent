@@ -244,10 +244,10 @@ func TestWebConfigRedacts(t *testing.T) {
 				Multimodal: config.MultimodalConfig{Enabled: boolPtr(true)},
 			},
 			Tools:      config.ToolsConfig{Enabled: []string{"get_time", "read_file", "web_search"}},
-			Web:        config.WebConfig{Enabled: true},
-			KB:         config.KBConfig{Enabled: true},
-			Compaction: config.CompactionConfig{Enabled: true},
-			Eval:       config.EvalConfig{Enabled: false},
+			Web:        config.WebConfig{Enabled: config.Bool(true)},
+			KB:         config.KBConfig{Enabled: config.Bool(true)},
+			Compaction: config.CompactionConfig{Enabled: config.Bool(true)},
+			Eval:       config.EvalConfig{Enabled: config.Bool(false)},
 			WebServer:  config.WebServerConfig{Enabled: true, Addr: "127.0.0.1:0", Token: "super-secret"},
 		},
 		store: st,
@@ -285,7 +285,7 @@ func TestWebConfigRedacts(t *testing.T) {
 	// Capability gates.
 	for key, want := range map[string]bool{
 		"web_enabled": true, "kb_enabled": true, "compaction_enabled": true,
-		"multimodal_enabled": true, "eval_enabled": false, "jobs_enabled": false,
+		"multimodal_enabled": true, "eval_enabled": false, "jobs_enabled": true,
 	} {
 		if got, _ := v[key].(bool); got != want {
 			t.Fatalf("%s = %v, want %v", key, v[key], want)

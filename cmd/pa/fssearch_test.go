@@ -24,7 +24,7 @@ import (
 func makeFsSearchApp(enabled bool) *app {
 	return &app{
 		cfg: config.Config{
-			FsSearch: config.FsSearchConfig{Enabled: enabled},
+			FsSearch: config.FsSearchConfig{Enabled: config.Bool(enabled)},
 		},
 		reg: tools.New(),
 	}
@@ -106,7 +106,7 @@ func TestFsSearchWhitelist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.FsSearch.Enabled {
+	if !config.Enabled(cfg.FsSearch.Enabled) {
 		t.Error("fs_search.enabled should be true")
 	}
 	if !containsStr(cfg.Tools.Enabled, fssearch.FsSearchToolName) {

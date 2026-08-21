@@ -16,7 +16,7 @@ import (
 func makePlanApp(planEnabled bool) *app {
 	return &app{
 		cfg: config.Config{
-			Plan: config.PlanConfig{Enabled: planEnabled},
+			Plan: config.PlanConfig{Enabled: config.Bool(planEnabled)},
 		},
 		reg: tools.New(),
 		log: session.New(),

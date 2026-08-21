@@ -14,6 +14,7 @@ import (
 	"os"
 
 	"github.com/jabing/shutu-agent/internal/code"
+	"github.com/jabing/shutu-agent/internal/config"
 )
 
 // registerCode creates the local subprocess Provider + Engine, registers the
@@ -21,7 +22,7 @@ import (
 // disabled it creates nothing and registers nothing (D10, mirrors
 // registerJobs/registerPlans/registerSpills/registerInteracts).
 func (a *app) registerCode() error {
-	if !a.cfg.Code.Enabled {
+	if !config.Enabled(a.cfg.Code.Enabled) {
 		return nil
 	}
 	prov := code.NewLocalProvider()

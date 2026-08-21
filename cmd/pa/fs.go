@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/fs"
 	"github.com/jabing/shutu-agent/internal/tools"
 )
@@ -23,7 +24,7 @@ import (
 // D3 event sink when fs.enabled. When fs is disabled it creates nothing and
 // registers nothing (D10, mirrors registerCode/registerMcps/registerJobs).
 func (a *app) registerFs() error {
-	if !a.cfg.Fs.Enabled {
+	if !config.Enabled(a.cfg.Fs.Enabled) {
 		return nil
 	}
 	svc := fs.NewLocalFS(a.cfg.Fs.Root)

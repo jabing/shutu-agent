@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/skill"
 	"github.com/jabing/shutu-agent/internal/webserver"
 )
@@ -68,7 +69,7 @@ func (a *app) webSkills(ctx context.Context, action string, req webserver.SkillR
 			"skills":   view,
 			"groups":   groupRowsView(groups),
 			"scopes":   scopes,
-			"enabled":  a.cfg.Skill.Enabled,
+			"enabled":  config.Enabled(a.cfg.Skill.Enabled),
 		}, nil
 
 	case "content":

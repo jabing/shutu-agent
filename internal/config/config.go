@@ -184,6 +184,20 @@ var minimalEnabledTools = []string{
 	"fs_read", "fs_write", "fs_list",
 }
 
+// Bool returns a pointer to b, for assigning an explicit *bool flag where the
+// field's zero value must mean "absent" rather than a value (tests and the
+// composition root).
+func Bool(b bool) *bool { return &b }
+
+// Enabled reports whether a capability flag is on. A nil flag (absent from
+// config.yaml) means the default is on — the D10 "default off" posture is
+// replaced by opt-out, matching dsh's shipped composition (dsh 出厂默认挂载核心
+// 能力, 按需 opt-out). An explicit *bool carries the user's choice, so an
+// "enabled: false" in config.yaml still disables the capability. External
+// subagent providers and the web portal keep their own default-off posture
+// (see those structs), so this helper is for the core capability switches.
+func Enabled(b *bool) bool { return b == nil || *b }
+
 // Config is the file-backed runtime configuration. Any field may be omitted in
 // config.yaml; Load fills defaults for empty values, so callers never branch
 // on field presence.
@@ -254,7 +268,7 @@ type LLMConfig struct {
 // (credential-bearing variables are dropped, 纪律 6) — see
 // internal/terminal/scrubbedEnv.
 type TerminalConfig struct {
-	Enabled               bool     `yaml:"enabled"`                 // default false (D10)
+	Enabled               *bool    `yaml:"enabled"`                 // default on (dsh 对齐); *bool distinguishes absent
 	Shell                 string   `yaml:"shell"`                   // default "" → platform default (cmd.exe / /bin/sh)
 	Args                  []string `yaml:"args"`                    // extra shell args
 	Workdir               string   `yaml:"workdir"`                 // default "" → inherit agent cwd
@@ -274,7 +288,7 @@ type TerminalConfig struct {
 // applyDefaults guarantees it is never nil, so the composition root reads it by
 // dereference.
 type EvalConfig struct {
-	Enabled bool `yaml:"enabled"` // default false (D10)
+	Enabled *bool `yaml:"enabled"` // default false (D10)
 	// ManualFallback is nil (absent) → the default true: an undecided verdict
 	// routes to a human; false (explicit) fails closed.
 	ManualFallback *bool `yaml:"manual_fallback"` // default true
@@ -289,7 +303,7 @@ type EvalConfig struct {
 // also requires subagent (the loop spawns children through the subagent
 // Runtime). minimal 模式同样关闭 (D-MODE-2).
 type RalphConfig struct {
-	Enabled bool `yaml:"enabled"` // default false (D10)
+	Enabled *bool `yaml:"enabled"` // default false (D10)
 }
 
 // WorkflowConfig is the task-DAG orchestration policy (ADR
@@ -300,7 +314,7 @@ type RalphConfig struct {
 type WorkflowConfig struct {
 	// Enabled gates the whole capability: when false, no Engine is created
 	// and workflow_run is neither registered nor whitelisted (D10).
-	Enabled bool `yaml:"enabled"` // default false (D10)
+	Enabled *bool `yaml:"enabled"` // default false (D10)
 	// MaxConcurrent is the ready-task concurrency cap the engine applies
 	// (D-GAP-2); <= 0 means the default 4.
 	MaxConcurrent int `yaml:"max_concurrent"` // default 4
@@ -368,7 +382,7 @@ type JobsConfig struct {
 	// Enabled gates the whole capability: when false, no registry is created
 	// (jobs.NewLocal is never called) and the job_* tools are neither
 	// registered nor whitelisted (D10).
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled"`
 	// MaxConcurrentJobsPerOwner caps the running+stopping jobs in one owner
 	// bucket (and the shared unowned bucket); <= 0 means the default 10.
 	MaxConcurrentJobsPerOwner int `yaml:"max_concurrent_jobs_per_owner"`
@@ -382,7 +396,7 @@ type SubagentConfig struct {
 	// Enabled gates the whole capability: when false, no Runtime/SpawnProvider
 	// is created and the subagent_* tools are neither registered nor
 	// whitelisted (D10).
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled"`
 	// MaxDepth is the default delegation depth cap applied by subagent_spawn
 	// when the model omits max_depth; <= 0 means the default 8.
 	MaxDepth int `yaml:"max_depth"`
@@ -405,7 +419,9 @@ type SubagentConfig struct {
 // enabled provider whose binary is missing fails closed at Start (no silent
 // fallback to the local provider).
 type ExternalProviderConfig struct {
-	// Enabled gates this provider's registration (default false, D10).
+	// Enabled gates this provider's registration (default false, D10 —
+	// guardrail: an external binary whose CLI is missing fails closed at
+	// Start, so external subagent providers stay opt-in, not default-on).
 	Enabled bool `yaml:"enabled"`
 	// Command is the CLI binary invoked for a one-shot prompt→stdout session;
 	// empty means the per-name default filled by applyDefaults (codex→"codex",
@@ -425,7 +441,7 @@ type CompactionConfig struct {
 	// Enabled gates the whole capability: when false, no compaction engine is
 	// wired into the loop's PreStep and the /compact command reports the
 	// capability as unavailable (D10).
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled"`
 	// TokenThreshold is the surface-token pressure threshold above which a
 	// step auto-compacts; <= 0 means the default 32000.
 	TokenThreshold int `yaml:"token_threshold"`
@@ -447,7 +463,7 @@ type SkillConfig struct {
 	// Enabled gates the whole capability: when false, no skill provider/
 	// registry is created and skill_load is neither registered nor whitelisted,
 	// and no skill catalog pre-step injector is wired (D10).
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled"`
 	// Dirs are additional custom skill directories (source "custom", rank 300)
 	// scanned by the filesystem provider, in order. Empty by default.
 	Dirs []string `yaml:"dirs"`
@@ -468,7 +484,7 @@ type ScheduleConfig struct {
 	// Enabled gates the whole capability: when false, no Provider/Engine is
 	// created and the schedule_* tools are neither registered nor whitelisted,
 	// and no schedule pre-step injector is wired (D10).
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled"`
 	// TickInterval is the cadence of the serial schedule-clock advancement
 	// (per-turn pre-step Engine.Tick). There is no background ticker in M6a-2
 	// (D5); the value is parsed and defaulted here so a future gated advance
@@ -484,7 +500,7 @@ type PlanConfig struct {
 	// Enabled gates the whole capability: when false, no Provider/Engine is
 	// created and the plan_* tools are neither registered nor whitelisted
 	// (D10).
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled"`
 }
 
 // SpillConfig is the long-term-memory policy (dispatch-m6c-2 §2 / ADR
@@ -500,7 +516,7 @@ type SpillConfig struct {
 	// Enabled gates the whole capability: when false, no Provider/Engine is
 	// created, the spill_* tools are neither registered nor whitelisted, and
 	// no auto-sedimentation path is wired (D10).
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled"`
 	// AutoSpill toggles the end-of-turn auto-sedimentation writeback
 	// (Engine.AutoSpill over the session event log): nil (absent) means true —
 	// within an enabled spill the auto-sedimentation defaults on, matching the
@@ -525,7 +541,7 @@ type InteractConfig struct {
 	// Enabled gates the whole capability: when false, no Provider/Engine is
 	// created, the interact_* tools are neither registered nor whitelisted,
 	// and no sensitive-tool gate is installed (D10).
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled"`
 	// SensitiveTools names the tools whose execution must first pass a human
 	// approval (the ADR 决策 M6d sensitive-tool gate: approved before the tool
 	// runs, rejected returns a denial to the model). Empty means no gating —
@@ -544,7 +560,7 @@ type InteractConfig struct {
 type CodeConfig struct {
 	// Enabled gates the whole capability: when false, no local Provider/Engine
 	// is created and code_run is neither registered nor whitelisted (D10).
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled"`
 	// Timeout is the sandbox execution deadline code_run applies when the model
 	// omits the per-call timeout (and the outer per-tool deadline bound for
 	// code_run, mirroring tools.run_command.timeout); <= 0 means the default 30s.
@@ -575,7 +591,7 @@ type McpConfig struct {
 	// Enabled gates the whole capability: when false, no mcp Factory is
 	// created, the mcp_* tools are neither registered nor whitelisted, and no
 	// server is bridged (D10).
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled"`
 	// Servers are the configured MCP servers (stdio, newline-delimited
 	// JSON-RPC). Each server's tools are bridged at startup with the
 	// mcp.<server>.<tool> prefix.
@@ -599,7 +615,7 @@ type McpServer struct {
 type FsConfig struct {
 	// Enabled gates the whole capability: when false, no FileService is
 	// created and the fs_* tools are neither registered nor whitelisted (D10).
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled"`
 	// Root is the allowed root every fs_* path must stay inside. Empty means
 	// the default <project> (the process working directory), resolved by the
 	// FileService constructor.
@@ -610,7 +626,7 @@ type FsConfig struct {
 // is default off (D10): when Enabled is false the composition root registers
 // no fs_search tool. minimal 模式同样关闭 (D-MODE-2).
 type FsSearchConfig struct {
-	Enabled bool `yaml:"enabled"` // default false (D10)
+	Enabled *bool `yaml:"enabled"` // default false (D10)
 }
 
 // WebConfig 是联网能力策略（ADR 2026-08-20-m7-web-search.md / dispatch-m7-2 §5）。
@@ -620,7 +636,7 @@ type FsSearchConfig struct {
 type WebConfig struct {
 	// Enabled gates the whole capability: when false, the composition root
 	// creates no Engine, registers no web_* tool, and whitelists nothing (D10).
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled"`
 
 	// SearchMaxResults is the source cap for a single search and for the
 	// merged multi-query result; <= 0 means the default 8.
@@ -677,7 +693,7 @@ type KBConfig struct {
 	// Enabled gates the whole capability: when false, no KB provider is
 	// initialized (kb.OpenSQLite is never called) and the kb_* tools are
 	// neither registered nor whitelisted (D10).
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled"`
 	// DBPath is the SQLite database file; "" defaults to
 	// <data_dir>/kb/knowledge.sqlite.
 	DBPath string `yaml:"db_path"`
@@ -842,7 +858,7 @@ func applyDefaults(cfg *Config) {
 	// Enabling kb whitelists its three consumer tools as well, so the single
 	// kb.enabled switch turns the whole capability (provider + tools + recall)
 	// on; default off (D10, dispatch-m4b §1 — mirrors run_command).
-	if cfg.KB.Enabled {
+	if Enabled(cfg.KB.Enabled) {
 		for _, name := range kbToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -861,7 +877,7 @@ func applyDefaults(cfg *Config) {
 	// Enabling jobs whitelists its five consumer tools as well, so the single
 	// jobs.enabled switch turns the whole capability (registry + tools + event
 	// logging) on; default off (D10, dispatch-m5a-2 §3 — mirrors kb).
-	if cfg.Jobs.Enabled {
+	if Enabled(cfg.Jobs.Enabled) {
 		for _, name := range jobsToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -876,7 +892,7 @@ func applyDefaults(cfg *Config) {
 	// single subagent.enabled switch turns the whole capability (runtime +
 	// provider + tools + event logging) on; default off (D10, dispatch-m5b-2
 	// §3 — mirrors kb/jobs).
-	if cfg.Subagent.Enabled {
+	if Enabled(cfg.Subagent.Enabled) {
 		for _, name := range subagentToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -930,7 +946,7 @@ func applyDefaults(cfg *Config) {
 	// tool + catalog injector) on (mirrors kb/jobs/subagent). Non-positive
 	// bounds are clamped to the defaults (校验非负: a negative configured value
 	// can never survive to the wiring).
-	if cfg.Skill.Enabled {
+	if Enabled(cfg.Skill.Enabled) {
 		for _, name := range skillToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -949,7 +965,7 @@ func applyDefaults(cfg *Config) {
 	// tools + pre-step trigger + fire event/job wiring) on (mirrors
 	// kb/jobs/subagent/skill). Non-positive cadence is clamped to the default
 	// (校验非负: a negative configured value can never survive to the wiring).
-	if cfg.Schedule.Enabled {
+	if Enabled(cfg.Schedule.Enabled) {
 		for _, name := range scheduleToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -963,7 +979,7 @@ func applyDefaults(cfg *Config) {
 	// six consumer tools, so the one plan.enabled switch turns the whole
 	// capability (Provider + Engine + tools + event logging) on (mirrors
 	// kb/jobs/subagent/skill/schedule).
-	if cfg.Plan.Enabled {
+	if Enabled(cfg.Plan.Enabled) {
 		for _, name := range planToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -976,7 +992,7 @@ func applyDefaults(cfg *Config) {
 	// spill.enabled switch turns the whole capability (Provider + Engine +
 	// tools + event logging + auto-sedimentation) on (mirrors
 	// kb/jobs/subagent/skill/schedule/plan).
-	if cfg.Spill.Enabled {
+	if Enabled(cfg.Spill.Enabled) {
 		for _, name := range spillToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -989,7 +1005,7 @@ func applyDefaults(cfg *Config) {
 	// the sensitive-tool gate) on (mirrors kb/jobs/subagent/skill/schedule/
 	// plan/spill). sensitive_tools is left verbatim: empty means the gate is
 	// not installed even when enabled (no gating by default).
-	if cfg.Interact.Enabled {
+	if Enabled(cfg.Interact.Enabled) {
 		for _, name := range interactToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -1005,7 +1021,7 @@ func applyDefaults(cfg *Config) {
 	// are clamped to the defaults (校验非负: a negative configured value can
 	// never survive to the wiring). allow_network stays verbatim: false by
 	// default (declarative no-network boundary).
-	if cfg.Code.Enabled {
+	if Enabled(cfg.Code.Enabled) {
 		for _, name := range codeToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -1025,7 +1041,7 @@ func applyDefaults(cfg *Config) {
 	// code). Bridged server tools (mcp.<server>.<tool>) cannot be whitelisted
 	// here — their names are only known at runtime — so the composition root
 	// whitelists each one as it is registered.
-	if cfg.Mcp.Enabled {
+	if Enabled(cfg.Mcp.Enabled) {
 		for _, name := range mcpToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -1038,7 +1054,7 @@ func applyDefaults(cfg *Config) {
 	// its three consumer tools, so the one fs.enabled switch turns the whole
 	// capability (FileService + fs_* tools + event logging) on (mirrors
 	// kb/jobs/subagent/skill/schedule/plan/spill/interact/code/mcp).
-	if cfg.Fs.Enabled {
+	if Enabled(cfg.Fs.Enabled) {
 		for _, name := range fsToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -1054,7 +1070,7 @@ func applyDefaults(cfg *Config) {
 	// search and fetch (no search_enabled/fetch_enabled split, dispatch-m7-2
 	// §6). Non-positive bounds are clamped to the defaults (校验非负: a negative
 	// configured value can never survive to the wiring).
-	if cfg.Web.Enabled {
+	if Enabled(cfg.Web.Enabled) {
 		for _, name := range webToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -1158,7 +1174,7 @@ func applyDefaults(cfg *Config) {
 	// Enabling terminal whitelists its five consumer tools as well, so the
 	// single terminal.enabled switch turns the whole capability on (provider +
 	// tools + /term); default off (D10, dispatch-m9-2 §2 — mirrors run_command).
-	if cfg.Terminal.Enabled {
+	if Enabled(cfg.Terminal.Enabled) {
 		for _, name := range terminalToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -1183,7 +1199,7 @@ func applyDefaults(cfg *Config) {
 	// Enabling eval whitelists its three consumer tools as well, so the
 	// single eval.enabled switch turns the whole capability on; default off
 	// (D10).
-	if cfg.Eval.Enabled {
+	if Enabled(cfg.Eval.Enabled) {
 		for _, name := range evalToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -1195,7 +1211,7 @@ func applyDefaults(cfg *Config) {
 	// enabled switch turns the whole capability (search engine + tool) on
 	// (mirrors kb/jobs/subagent/skill/schedule/plan/spill/interact/code/mcp/
 	// fs/web/terminal/eval).
-	if cfg.FsSearch.Enabled {
+	if Enabled(cfg.FsSearch.Enabled) {
 		for _, name := range fsSearchToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -1207,7 +1223,7 @@ func applyDefaults(cfg *Config) {
 	// whole capability (engine + tool + event logging) on (mirrors kb/jobs/
 	// subagent/skill/schedule/plan/spill/interact/code/mcp/fs/web/terminal/eval/
 	// fs_search).
-	if cfg.Ralph.Enabled {
+	if Enabled(cfg.Ralph.Enabled) {
 		for _, name := range ralphToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -1220,7 +1236,7 @@ func applyDefaults(cfg *Config) {
 	// capability (engine + tool + event logging) on (mirrors kb/jobs/subagent/
 	// skill/schedule/plan/spill/interact/code/mcp/fs/web/terminal/eval/
 	// fs_search/ralph). Non-positive caps are clamped to the default (校验非负).
-	if cfg.Workflow.Enabled {
+	if Enabled(cfg.Workflow.Enabled) {
 		for _, name := range workflowToolNames {
 			if !contains(cfg.Tools.Enabled, name) {
 				cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
@@ -1254,25 +1270,25 @@ func ApplyModePreset(cfg *Config) {
 	if cfg.Mode != ModeMinimal {
 		return
 	}
-	cfg.Terminal.Enabled = true
-	cfg.Fs.Enabled = true
-	cfg.FsSearch.Enabled = false  // minimal 不含搜索 (D-MODE-2)
-	cfg.Ralph.Enabled = false     // minimal 不含 fresh-agent 循环 (D-MODE-2)
-	cfg.Workflow.Enabled = false  // minimal 不含 workflow DAG 编排 (D-MODE-2)
-	cfg.WebServer.Enabled = false // minimal 不含 web 门户 (D-MODE-2)
-	cfg.KB.Enabled = false
-	cfg.Jobs.Enabled = false
-	cfg.Subagent.Enabled = false
-	cfg.Compaction.Enabled = false
-	cfg.Skill.Enabled = false
-	cfg.Schedule.Enabled = false
-	cfg.Plan.Enabled = false
-	cfg.Spill.Enabled = false
-	cfg.Interact.Enabled = false
-	cfg.Code.Enabled = false
-	cfg.Mcp.Enabled = false
-	cfg.Web.Enabled = false
-	cfg.Eval.Enabled = false
+	cfg.Terminal.Enabled = Bool(true) // minimal 只保留持久 shell + 文件编辑 (D-MODE-2)
+	cfg.Fs.Enabled = Bool(true)
+	cfg.FsSearch.Enabled = Bool(false)  // minimal 不含搜索 (D-MODE-2)
+	cfg.Ralph.Enabled = Bool(false)     // minimal 不含 fresh-agent 循环 (D-MODE-2)
+	cfg.Workflow.Enabled = Bool(false)  // minimal 不含 workflow DAG 编排 (D-MODE-2)
+	cfg.WebServer.Enabled = false       // minimal 不含 web 门户 (D-MODE-2)
+	cfg.KB.Enabled = Bool(false)
+	cfg.Jobs.Enabled = Bool(false)
+	cfg.Subagent.Enabled = Bool(false)
+	cfg.Compaction.Enabled = Bool(false)
+	cfg.Skill.Enabled = Bool(false)
+	cfg.Schedule.Enabled = Bool(false)
+	cfg.Plan.Enabled = Bool(false)
+	cfg.Spill.Enabled = Bool(false)
+	cfg.Interact.Enabled = Bool(false)
+	cfg.Code.Enabled = Bool(false)
+	cfg.Mcp.Enabled = Bool(false)
+	cfg.Web.Enabled = Bool(false)
+	cfg.Eval.Enabled = Bool(false)
 	{
 		v := false
 		cfg.LLM.Multimodal.Enabled = &v // minimal 无多模态 (D-MODE-2)

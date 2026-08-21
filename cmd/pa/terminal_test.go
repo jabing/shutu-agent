@@ -18,7 +18,7 @@ import (
 func makeTermApp(enabled bool) *app {
 	return &app{
 		cfg: config.Config{Terminal: config.TerminalConfig{
-			Enabled: enabled, ReadIdleMS: 100, ReadTimeoutMS: 2500,
+			Enabled: config.Bool(enabled), ReadIdleMS: 100, ReadTimeoutMS: 2500,
 		}},
 		reg:       tools.New(),
 		log:       session.New(),

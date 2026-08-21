@@ -19,6 +19,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/jobs"
 	"github.com/jabing/shutu-agent/internal/llm"
 	"github.com/jabing/shutu-agent/internal/loop"
@@ -32,7 +33,7 @@ import (
 // When schedule is disabled it creates nothing and registers nothing (D10,
 // mirrors registerJobs/registerSkills).
 func (a *app) registerSchedules() error {
-	if !a.cfg.Schedule.Enabled {
+	if !config.Enabled(a.cfg.Schedule.Enabled) {
 		return nil
 	}
 	prov := schedule.NewMemProvider()

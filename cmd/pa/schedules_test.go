@@ -22,10 +22,10 @@ func makeScheduleApp(scheduleEnabled, jobsEnabled bool) *app {
 	return &app{
 		cfg: config.Config{
 			Schedule: config.ScheduleConfig{
-				Enabled:      scheduleEnabled,
+				Enabled:      config.Bool(scheduleEnabled),
 				TickInterval: config.Duration{Duration: time.Minute},
 			},
-			Jobs: config.JobsConfig{Enabled: jobsEnabled, MaxConcurrentJobsPerOwner: 10},
+			Jobs: config.JobsConfig{Enabled: config.Bool(jobsEnabled), MaxConcurrentJobsPerOwner: 10},
 		},
 		reg:       tools.New(),
 		log:       session.New(),

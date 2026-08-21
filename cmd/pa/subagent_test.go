@@ -48,7 +48,7 @@ func makeSubagentApp(enabled bool) *app {
 	return &app{
 		cfg: config.Config{
 			Model:    "m",
-			Subagent: config.SubagentConfig{Enabled: enabled, MaxDepth: 8, DefaultProvider: "spawn"},
+			Subagent: config.SubagentConfig{Enabled: config.Bool(enabled), MaxDepth: 8, DefaultProvider: "spawn"},
 		},
 		reg:       tools.New(),
 		log:       session.New(),

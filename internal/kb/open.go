@@ -14,7 +14,7 @@ import (
 // the "kb.enabled 默认关闭时不初始化" contract (D10, dispatch-m4a §3). DBPath
 // is already defaulted to <data_dir>/kb/knowledge.sqlite by config.Load.
 func NewFromConfig(cfg config.KBConfig) (KB, error) {
-	if !cfg.Enabled {
+	if !config.Enabled(cfg.Enabled) {
 		return nil, nil
 	}
 	if cfg.DBPath == "" {

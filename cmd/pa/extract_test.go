@@ -106,7 +106,7 @@ func extractEvents(t *testing.T, a *app) []struct {
 // immediately retrievable through the kb (as kb_search would find it).
 func TestExtractTurnCreatedLogsEventAndWrites(t *testing.T) {
 	model := &extractStubLLM{output: `{"candidates":[{"action":"create","title":"记住的偏好","body":"unique-term-turn 用户偏好周末不用工作","type":"preference","confidence":0.9}]}`}
-	a := newExtractTestApp(config.KBConfig{Enabled: true}, model)
+	a := newExtractTestApp(config.KBConfig{Enabled: config.Bool(true)}, model)
 
 	a.extractTurn(context.Background(), "请记住我周末不工作")
 
@@ -132,7 +132,7 @@ func TestExtractTurnCreatedLogsEventAndWrites(t *testing.T) {
 // answer is unaffected.
 func TestExtractTurnFailureIsFailOpen(t *testing.T) {
 	model := &extractStubLLM{err: errors.New("network down")}
-	a := newExtractTestApp(config.KBConfig{Enabled: true}, model)
+	a := newExtractTestApp(config.KBConfig{Enabled: config.Bool(true)}, model)
 
 	a.extractTurn(context.Background(), "请记住我周末不工作") // must not panic or error
 
@@ -150,7 +150,7 @@ func TestExtractTurnFailureIsFailOpen(t *testing.T) {
 func TestExtractTurnSkippedWhenDisabled(t *testing.T) {
 	falsePtr := false
 	model := &extractStubLLM{output: `{"candidates":[{"action":"create","title":"x","body":"y","type":"fact"}]}`}
-	a := newExtractTestApp(config.KBConfig{Enabled: true, Extraction: &falsePtr}, model)
+	a := newExtractTestApp(config.KBConfig{Enabled: config.Bool(true), Extraction: &falsePtr}, model)
 
 	a.extractTurn(context.Background(), "请记住我周末不工作")
 
@@ -169,7 +169,7 @@ func TestExtractTurnSkippedWhenDisabled(t *testing.T) {
 // message is a skipped outcome with a reason, not a crash.
 func TestExtractTurnSkippedWhenNoAnswer(t *testing.T) {
 	model := &extractStubLLM{}
-	a := newExtractTestApp(config.KBConfig{Enabled: true}, model)
+	a := newExtractTestApp(config.KBConfig{Enabled: config.Bool(true)}, model)
 	a.log = session.New() // replace with a log that has no assistant message
 	a.log.Append(session.EventUserMessage, session.NewUserMessage("只有问题没有回答"))
 
@@ -189,7 +189,7 @@ func TestExtractTurnSkippedWhenNoAnswer(t *testing.T) {
 // skipped "already extracted" event and never re-writes.
 func TestExtractTurnDuplicateMapsToSkipped(t *testing.T) {
 	model := &extractStubLLM{output: `{"candidates":[{"action":"create","title":"记住的偏好","body":"unique-term-replay 用户偏好周末不用工作","type":"preference"}]}`}
-	a := newExtractTestApp(config.KBConfig{Enabled: true}, model)
+	a := newExtractTestApp(config.KBConfig{Enabled: config.Bool(true)}, model)
 
 	a.extractTurn(context.Background(), "请记住我周末不工作")
 	a.extractTurn(context.Background(), "请记住我周末不工作") // replay of the same turn
@@ -214,7 +214,7 @@ func TestExtractTurnDuplicateMapsToSkipped(t *testing.T) {
 // D10) makes extractTurn a silent no-op.
 func TestExtractTurnIgnoredWhenKBDisabled(t *testing.T) {
 	model := &extractStubLLM{output: `{"candidates":[{"action":"create","title":"x","body":"y","type":"fact"}]}`}
-	a := newExtractTestApp(config.KBConfig{Enabled: false}, model)
+	a := newExtractTestApp(config.KBConfig{Enabled: config.Bool(false)}, model)
 	a.kb = nil // matches the runtime state when kb is disabled (D10)
 
 	a.extractTurn(context.Background(), "请记住我周末不工作")

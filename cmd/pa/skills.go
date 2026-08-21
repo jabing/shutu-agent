@@ -19,6 +19,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/llm"
 	"github.com/jabing/shutu-agent/internal/loop"
 	"github.com/jabing/shutu-agent/internal/session"
@@ -31,7 +32,7 @@ import (
 // registerKB/registerJobs/registerSubagent/registerCompaction). The deferred
 // Close in main.go releases the registry and its providers at shutdown.
 func (a *app) registerSkills() error {
-	if !a.cfg.Skill.Enabled {
+	if !config.Enabled(a.cfg.Skill.Enabled) {
 		return nil
 	}
 	prov, err := skill.NewFilesystem(skill.FSOpts{

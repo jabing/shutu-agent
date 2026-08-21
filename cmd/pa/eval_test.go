@@ -120,7 +120,7 @@ func makeEvalApp(enabled bool, fakeLLM llm.LLM, fakeInteract interact.Engine) *a
 	return &app{
 		cfg: config.Config{
 			Model: "m",
-			Eval:  config.EvalConfig{Enabled: enabled, MaxRecords: 10, ManualFallback: &manual},
+			Eval:  config.EvalConfig{Enabled: config.Bool(enabled), MaxRecords: 10, ManualFallback: &manual},
 		},
 		reg:       tools.New(),
 		log:       session.New(),

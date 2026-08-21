@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/fssearch"
 )
 
@@ -22,7 +23,7 @@ import (
 // same "agent cwd" default internal/code and internal/skill use (run_command's
 // empty workdir inherits it too). Read-only, no resources → no deferred Close.
 func (a *app) registerFsSearch() error {
-	if !a.cfg.FsSearch.Enabled {
+	if !config.Enabled(a.cfg.FsSearch.Enabled) {
 		return nil
 	}
 	cwd, err := os.Getwd()

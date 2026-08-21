@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/subagent"
 	"github.com/jabing/shutu-agent/internal/tools"
 )
@@ -24,7 +25,7 @@ import (
 // subagent is disabled it creates nothing and registers nothing (D10, mirrors
 // registerJobs/registerKB).
 func (a *app) registerSubagent() error {
-	if !a.cfg.Subagent.Enabled {
+	if !config.Enabled(a.cfg.Subagent.Enabled) {
 		return nil
 	}
 	prov := subagent.NewSpawnProvider(subagent.Deps{

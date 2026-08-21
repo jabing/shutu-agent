@@ -96,20 +96,20 @@ func main() {
 		switch v {
 		case "off":
 			if cfg.Mode != config.ModeMinimal {
-				cfg.Terminal.Enabled = false
+				cfg.Terminal.Enabled = config.Bool(false)
 			}
 		case "powershell":
-			cfg.Terminal.Enabled = true
+			cfg.Terminal.Enabled = config.Bool(true)
 			cfg.Terminal.Shell = "powershell.exe"
 		case "gitbash":
-			cfg.Terminal.Enabled = true
+			cfg.Terminal.Enabled = config.Bool(true)
 			cfg.Terminal.Shell = "bash.exe"
 		case "wsl":
-			cfg.Terminal.Enabled = true
+			cfg.Terminal.Enabled = config.Bool(true)
 			cfg.Terminal.Shell = "wsl.exe"
 		}
 	} else if v, ok := settings["terminal_enabled"]; ok && cfg.Mode != config.ModeMinimal {
-		cfg.Terminal.Enabled = v == "true"
+		cfg.Terminal.Enabled = config.Bool(v == "true")
 	}
 
 	// M3: the Execute pipeline's safety policy — whitelist, deadline, output
@@ -878,45 +878,45 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 		fmt.Println("multimodal: disabled (llm.multimodal.enabled=false)")
 	}
 	fmt.Printf("enabled tools: %s\n", strings.Join(a.cfg.Tools.Enabled, ", "))
-	if a.cfg.KB.Enabled {
+	if config.Enabled(a.cfg.KB.Enabled) {
 		fmt.Printf("knowledge base: enabled (db=%s, recall_limit=%d, catalog=%v)\n",
 			a.cfg.KB.DBPath, a.cfg.KB.RecallLimitValue(), a.cfg.KB.CatalogValue())
 	} else {
 		fmt.Println("knowledge base: disabled (kb.enabled=false)")
 	}
-	if a.cfg.Jobs.Enabled {
+	if config.Enabled(a.cfg.Jobs.Enabled) {
 		fmt.Printf("jobs: enabled (max_concurrent_jobs_per_owner=%d)\n", a.cfg.Jobs.MaxConcurrentJobsPerOwner)
 	} else {
 		fmt.Println("jobs: disabled (jobs.enabled=false)")
 	}
-	if a.cfg.Compaction.Enabled {
+	if config.Enabled(a.cfg.Compaction.Enabled) {
 		fmt.Printf("compaction: enabled (token_threshold=%d, retain_turns=%d)\n",
 			a.cfg.Compaction.TokenThreshold, a.cfg.Compaction.RetainTurns)
 	} else {
 		fmt.Println("compaction: disabled (compaction.enabled=false)")
 	}
-	if a.cfg.Skill.Enabled {
+	if config.Enabled(a.cfg.Skill.Enabled) {
 		fmt.Printf("skills: enabled (catalog_max_chars=%d, body_max_chars=%d)\n",
 			a.cfg.Skill.CatalogMaxChars, a.cfg.Skill.BodyMaxChars)
 	} else {
 		fmt.Println("skills: disabled (skill.enabled=false)")
 	}
-	if a.cfg.Schedule.Enabled {
+	if config.Enabled(a.cfg.Schedule.Enabled) {
 		fmt.Printf("schedules: enabled (tick_interval=%s)\n", a.cfg.Schedule.TickInterval.Duration)
 	} else {
 		fmt.Println("schedules: disabled (schedule.enabled=false)")
 	}
-	if a.cfg.Plan.Enabled {
+	if config.Enabled(a.cfg.Plan.Enabled) {
 		fmt.Println("plans: enabled (goal → plan → todo planning tree)")
 	} else {
 		fmt.Println("plans: disabled (plan.enabled=false)")
 	}
-	if a.cfg.Spill.Enabled {
+	if config.Enabled(a.cfg.Spill.Enabled) {
 		fmt.Printf("spills: enabled (auto_spill=%v)\n", a.cfg.Spill.AutoSpillValue())
 	} else {
 		fmt.Println("spills: disabled (spill.enabled=false)")
 	}
-	if a.cfg.Interact.Enabled {
+	if config.Enabled(a.cfg.Interact.Enabled) {
 		if len(a.cfg.Interact.SensitiveTools) > 0 {
 			fmt.Printf("interact: enabled (sensitive_tools=%s)\n", strings.Join(a.cfg.Interact.SensitiveTools, ", "))
 		} else {
@@ -925,13 +925,13 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 	} else {
 		fmt.Println("interact: disabled (interact.enabled=false)")
 	}
-	if a.cfg.Code.Enabled {
+	if config.Enabled(a.cfg.Code.Enabled) {
 		fmt.Printf("code sandbox: enabled (timeout=%s, max_output=%d, sandbox_dir=%q, allow_network=%v)\n",
 			a.cfg.Code.Timeout.Duration, a.cfg.Code.MaxOutput, a.cfg.Code.SandboxDir, a.cfg.Code.AllowNetwork)
 	} else {
 		fmt.Println("code sandbox: disabled (code.enabled=false)")
 	}
-	if a.cfg.Mcp.Enabled {
+	if config.Enabled(a.cfg.Mcp.Enabled) {
 		if len(a.cfg.Mcp.Servers) > 0 {
 			fmt.Printf("mcp: enabled (servers: %s)\n", mcpServerNames(a.cfg.Mcp.Servers))
 		} else {
@@ -940,7 +940,7 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 	} else {
 		fmt.Println("mcp: disabled (mcp.enabled=false)")
 	}
-	if a.cfg.Fs.Enabled {
+	if config.Enabled(a.cfg.Fs.Enabled) {
 		if a.fs != nil {
 			fmt.Printf("fs: enabled (root=%s)\n", a.fs.Root())
 		} else {
@@ -949,7 +949,7 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 	} else {
 		fmt.Println("fs: disabled (fs.enabled=false)")
 	}
-	if a.cfg.Web.Enabled {
+	if config.Enabled(a.cfg.Web.Enabled) {
 		fmt.Printf("web: enabled (search_max_results=%d, search_max_queries=%d)\n",
 			a.cfg.Web.SearchMaxResults, a.cfg.Web.SearchMaxQueries)
 	} else {
@@ -960,14 +960,14 @@ startup:  pa [--config <path>]   config defaults to config.yaml`)
 	} else {
 		fmt.Println("web portal: disabled (web_server.enabled=false)")
 	}
-	if a.cfg.Terminal.Enabled {
+	if config.Enabled(a.cfg.Terminal.Enabled) {
 		fmt.Printf("terminal: enabled (shell=%q, idle=%dms, timeout=%dms)\n",
 			a.cfg.Terminal.Shell, a.cfg.Terminal.ReadIdleMS, a.cfg.Terminal.ReadTimeoutMS)
 	} else {
 		fmt.Println("terminal: disabled (terminal.enabled=false)")
 	}
 	fmt.Printf("mode: %s\n", a.cfg.Mode)
-	if a.cfg.Eval.Enabled {
+	if config.Enabled(a.cfg.Eval.Enabled) {
 		fmt.Printf("eval: enabled (max_records=%d)\n", a.cfg.Eval.MaxRecords)
 	} else {
 		fmt.Println("eval: disabled (eval.enabled=false)")

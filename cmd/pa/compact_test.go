@@ -128,7 +128,7 @@ func makeCompactApp(enabled bool) *app {
 	return &app{
 		cfg: config.Config{
 			Compaction: config.CompactionConfig{
-				Enabled:        enabled,
+				Enabled:        config.Bool(enabled),
 				TokenThreshold: 5,
 				RetainTurns:    1,
 			},

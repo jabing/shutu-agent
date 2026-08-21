@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/plan"
 	"github.com/jabing/shutu-agent/internal/tools"
 )
@@ -22,7 +23,7 @@ import (
 // disabled it creates nothing and registers nothing (D10, mirrors
 // registerJobs/registerSchedules).
 func (a *app) registerPlans() error {
-	if !a.cfg.Plan.Enabled {
+	if !config.Enabled(a.cfg.Plan.Enabled) {
 		return nil
 	}
 	prov := plan.NewMemProvider()

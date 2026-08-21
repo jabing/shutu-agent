@@ -196,5 +196,5 @@ func TestKBStatusAndReindexOnSQLite(t *testing.T) {
 // kbConfigFor builds a KBConfig pointing at a temp sqlite file.
 func kbConfigFor(t *testing.T, dir string, enabled bool) config.KBConfig {
 	t.Helper()
-	return config.KBConfig{Enabled: enabled, DBPath: filepath.Join(dir, "kb.sqlite")}
+	return config.KBConfig{Enabled: config.Bool(enabled), DBPath: filepath.Join(dir, "kb.sqlite")}
 }

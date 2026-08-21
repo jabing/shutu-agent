@@ -19,7 +19,7 @@ import (
 func makeCodeApp(codeEnabled bool) *app {
 	return &app{
 		cfg: config.Config{
-			Code: config.CodeConfig{Enabled: codeEnabled},
+			Code: config.CodeConfig{Enabled: config.Bool(codeEnabled)},
 		},
 		reg: tools.New(),
 		log: session.New(),

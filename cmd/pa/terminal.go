@@ -17,6 +17,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/terminal"
 	"github.com/jabing/shutu-agent/internal/tools"
 )
@@ -31,7 +32,7 @@ import (
 // structure is untouched (D4): the shell runs as a child process and is
 // observed only through the serial tool path.
 func (a *app) registerTerminal() error {
-	if !a.cfg.Terminal.Enabled {
+		if !config.Enabled(a.cfg.Terminal.Enabled) {
 		return nil
 	}
 	onEvent := func(typ string, data any) {

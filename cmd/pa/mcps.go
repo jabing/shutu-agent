@@ -27,7 +27,7 @@ import (
 // is disabled it creates nothing and registers nothing (D10, mirrors
 // registerJobs/registerPlans/…/registerCode).
 func (a *app) registerMcps() error {
-	if !a.cfg.Mcp.Enabled {
+	if !config.Enabled(a.cfg.Mcp.Enabled) {
 		return nil
 	}
 	f := a.mcpFactory

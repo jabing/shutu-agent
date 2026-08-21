@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/llm"
 	"github.com/jabing/shutu-agent/internal/session"
 	"github.com/jabing/shutu-agent/internal/webserver"
@@ -287,25 +288,25 @@ func (a *app) webConfig() map[string]any {
 		"mode":         a.cfg.Mode,
 		"providers":    a.webProviders(), // P5.1 live model pickers
 
-		// Capability gates (D10: each seam is default off).
-		"terminal_enabled":   a.cfg.Terminal.Enabled,
-		"fs_enabled":         a.cfg.Fs.Enabled,
-		"fs_search_enabled":  a.cfg.FsSearch.Enabled,
-		"ralph_enabled":      a.cfg.Ralph.Enabled,
-		"workflow_enabled":   a.cfg.Workflow.Enabled,
-		"kb_enabled":         a.cfg.KB.Enabled,
-		"jobs_enabled":       a.cfg.Jobs.Enabled,
-		"subagent_enabled":   a.cfg.Subagent.Enabled,
-		"web_enabled":        a.cfg.Web.Enabled,
-		"eval_enabled":       a.cfg.Eval.Enabled,
-		"code_enabled":       a.cfg.Code.Enabled,
-		"interact_enabled":   a.cfg.Interact.Enabled,
-		"mcp_enabled":        a.cfg.Mcp.Enabled,
-		"skill_enabled":      a.cfg.Skill.Enabled,
-		"schedule_enabled":   a.cfg.Schedule.Enabled,
-		"plan_enabled":       a.cfg.Plan.Enabled,
-		"spill_enabled":      a.cfg.Spill.Enabled,
-		"compaction_enabled": a.cfg.Compaction.Enabled,
+		// Capability gates (dsh 对齐: 默认全开, nil*bool→on; 显式 enabled:false 关).
+		"terminal_enabled":   config.Enabled(a.cfg.Terminal.Enabled),
+		"fs_enabled":         config.Enabled(a.cfg.Fs.Enabled),
+		"fs_search_enabled":  config.Enabled(a.cfg.FsSearch.Enabled),
+		"ralph_enabled":      config.Enabled(a.cfg.Ralph.Enabled),
+		"workflow_enabled":   config.Enabled(a.cfg.Workflow.Enabled),
+		"kb_enabled":         config.Enabled(a.cfg.KB.Enabled),
+		"jobs_enabled":       config.Enabled(a.cfg.Jobs.Enabled),
+		"subagent_enabled":   config.Enabled(a.cfg.Subagent.Enabled),
+		"web_enabled":        config.Enabled(a.cfg.Web.Enabled),
+		"eval_enabled":       config.Enabled(a.cfg.Eval.Enabled),
+		"code_enabled":       config.Enabled(a.cfg.Code.Enabled),
+		"interact_enabled":   config.Enabled(a.cfg.Interact.Enabled),
+		"mcp_enabled":        config.Enabled(a.cfg.Mcp.Enabled),
+		"skill_enabled":      config.Enabled(a.cfg.Skill.Enabled),
+		"schedule_enabled":   config.Enabled(a.cfg.Schedule.Enabled),
+		"plan_enabled":       config.Enabled(a.cfg.Plan.Enabled),
+		"spill_enabled":      config.Enabled(a.cfg.Spill.Enabled),
+		"compaction_enabled": config.Enabled(a.cfg.Compaction.Enabled),
 		"multimodal_enabled": a.multimodalEnabled(),
 
 		"web_server_addr":     a.cfg.WebServer.Addr,

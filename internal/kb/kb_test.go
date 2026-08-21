@@ -200,7 +200,7 @@ func TestSQLiteDatabaseCreated(t *testing.T) {
 // TestNewFromConfigDisabled proves "kb 默认关闭，不初始化": when enabled is
 // false no provider is constructed and no database file is opened.
 func TestNewFromConfigDisabled(t *testing.T) {
-	k, err := kb.NewFromConfig(config.KBConfig{Enabled: false})
+	k, err := kb.NewFromConfig(config.KBConfig{Enabled: config.Bool(false)})
 	if err != nil {
 		t.Fatalf("NewFromConfig(disabled) = %v, want nil", err)
 	}
@@ -213,7 +213,7 @@ func TestNewFromConfigDisabled(t *testing.T) {
 // enabled.
 func TestNewFromConfigEnabled(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "kb.sqlite")
-	k, err := kb.NewFromConfig(config.KBConfig{Enabled: true, DBPath: path})
+	k, err := kb.NewFromConfig(config.KBConfig{Enabled: config.Bool(true), DBPath: path})
 	if err != nil {
 		t.Fatalf("NewFromConfig(enabled): %v", err)
 	}

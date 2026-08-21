@@ -30,8 +30,8 @@ func makeWorkflowApp(enabled bool, fakeLLM llm.LLM) *app {
 	return &app{
 		cfg: config.Config{
 			Model:    "m",
-			Subagent: config.SubagentConfig{Enabled: true, MaxDepth: 8, DefaultProvider: "spawn"},
-			Workflow: config.WorkflowConfig{Enabled: enabled, MaxConcurrent: 4},
+			Subagent: config.SubagentConfig{Enabled: config.Bool(true), MaxDepth: 8, DefaultProvider: "spawn"},
+			Workflow: config.WorkflowConfig{Enabled: config.Bool(enabled), MaxConcurrent: 4},
 		},
 		reg:       tools.New(),
 		log:       session.New(),

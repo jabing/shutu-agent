@@ -18,7 +18,7 @@ import (
 func makeFsApp(fsEnabled bool, root string) *app {
 	return &app{
 		cfg: config.Config{
-			Fs: config.FsConfig{Enabled: fsEnabled, Root: root},
+			Fs: config.FsConfig{Enabled: config.Bool(fsEnabled), Root: root},
 		},
 		reg: tools.New(),
 		log: session.New(),

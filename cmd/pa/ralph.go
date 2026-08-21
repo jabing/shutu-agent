@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/ralph"
 	"github.com/jabing/shutu-agent/internal/subagent"
 )
@@ -27,7 +28,7 @@ import (
 // spawn time so a /new or /resume switch is honored), awaits the run, and
 // returns the child Output (D2 解耦: ralph 只依赖字符串闭包, 不依赖 subagent 类型).
 func (a *app) registerRalph() error {
-	if !a.cfg.Ralph.Enabled {
+	if !config.Enabled(a.cfg.Ralph.Enabled) {
 		return nil
 	}
 	spawn := func(ctx context.Context, prompt string) (string, error) {

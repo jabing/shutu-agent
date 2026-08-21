@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/subagent"
 	"github.com/jabing/shutu-agent/internal/workflow"
 )
@@ -29,7 +30,7 @@ import (
 // the run, and returns the child Output. It holds no closable resources, so
 // there is no deferred Close.
 func (a *app) registerWorkflow() error {
-	if !a.cfg.Workflow.Enabled {
+	if !config.Enabled(a.cfg.Workflow.Enabled) {
 		return nil
 	}
 	spawn := func(ctx context.Context, prompt string) (string, error) {

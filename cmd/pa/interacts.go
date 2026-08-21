@@ -26,6 +26,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/interact"
 	"github.com/jabing/shutu-agent/internal/session"
 	"github.com/jabing/shutu-agent/internal/tools"
@@ -43,7 +44,7 @@ const approveArgsBound = 200
 // after every other register* so the sensitive-tool gate can see the full
 // registered tool set (it is called last in main.go).
 func (a *app) registerInteracts() error {
-	if !a.cfg.Interact.Enabled {
+	if !config.Enabled(a.cfg.Interact.Enabled) {
 		return nil
 	}
 	prov := interact.NewMemProvider()

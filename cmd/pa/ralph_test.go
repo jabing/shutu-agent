@@ -58,8 +58,8 @@ func makeRalphApp(enabled bool, fakeLLM llm.LLM) *app {
 	return &app{
 		cfg: config.Config{
 			Model:    "m",
-			Subagent: config.SubagentConfig{Enabled: true, MaxDepth: 8, DefaultProvider: "spawn"},
-			Ralph:    config.RalphConfig{Enabled: enabled},
+			Subagent: config.SubagentConfig{Enabled: config.Bool(true), MaxDepth: 8, DefaultProvider: "spawn"},
+			Ralph:    config.RalphConfig{Enabled: config.Bool(enabled)},
 		},
 		reg:       tools.New(),
 		log:       session.New(),
