@@ -704,6 +704,121 @@ var png1x1 = []byte{
 	0xAE, 0x42, 0x60, 0x82,
 }
 
+// TestWorkspaceAPI covers the P6 grouping API: create (with empty-title
+// rejection), list (workspaces + ungrouped ids), rename, session creation into
+// a group, and delete returning sessions to the ungrouped bucket.
+func TestWorkspaceAPI(t *testing.T) {
+	srv, st := newTestServer(t, "")
+	h := srv.Handler()
+
+	// Empty title → 400.
+	if rec := doReqBody(t, h, "POST", "/api/workspaces", "", `{"title":"  "}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty title → %d, want 400", rec.Code)
+	}
+
+	// Create two workspaces.
+	rec := doReqBody(t, h, "POST", "/api/workspaces", "", `{"title":"研究"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create → %d: %s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil || created.ID == "" || created.Title != "研究" {
+		t.Fatalf("create resp = %s", rec.Body.String())
+	}
+	rec = doReqBody(t, h, "POST", "/api/workspaces", "", `{"title":"日常"}`)
+	var w2 struct{ ID string `json:"id"` }
+	if err := json.Unmarshal(rec.Body.Bytes(), &w2); err != nil {
+		t.Fatalf("create w2: %v", err)
+	}
+
+	// Seed sessions: one into the first workspace, one ungrouped.
+	seedSession(t, st, "s1", []session.Event{{Seq: 1, Type: session.EventUserMessage, Version: 1, At: time.Now().UTC(), Data: []byte(`{"text":"hi"}`)}})
+	seedSession(t, st, "s2", []session.Event{{Seq: 1, Type: session.EventUserMessage, Version: 1, At: time.Now().UTC(), Data: []byte(`{"text":"yo"}`)}})
+	if err := st.SetSessionWorkspace(context.Background(), "s1", created.ID); err != nil {
+		t.Fatalf("assign s1: %v", err)
+	}
+
+	rec = doReq(t, h, "GET", "/api/workspaces", "")
+	var list struct {
+		Workspaces  []struct {
+			ID         string   `json:"id"`
+			Title      string   `json:"title"`
+			SessionIDs []string `json:"session_ids"`
+		} `json:"workspaces"`
+		UngroupedIDs []string `json:"ungrouped_ids"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("list decode: %v (%s)", err, rec.Body.String())
+	}
+	if len(list.Workspaces) != 2 || list.Workspaces[0].Title != "研究" {
+		t.Fatalf("workspaces = %+v", list.Workspaces)
+	}
+	if len(list.Workspaces[0].SessionIDs) != 1 || list.Workspaces[0].SessionIDs[0] != "s1" {
+		t.Fatalf("w1 sessions = %v, want [s1]", list.Workspaces[0].SessionIDs)
+	}
+	if len(list.UngroupedIDs) != 1 || list.UngroupedIDs[0] != "s2" {
+		t.Fatalf("ungrouped = %v, want [s2]", list.UngroupedIDs)
+	}
+
+	// Rename.
+	rec = doReqBody(t, h, "PATCH", "/api/workspaces/"+created.ID, "", `{"title":"研究·改"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename → %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReqBody(t, h, "PATCH", "/api/workspaces/nope", "", `{"title":"x"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("rename unknown → %d, want 404", rec.Code)
+	}
+
+	// Create a session directly into a group via POST /api/sessions (the real
+	// session manager materializes the row; the mock mirrors that).
+	srv.SetSessionManager(func(ctx context.Context, action, id string) (string, error) {
+		if err := st.CreateSession(ctx, "s3", time.Now().UTC()); err != nil {
+			return "", err
+		}
+		return "s3", nil
+	})
+	rec = doReqBody(t, h, "POST", "/api/sessions", "", `{"workspace_id":"`+created.ID+`"}`)
+	var sc struct {
+		ID          string `json:"id"`
+		WorkspaceID string `json:"workspace_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &sc); err != nil || sc.WorkspaceID != created.ID {
+		t.Fatalf("session create resp = %s", rec.Body.String())
+	}
+
+	// Delete w1 → s1 and s3 return to ungrouped.
+	rec = doReq(t, h, "DELETE", "/api/workspaces/"+created.ID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete → %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, "DELETE", "/api/workspaces/"+created.ID, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("delete again → %d, want 404", rec.Code)
+	}
+	rec = doReq(t, h, "GET", "/api/workspaces", "")
+	list = struct {
+		Workspaces  []struct {
+			ID         string   `json:"id"`
+			Title      string   `json:"title"`
+			SessionIDs []string `json:"session_ids"`
+		} `json:"workspaces"`
+		UngroupedIDs []string `json:"ungrouped_ids"`
+	}{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("list after delete: %v", err)
+	}
+	if len(list.Workspaces) != 1 {
+		t.Fatalf("workspaces after delete = %d, want 1", len(list.Workspaces))
+	}
+	if len(list.UngroupedIDs) != 3 {
+		t.Fatalf("ungrouped after delete = %v, want all 3 sessions", list.UngroupedIDs)
+	}
+}
+
 // TestModelSwitch covers the P5.1 live model switch (POST /api/config/model):
 // an injected switcher receives provider/model and answers 200; an empty body
 // answers 400; a rejected switch (switcher error) answers 400; an unwired

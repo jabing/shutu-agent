@@ -260,10 +260,12 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
   max-width: 100%; height: 30px; border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 10px; color: var(--dsw-alias-label-caption);
 }
-/* Expanded search hides the section label (dsh sectionLabelHidden) */
+/* Expanded search hides the section label and the trailing action cluster
+   (dsh sectionLabelHidden + headerActionsHidden). */
 .ws-header:has(.ws-search.expanded) .ws-label {
   max-width: 0; margin-right: -4px; opacity: 0;
 }
+.ws-header:has(.ws-search.expanded) .ws-header-btn { display: none; }
 .ws-search input {
   flex: 1; min-width: 0; width: 0; border: none; outline: none; background: transparent;
   opacity: 0; pointer-events: none; font-size: 13px; line-height: 18px;
@@ -278,6 +280,68 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
   background: transparent; cursor: pointer; color: var(--dsw-alias-label-secondary);
 }
 .ws-clear:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.ws-header-btn { flex: none; width: 28px; height: 28px; }
+
+/* P6 workspace groups (dsh ui-workspace ProjectRowItem): a 34px header row
+   (folder → chevron on hover, title, count, hover actions) then its session
+   rows. A collapsed group keeps only the header. */
+.ws-group { position: relative; }
+.group-head {
+  display: flex; align-items: center; gap: 6px; width: 100%; height: 34px;
+  padding: 0 8px; margin-bottom: 2px; border: none; border-radius: 8px;
+  background: transparent; color: var(--dsw-alias-label-primary);
+  font: inherit; font-size: 14px; line-height: 20px; cursor: pointer; text-align: left;
+}
+.group-head:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.gh-chevron {
+  flex: none; width: 16px; height: 16px; display: inline-flex; align-items: center;
+  justify-content: center; color: var(--dsw-alias-label-caption);
+  font-size: 10px; transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ws-group:not(.closed) .gh-chevron { transform: rotate(90deg); }
+.gh-folder { flex: none; font-size: 14px; color: var(--dsw-alias-label-tertiary); }
+.gh-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.gh-count {
+  flex: none; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-tertiary);
+}
+.gh-actions { flex: none; display: none; align-items: center; gap: 4px; }
+.group-head:hover .gh-actions { display: inline-flex; }
+.gh-act {
+  width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 4px; color: var(--dsw-alias-label-tertiary); font-size: 13px; line-height: 1;
+}
+.gh-act:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.group-sessions { list-style: none; margin: 0; padding: 0; }
+/* dsh indent step: 22px for rows nested under a group header. */
+.ws-group .group-sessions .session-item { padding-left: 26px; }
+.ws-group .group-sessions .session-item .si-title { font-size: 14px; }
+.session-overflow {
+  width: 100%; height: 28px; border: none; border-radius: 8px; padding: 0 12px 0 26px;
+  background: transparent; cursor: pointer; text-align: left;
+  font-size: 12px; color: var(--dsw-alias-label-tertiary);
+}
+.session-overflow:hover { color: var(--dsw-alias-label-secondary); }
+
+/* Workspace create / rename dialog (dsh Modal family). */
+.ws-dialog {
+  position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+}
+.ws-dialog-card {
+  width: 340px; max-width: calc(100vw - 48px); padding: 16px; border-radius: 12px;
+  background: var(--dsw-specific-menu); border: 1px solid var(--dsw-alias-border-l2);
+  box-shadow: var(--dsw-shadow-l3); display: flex; flex-direction: column; gap: 12px;
+}
+.ws-dialog-title { font-size: 15px; font-weight: 600; color: var(--dsw-alias-label-primary); }
+#ws-dialog-input {
+  box-sizing: border-box; width: 100%; height: 36px; padding: 0 12px;
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; outline: none;
+  background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font-size: 14px;
+}
+#ws-dialog-input:focus { border-color: var(--dsw-alias-state-business-primary); }
+.ws-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.ws-view-menu { min-width: 140px; }
+.ws-view-menu button { width: 100%; }
 
 /* session rows: dsh ui-workspace single-line rows (32px, radius 8), state
    dot + title + relative time, hover reveals the ⋯ menu (rename / delete).
@@ -487,19 +551,11 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
 }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .ws-search.expanded { max-width: 36px; border-radius: 50%; border-color: transparent; }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .ws-search-btn { width: 36px; height: 36px; }
-.frame[data-sidebar-collapsed="true"] > .col-sidebar .session-list { padding: 8px 0; }
-.frame[data-sidebar-collapsed="true"] > .col-sidebar .session-item {
-  display: flex; align-items: center; justify-content: center; height: 40px;
-  margin: 2px 8px; padding: 0; border-radius: 8px; position: relative;
-}
-.frame[data-sidebar-collapsed="true"] > .col-sidebar .session-item .si-title,
-.frame[data-sidebar-collapsed="true"] > .col-sidebar .session-item .si-time,
-.frame[data-sidebar-collapsed="true"] > .col-sidebar .session-item .si-menu { display: none; }
-.frame[data-sidebar-collapsed="true"] > .col-sidebar .session-item.active::after {
-  content: ""; position: absolute; left: 50%; top: 50%;
-  transform: translate(-50%, -50%); width: 6px; height: 6px; border-radius: 50%;
-  background: var(--dsw-alias-state-business-primary);
-}
+/* The rail keeps only the region icons — the session tree is fully hidden
+   (dsh rail: search / add controls, no list). */
+.frame[data-sidebar-collapsed="true"] > .col-sidebar #view-toggle { display: none; }
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .ws-header-btn { width: 36px; height: 36px; }
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .session-list { display: none; }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .sidebar-foot {
   align-items: center; padding: 8px 0 10px;
 }

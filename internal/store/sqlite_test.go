@@ -224,3 +224,85 @@ func TestAppendMaterializesSession(t *testing.T) {
 		t.Fatalf("events = %d, want 1", len(got))
 	}
 }
+
+// TestWorkspaceLifecycle covers the P6 workspace store: create (idempotent,
+// appended sort), list order, rename, session membership + ungroup, and delete
+// returning sessions to the ungrouped bucket.
+func TestWorkspaceLifecycle(t *testing.T) {
+	st := openSQLite(t)
+	ctx := context.Background()
+
+	if err := st.CreateWorkspace(ctx, "w1", "研究"); err != nil {
+		t.Fatalf("create w1: %v", err)
+	}
+	if err := st.CreateWorkspace(ctx, "w1", "研究"); err != nil { // idempotent
+		t.Fatalf("re-create w1: %v", err)
+	}
+	if err := st.CreateWorkspace(ctx, "w2", "日常"); err != nil {
+		t.Fatalf("create w2: %v", err)
+	}
+	ws, err := st.ListWorkspaces(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(ws) != 2 || ws[0].ID != "w1" || ws[1].ID != "w2" {
+		t.Fatalf("workspaces = %+v, want w1,w2 in creation order", ws)
+	}
+	if ws[1].Sort <= ws[0].Sort {
+		t.Fatalf("sorts not ascending: %d then %d", ws[0].Sort, ws[1].Sort)
+	}
+
+	if err := st.SetWorkspaceTitle(ctx, "w1", "研究·改"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if err := st.SetWorkspaceTitle(ctx, "nope", "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("rename unknown: %v, want ErrNotFound", err)
+	}
+
+	// Sessions join a workspace and read back through ListSessions.
+	for _, id := range []string{"s1", "s2", "s3"} {
+		if err := st.CreateSession(ctx, id, time.Now().UTC()); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	if err := st.SetSessionWorkspace(ctx, "s1", "w1"); err != nil {
+		t.Fatalf("set s1->w1: %v", err)
+	}
+	if err := st.SetSessionWorkspace(ctx, "s2", "w1"); err != nil {
+		t.Fatalf("set s2->w1: %v", err)
+	}
+	if err := st.SetSessionWorkspace(ctx, "s2", ""); err != nil { // back to ungrouped
+		t.Fatalf("ungroup s2: %v", err)
+	}
+	if err := st.SetSessionWorkspace(ctx, "nope", "w1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("set unknown session: %v, want ErrNotFound", err)
+	}
+	metas, err := st.ListSessions(ctx)
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	byID := map[string]SessionMeta{}
+	for _, m := range metas {
+		byID[m.ID] = m
+	}
+	if byID["s1"].WorkspaceID != "w1" || byID["s2"].WorkspaceID != "" || byID["s3"].WorkspaceID != "" {
+		t.Fatalf("workspace ids = %q/%q/%q, want w1/''/''", byID["s1"].WorkspaceID, byID["s2"].WorkspaceID, byID["s3"].WorkspaceID)
+	}
+
+	// Deleting a workspace returns its sessions to the ungrouped bucket.
+	if err := st.DeleteWorkspace(ctx, "w1"); err != nil {
+		t.Fatalf("delete w1: %v", err)
+	}
+	if err := st.DeleteWorkspace(ctx, "w1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete again: %v, want ErrNotFound", err)
+	}
+	metas, err = st.ListSessions(ctx)
+	if err != nil {
+		t.Fatalf("list sessions after delete: %v", err)
+	}
+	for _, m := range metas {
+		if m.WorkspaceID != "" {
+			t.Fatalf("session %s still in workspace %q after delete", m.ID, m.WorkspaceID)
+		}
+	}
+}

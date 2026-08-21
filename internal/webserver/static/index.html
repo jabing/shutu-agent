@@ -64,7 +64,8 @@
         </button>
 
         <!-- Section header (dsh WorkspaceBrowser sectionHeader): 会话 label +
-             a search icon that expands into an inline input. -->
+             a search icon that expands into an inline input, plus the view
+             options (grouped/flat) and add-workspace controls (P6). -->
         <div class="ws-header">
           <span class="ws-label">会话</span>
           <div class="ws-search" id="ws-search">
@@ -82,6 +83,35 @@
                 <path d="M4 4l8 8M12 4l-8 8"/>
               </svg>
             </button>
+          </div>
+          <button id="view-toggle" class="icon-button ws-header-btn" title="视图选项" type="button">
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor"
+                 stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="5" cy="5" r="2"/><circle cx="11" cy="5" r="2"/>
+              <circle cx="5" cy="11" r="2"/><circle cx="11" cy="11" r="2"/>
+            </svg>
+          </button>
+          <button id="ws-add" class="icon-button ws-header-btn" title="新建工作区" type="button">
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+              <path d="M8 3.5v9M3.5 8h9"/>
+            </svg>
+          </button>
+        </div>
+        <!-- View-options popover (grouped / flat, dsh ViewOptionsMenu). -->
+        <div id="view-menu" class="si-pop ws-view-menu hidden">
+          <button data-view="workspace">按工作区分组</button>
+          <button data-view="flat">平铺展示</button>
+        </div>
+        <!-- Workspace create/rename dialog. -->
+        <div id="ws-dialog" class="ws-dialog hidden">
+          <div class="ws-dialog-card" role="dialog" aria-modal="true">
+            <div class="ws-dialog-title" id="ws-dialog-title">新建工作区</div>
+            <input id="ws-dialog-input" type="text" placeholder="工作区名称" maxlength="60" autocomplete="off">
+            <div class="ws-dialog-actions">
+              <button id="ws-dialog-cancel" class="btn-ghost" type="button">取消</button>
+              <button id="ws-dialog-ok" class="sec-btn primary" type="button">创建</button>
+            </div>
           </div>
         </div>
 

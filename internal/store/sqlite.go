@@ -37,19 +37,29 @@ CREATE TABLE IF NOT EXISTS events (
     PRIMARY KEY (session_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_events_session ON events (session_id, seq);
+CREATE TABLE IF NOT EXISTS workspaces (
+    id    TEXT    NOT NULL PRIMARY KEY,
+    title TEXT    NOT NULL,
+    sort  INTEGER NOT NULL
+);
 `
 
-// migrateSchema brings pre-P2 databases (sessions without the title column)
-// forward. CREATE TABLE IF NOT EXISTS never alters an existing table, so the
-// column is added here; a "duplicate column" error simply means the database
-// is already current and is ignored.
+// migrateSchema brings older databases forward. CREATE TABLE IF NOT EXISTS
+// never alters an existing table, so columns are added here; a "duplicate
+// column" error simply means the database is already current and is ignored.
 func migrateSchema(db *sql.DB) error {
-	if _, err := db.Exec(`ALTER TABLE sessions ADD COLUMN title TEXT`); err != nil {
-		// modernc reports duplicate column as an error; any failure other than
-		// "column already exists" is fatal.
-		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") &&
-			!strings.Contains(strings.ToLower(err.Error()), "already exists") {
-			return fmt.Errorf("store: migrate sessions.title: %w", err)
+	steps := []struct{ table, col, ddl string }{
+		{"sessions", "title", `ALTER TABLE sessions ADD COLUMN title TEXT`},
+		{"sessions", "workspace_id", `ALTER TABLE sessions ADD COLUMN workspace_id TEXT`},
+	}
+	for _, st := range steps {
+		if _, err := db.Exec(st.ddl); err != nil {
+			// modernc reports duplicate column as an error; any failure other
+			// than "column already exists" is fatal.
+			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") &&
+				!strings.Contains(strings.ToLower(err.Error()), "already exists") {
+				return fmt.Errorf("store: migrate %s.%s: %w", st.table, st.col, err)
+			}
 		}
 	}
 	return nil
@@ -181,7 +191,7 @@ func (s *SQLiteStore) LoadSession(ctx context.Context, sessionID string) ([]sess
 // ListSessions returns every session's metadata, most recently updated first.
 func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT s.id, s.created_at, s.updated_at, s.title, COUNT(e.seq)
+		SELECT s.id, s.created_at, s.updated_at, s.title, s.workspace_id, COUNT(e.seq)
 		FROM sessions s LEFT JOIN events e ON e.session_id = s.id
 		GROUP BY s.id
 		ORDER BY s.updated_at DESC, s.created_at DESC`)
@@ -193,14 +203,15 @@ func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 	for rows.Next() {
 		var m SessionMeta
 		var created, updated int64
-		var title sql.NullString
+		var title, workspaceID sql.NullString
 		var count int
-		if err := rows.Scan(&m.ID, &created, &updated, &title, &count); err != nil {
+		if err := rows.Scan(&m.ID, &created, &updated, &title, &workspaceID, &count); err != nil {
 			return nil, fmt.Errorf("store: scan session meta: %w", err)
 		}
 		m.CreatedAt = time.Unix(0, created).UTC()
 		m.UpdatedAt = time.Unix(0, updated).UTC()
 		m.Title = title.String
+		m.WorkspaceID = workspaceID.String
 		m.EventCount = count
 		metas = append(metas, m)
 	}
@@ -208,6 +219,23 @@ func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 		return nil, fmt.Errorf("store: read session metas: %w", err)
 	}
 	return metas, nil
+}
+
+// SetSessionWorkspace moves a session into a workspace; an empty workspaceID
+// returns it to the ungrouped bucket.
+func (s *SQLiteStore) SetSessionWorkspace(ctx context.Context, sessionID, workspaceID string) error {
+	var wid any
+	if workspaceID != "" {
+		wid = workspaceID
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions SET workspace_id = ? WHERE id = ?`, wid, sessionID)
+	if err != nil {
+		return fmt.Errorf("store: set workspace %q: %w", sessionID, err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("%w: %q", ErrNotFound, sessionID)
+	}
+	return nil
 }
 
 // SetSessionTitle stores (or clears) the user-set title override.
@@ -235,6 +263,78 @@ func (s *SQLiteStore) DeleteSession(ctx context.Context, sessionID string) error
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
 		return fmt.Errorf("%w: %q", ErrNotFound, sessionID)
+	}
+	return nil
+}
+
+// CreateWorkspace inserts a workspace row (idempotent) at the end of the
+// current sort order.
+func (s *SQLiteStore) CreateWorkspace(ctx context.Context, id, title string) error {
+	var next int
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort), -1) + 1 FROM workspaces`).Scan(&next); err != nil {
+		return fmt.Errorf("store: next workspace sort: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO workspaces (id, title, sort) VALUES (?, ?, ?)
+		 ON CONFLICT(id) DO NOTHING`, id, title, next); err != nil {
+		return fmt.Errorf("store: create workspace %q: %w", id, err)
+	}
+	return nil
+}
+
+// ListWorkspaces returns every workspace, ordered by Sort then id.
+func (s *SQLiteStore) ListWorkspaces(ctx context.Context) ([]WorkspaceMeta, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, title, sort FROM workspaces ORDER BY sort, id`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list workspaces: %w", err)
+	}
+	defer rows.Close()
+	var out []WorkspaceMeta
+	for rows.Next() {
+		var m WorkspaceMeta
+		if err := rows.Scan(&m.ID, &m.Title, &m.Sort); err != nil {
+			return nil, fmt.Errorf("store: scan workspace: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: read workspaces: %w", err)
+	}
+	return out, nil
+}
+
+// SetWorkspaceTitle renames a workspace.
+func (s *SQLiteStore) SetWorkspaceTitle(ctx context.Context, id, title string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE workspaces SET title = ? WHERE id = ?`, title, id)
+	if err != nil {
+		return fmt.Errorf("store: rename workspace %q: %w", id, err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
+	return nil
+}
+
+// DeleteWorkspace removes a workspace; its sessions return to the ungrouped
+// bucket (workspace_id cleared) in the same transaction.
+func (s *SQLiteStore) DeleteWorkspace(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin delete workspace: %w", err)
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `DELETE FROM workspaces WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("store: delete workspace %q: %w", id, err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET workspace_id = NULL WHERE workspace_id = ?`, id); err != nil {
+		return fmt.Errorf("store: ungroup workspace %q: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit delete workspace: %w", err)
 	}
 	return nil
 }

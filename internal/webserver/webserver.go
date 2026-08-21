@@ -8,9 +8,11 @@ package webserver
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -132,6 +134,12 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	// and the SSE event stream all sit behind the same bearer middleware.
 	mux.Handle("POST /api/sessions", s.requireAuth(http.HandlerFunc(s.handleSessionCreate)))
 	mux.Handle("POST /api/sessions/{id}/resume", s.requireAuth(http.HandlerFunc(s.handleSessionResume)))
+	// P6 workspace grouping (dsh grouped sidebar view): list, create, rename,
+	// delete. The sessions list carries workspace_id so the sidebar groups.
+	mux.Handle("GET /api/workspaces", s.requireAuth(http.HandlerFunc(s.handleWorkspaces)))
+	mux.Handle("POST /api/workspaces", s.requireAuth(http.HandlerFunc(s.handleWorkspaceCreate)))
+	mux.Handle("PATCH /api/workspaces/{id}", s.requireAuth(http.HandlerFunc(s.handleWorkspaceTitle)))
+	mux.Handle("DELETE /api/workspaces/{id}", s.requireAuth(http.HandlerFunc(s.handleWorkspaceDelete)))
 	mux.Handle("POST /api/sessions/{id}/message", s.requireAuth(http.HandlerFunc(s.handleMessage)))
 	// M10 P2 (ADR D-WEB2-I): sidebar session management — rename (PATCH) and
 	// delete (DELETE). PATCH body is {"title": "..."}; an empty title clears the
@@ -365,14 +373,16 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 // sessionView is the API's minimal owned session metadata (no store refs).
 // M10 W4 (D-WEB2-H) adds the session-list fields the dsh-style sidebar needs:
-// title (first user message, bounded) and blank (no events yet).
+// title (first user message, bounded) and blank (no events yet). P6 adds
+// workspace_id for the grouped sidebar view.
 type sessionView struct {
-	ID         string    `json:"id"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	EventCount int       `json:"event_count"`
-	Title      string    `json:"title,omitempty"`
-	Blank      bool      `json:"blank"`
+	ID          string    `json:"id"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	EventCount  int       `json:"event_count"`
+	Title       string    `json:"title,omitempty"`
+	Blank       bool      `json:"blank"`
+	WorkspaceID string    `json:"workspace_id,omitempty"`
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -383,7 +393,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]sessionView, 0, len(metas))
 	for _, m := range metas {
-		v := sessionView{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, EventCount: m.EventCount, Blank: m.EventCount == 0}
+		v := sessionView{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, EventCount: m.EventCount, Blank: m.EventCount == 0, WorkspaceID: m.WorkspaceID}
 		if m.Title != "" {
 			// User-set title (P2 rename) wins over inference.
 			v.Title = boundRunes(m.Title, maxTitle)
@@ -615,18 +625,29 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 // handleSessionCreate implements POST /api/sessions (M10 W1, ADR D-WEB2-C):
 // it asks the injected session manager to start a fresh session and returns
-// its id. An unwired manager answers 501.
+// its id. An unwired manager answers 501. P6 adds an optional {"workspace_id"}
+// so a session can be created directly into a sidebar group.
 func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	if s.sessFn == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "session manager not wired"})
 		return
 	}
+	var body struct {
+		WorkspaceID string `json:"workspace_id"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body) // optional
 	id, err := s.sessFn(r.Context(), "new", "")
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": id})
+	if body.WorkspaceID != "" {
+		if err := s.store.SetSessionWorkspace(r.Context(), id, body.WorkspaceID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "workspace_id": body.WorkspaceID})
 }
 
 // handleSessionResume implements POST /api/sessions/{id}/resume: it asks the
@@ -647,6 +668,126 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": newID})
+}
+
+// maxWorkspaceTitle is the rune cap on workspace titles (P6).
+const maxWorkspaceTitle = 60
+
+// workspaceView is one workspace plus its session ids, ordered by recent
+// activity (the sidebar groups them under the workspace header).
+type workspaceView struct {
+	ID         string   `json:"id"`
+	Title      string   `json:"title"`
+	SessionIDs []string `json:"session_ids"`
+}
+
+// handleWorkspaces implements GET /api/workspaces (P6): every workspace with
+// its session ids (recently updated first) plus the ungrouped session ids, so
+// the sidebar can render the dsh-style grouped tree without re-deriving
+// membership.
+func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
+	ws, err := s.store.ListWorkspaces(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	metas, err := s.store.ListSessions(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	byWorkspace := map[string][]string{}
+	var ungrouped []string
+	for _, m := range metas {
+		if m.WorkspaceID == "" {
+			ungrouped = append(ungrouped, m.ID)
+		} else {
+			byWorkspace[m.WorkspaceID] = append(byWorkspace[m.WorkspaceID], m.ID)
+		}
+	}
+	// ListSessions is already updated_at DESC, so the appended order is recent
+	// first; the ungrouped bucket is a flat account (dsh UNGROUPED_KEY).
+	out := make([]workspaceView, 0, len(ws))
+	for _, m := range ws {
+		ids := byWorkspace[m.ID]
+		if ids == nil {
+			ids = []string{} // always a JSON array, never null
+		}
+		out = append(out, workspaceView{ID: m.ID, Title: m.Title, SessionIDs: ids})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"workspaces": out, "ungrouped_ids": ungrouped})
+}
+
+// newWorkspaceID returns a short random workspace id (e.g. "w-1a2b3c4d").
+func newWorkspaceID() (string, error) {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return "w-" + hex.EncodeToString(b[:]), nil
+}
+
+// handleWorkspaceCreate implements POST /api/workspaces {"title":...} (P6).
+func (s *Server) handleWorkspaceCreate(w http.ResponseWriter, r *http.Request) {
+	var body struct{ Title string }
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad request: " + err.Error()})
+		return
+	}
+	title := strings.TrimSpace(boundRunes(body.Title, maxWorkspaceTitle))
+	if title == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "title is required"})
+		return
+	}
+	id, err := newWorkspaceID()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := s.store.CreateWorkspace(r.Context(), id, title); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id, "title": title})
+}
+
+// handleWorkspaceTitle implements PATCH /api/workspaces/{id} {"title":...}.
+func (s *Server) handleWorkspaceTitle(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct{ Title string }
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad request: " + err.Error()})
+		return
+	}
+	title := strings.TrimSpace(boundRunes(body.Title, maxWorkspaceTitle))
+	if title == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "title is required"})
+		return
+	}
+	if err := s.store.SetWorkspaceTitle(r.Context(), id, title); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "workspace not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id, "title": title})
+}
+
+// handleWorkspaceDelete implements DELETE /api/workspaces/{id}: the workspace
+// is removed and its sessions return to the ungrouped bucket (store-owned).
+func (s *Server) handleWorkspaceDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.store.DeleteWorkspace(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "workspace not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 }
 
 // handleMessage implements POST /api/sessions/{id}/message (M10 W1, ADR

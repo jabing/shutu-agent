@@ -448,6 +448,23 @@ function fmtShort(iso) {
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+// ---- P6 workspace grouping (dsh grouped sidebar view) ----------------------
+// groupBy is persisted in localStorage like dsh's store; grouped is the
+// default (dsh ships grouped). wsGroupOpen remembers per-group collapse.
+const GROUP_SESSION_LIMIT = 5;
+let groupBy = localStorage.getItem("pa_groupby") || "workspace";
+let wsGroups = [];      // [{id,title,session_ids}]
+let wsUngrouped = [];   // ungrouped session ids
+let wsGroupOpen = {};
+function wsOpenState(key) {
+  if (!(key in wsGroupOpen)) wsGroupOpen[key] = localStorage.getItem("pa_ws_g:" + key) !== "0";
+  return wsGroupOpen[key];
+}
+function setWsOpen(key, open) {
+  wsGroupOpen[key] = open;
+  localStorage.setItem("pa_ws_g:" + key, open ? "1" : "0");
+}
+
 async function loadSessions() {
   let res;
   try {
@@ -459,37 +476,228 @@ async function loadSessions() {
   if (!Array.isArray(list) || list.length === 0) {
     const li = document.createElement("li");
     li.className = "session-item";
-    li.innerHTML = `<span class="si-title empty">还没有会话，点「＋ 新建」开始</span>`;
+    li.innerHTML = `<span class="si-title empty">还没有会话，点「新会话」开始</span>`;
     sessionList.appendChild(li);
     return;
   }
   list.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
   const q = searchQuery.trim().toLowerCase();
+  // A live search renders flat results regardless of the grouping mode.
+  if (q) { renderFlat(list, q); return; }
+  if (groupBy !== "workspace") { renderFlat(list, ""); return; }
+  try {
+    const wr = await api("/api/workspaces");
+    const data = await wr.json();
+    wsGroups = data.workspaces || [];
+    wsUngrouped = data.ungrouped_ids || [];
+  } catch (e) { if (e.message !== "unauthorized") console.error(e); }
+  renderGrouped(list);
+}
+
+// appendSessionItem appends one session row into a container (shared by the
+// flat list and the grouped sublists). dsh SessionNodeItem row contract.
+function appendSessionItem(container, s) {
+  let state = s.blank ? "idle" : "done";
+  if (s.id === currentID && streamActive) state = "running";
+  const li = document.createElement("li");
+  li.className = "session-item" + (s.id === currentID ? " active" : "");
+  li.dataset.id = s.id;
+  li.innerHTML = `
+    <span class="si-dot" data-state="${state}"></span>
+    <span class="si-title${s.blank ? " empty" : ""}">${esc(s.title || s.id)}</span>
+    <span class="si-time">${fmtShort(s.updated_at)}</span>
+    <button class="si-menu" title="会话操作">⋯</button>`;
+  li.addEventListener("click", (e) => {
+    if (e.target.closest(".si-menu")) return;
+    switchSession(s.id);
+  });
+  li.querySelector(".si-menu").addEventListener("click", (e) => {
+    e.stopPropagation();
+    openMenu(li, s);
+  });
+  container.appendChild(li);
+}
+
+// renderFlat draws the single-list view (dsh FlatList), filtered by q.
+function renderFlat(list, q) {
   for (const s of list) {
     const hay = ((s.title || "") + " " + s.id).toLowerCase();
     if (q && !hay.includes(q)) continue;
-    let state = s.blank ? "idle" : "done";
-    if (s.id === currentID && streamActive) state = "running";
+    appendSessionItem(sessionList, s);
+  }
+}
+
+// renderGrouped draws the dsh grouped tree: a workspace header row per group
+// (folder + title + count + hover add/menu) then its session rows; a group
+// collapses to its header, and more than GROUP_SESSION_LIMIT rows collapse to
+// a 5-row run plus an "expand all" button. The ungrouped bucket keeps its
+// sessions but has no workspace actions.
+function renderGrouped(list) {
+  const byId = new Map(list.map((s) => [s.id, s]));
+  const groups = [];
+  for (const w of wsGroups) {
+    groups.push({ key: w.id, title: w.title, ws: true, ids: w.session_ids.filter((id) => byId.has(id)) });
+  }
+  const unIds = wsUngrouped.filter((id) => byId.has(id));
+  if (unIds.length > 0) groups.push({ key: "__u", title: "未分组", ws: false, ids: unIds });
+  let any = false;
+  for (const g of groups) {
+    if (g.ids.length === 0) continue;
+    any = true;
+    const wrap = document.createElement("div");
+    wrap.className = "ws-group" + (wsOpenState(g.key) ? "" : " closed");
+    wrap.dataset.key = g.key;
+    const head = document.createElement("button");
+    head.className = "group-head";
+    head.innerHTML = `
+      <span class="gh-chevron" aria-hidden="true">▸</span>
+      <span class="gh-folder" aria-hidden="true">${g.ws ? "📁" : "🗂"}</span>
+      <span class="gh-title">${esc(g.title)}</span>
+      <span class="gh-count">${g.ids.length}</span>
+      ${g.ws ? `<span class="gh-actions">
+        <span class="gh-act gh-add" title="在此新建会话">＋</span>
+        <span class="gh-act gh-menu" title="工作区操作">⋯</span>
+      </span>` : ""}`;
+    head.addEventListener("click", (e) => {
+      if (e.target.closest(".gh-add") || e.target.closest(".gh-menu")) return;
+      setWsOpen(g.key, !wsOpenState(g.key));
+      wrap.classList.toggle("closed", !wsOpenState(g.key));
+    });
+    if (g.ws) {
+      head.querySelector(".gh-add").addEventListener("click", async (e) => {
+        e.stopPropagation();
+        try {
+          const res = await api("/api/sessions", {
+            method: "POST", body: JSON.stringify({ workspace_id: g.key }),
+          });
+          const body = await res.json();
+          localStorage.setItem(KEY_CURRENT, body.id);
+          currentID = body.id;
+          await openSession(body.id);
+          loadSessions();
+        } catch (err) { if (err.message !== "unauthorized") console.error(err); }
+      });
+      head.querySelector(".gh-menu").addEventListener("click", (e) => {
+        e.stopPropagation();
+        openWorkspaceMenu(g);
+      });
+    }
+    wrap.appendChild(head);
+    if (wsOpenState(g.key)) {
+      const ul = document.createElement("ul");
+      ul.className = "group-sessions";
+      const shown = g.ids.slice(0, GROUP_SESSION_LIMIT);
+      for (const id of shown) appendSessionItem(ul, byId.get(id));
+      if (g.ids.length > GROUP_SESSION_LIMIT) {
+        const ob = document.createElement("button");
+        ob.className = "session-overflow";
+        ob.textContent = `展开全部会话（${g.ids.length}）`;
+        ob.addEventListener("click", () => {
+          for (const id of g.ids.slice(GROUP_SESSION_LIMIT)) appendSessionItem(ul, byId.get(id));
+          ob.remove();
+        });
+        ul.appendChild(ob);
+      }
+      wrap.appendChild(ul);
+    }
+    sessionList.appendChild(wrap);
+  }
+  if (!any) {
     const li = document.createElement("li");
-    li.className = "session-item" + (s.id === currentID ? " active" : "");
-    li.dataset.id = s.id;
-    li.innerHTML = `
-      <span class="si-dot" data-state="${state}"></span>
-      <span class="si-title${s.blank ? " empty" : ""}">${esc(s.title || s.id)}</span>
-      <span class="si-time">${fmtShort(s.updated_at)}</span>
-      <button class="si-menu" title="会话操作">⋯</button>`;
-    li.addEventListener("click", (e) => {
-      if (e.target.closest(".si-menu")) return;
-      switchSession(s.id);
-    });
-    const menu = li.querySelector(".si-menu");
-    menu.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openMenu(li, s);
-    });
+    li.className = "session-item";
+    li.innerHTML = `<span class="si-title empty">还没有会话，点「新会话」开始</span>`;
     sessionList.appendChild(li);
   }
 }
+
+// openWorkspaceMenu shows the workspace header action menu (rename / delete).
+function openWorkspaceMenu(g) {
+  closeAnyMenu();
+  const pop = document.createElement("div");
+  pop.className = "si-pop";
+  pop.innerHTML = `
+    <button data-act="rename">✏️ 重命名</button>
+    <button data-act="delete" class="danger">🗑 删除工作区</button>`;
+  pop.addEventListener("click", async (e) => {
+    const act = e.target.dataset.act;
+    if (!act) return;
+    closeAnyMenu();
+    if (act === "rename") openWsDialog("rename", g.key, g.title);
+    if (act === "delete") await deleteWorkspace(g.key);
+  });
+  document.querySelector(`.ws-group[data-key="${CSS.escape(g.key)}"] .group-head`).appendChild(pop);
+  openMenuEl = pop;
+}
+
+async function deleteWorkspace(id) {
+  if (!confirm("删除工作区？其中的会话将移回「未分组」，会话本身不会被删除。")) return;
+  try {
+    await api(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" });
+  } catch (e) { if (e.message !== "unauthorized") console.error(e); }
+  loadSessions();
+}
+
+// ---- workspace create / rename dialog (dsh browser-owned Modal) ------------
+let wsDialogMode = null; // {mode:'create'} | {mode:'rename', id}
+function openWsDialog(mode, id, current) {
+  wsDialogMode = mode === "rename" ? { mode: "rename", id } : { mode: "create" };
+  $("ws-dialog-title").textContent = mode === "rename" ? "重命名工作区" : "新建工作区";
+  $("ws-dialog-ok").textContent = mode === "rename" ? "保存" : "创建";
+  const inp = $("ws-dialog-input");
+  inp.value = current || "";
+  $("ws-dialog").classList.remove("hidden");
+  inp.focus();
+  inp.select();
+}
+function closeWsDialog() {
+  $("ws-dialog").classList.add("hidden");
+  wsDialogMode = null;
+}
+async function submitWsDialog() {
+  if (!wsDialogMode) return;
+  const title = $("ws-dialog-input").value.trim();
+  if (!title) return;
+  try {
+    if (wsDialogMode.mode === "rename") {
+      await api(`/api/workspaces/${encodeURIComponent(wsDialogMode.id)}`, {
+        method: "PATCH", body: JSON.stringify({ title }),
+      });
+    } else {
+      await api("/api/workspaces", { method: "POST", body: JSON.stringify({ title }) });
+      groupBy = "workspace";
+      localStorage.setItem("pa_groupby", "workspace");
+    }
+    closeWsDialog();
+    loadSessions();
+  } catch (e) { if (e.message !== "unauthorized") console.error(e); }
+}
+$("ws-add").addEventListener("click", () => openWsDialog("create"));
+$("ws-dialog-ok").addEventListener("click", submitWsDialog);
+$("ws-dialog-cancel").addEventListener("click", closeWsDialog);
+$("ws-dialog-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); submitWsDialog(); }
+  if (e.key === "Escape") { e.preventDefault(); closeWsDialog(); }
+});
+$("ws-dialog").addEventListener("click", (e) => {
+  if (e.target === $("ws-dialog")) closeWsDialog();
+});
+// View-options popover: grouped / flat (dsh ViewOptionsMenu).
+const viewMenu = $("view-menu");
+$("view-toggle").addEventListener("click", (e) => {
+  e.stopPropagation();
+  viewMenu.classList.toggle("hidden");
+});
+viewMenu.addEventListener("click", (e) => {
+  const v = e.target.dataset.view;
+  if (!v) return;
+  groupBy = v;
+  localStorage.setItem("pa_groupby", v);
+  viewMenu.classList.add("hidden");
+  loadSessions();
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#view-menu, #view-toggle")) viewMenu.classList.add("hidden");
+});
 
 let openMenuEl = null;
 function closeAnyMenu() {
