@@ -37,6 +37,8 @@ var (
 	ErrEmptyData = errors.New("attachment: empty image data")
 	// ErrTooLarge 是 data 超过 maxBytes 时的错误。
 	ErrTooLarge = errors.New("attachment: image exceeds max bytes")
+	// ErrNotFound 是 id 对应的附件文件不存在时的错误（P5 web 回显/发送用）。
+	ErrNotFound = errors.New("attachment: image not found")
 )
 
 // Store 持久化图片附件到一个目录。不是并发安全的：主循环严格串行（D5）。
@@ -95,6 +97,46 @@ func (s *Store) Read(ref llm.ImageRef) ([]byte, error) {
 		return nil, fmt.Errorf("attachment: read %s: %w", ref.Path, err)
 	}
 	return data, nil
+}
+
+// GetByID 按附件 id 找回 ImageRef（扫描 <dir>/<id>.<ext>；宽高不解析记 0）。
+// P5 web 回显（GET .../attachments/{id}）与发送带图（id → ImageRef）用它把
+// 前端持有的 id 解析回持久引用。id 不存在返回 ErrNotFound。
+func (s *Store) GetByID(id string) (llm.ImageRef, error) {
+	if id == "" || strings.ContainsAny(id, `/\`) {
+		return llm.ImageRef{}, ErrNotFound
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return llm.ImageRef{}, fmt.Errorf("attachment: list %s: %w", s.dir, err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		dot := strings.LastIndexByte(name, '.')
+		if dot <= 0 || name[:dot] != id {
+			continue
+		}
+		mediaType := SupportedMediaTypes[name[dot:]]
+		if mediaType == "" {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		return llm.ImageRef{
+			ID:        id,
+			MediaType: mediaType,
+			Bytes:     info.Size(),
+			Width:     0,
+			Height:    0,
+			Path:      filepath.Join(s.dir, name),
+		}, nil
+	}
+	return llm.ImageRef{}, fmt.Errorf("%w: %q", ErrNotFound, id)
 }
 
 // MediaTypeForExtension 按（点前缀）扩展名返回受支持的 media type；不受支持返回空

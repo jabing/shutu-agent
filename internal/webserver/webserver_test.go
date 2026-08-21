@@ -6,9 +6,11 @@
 package webserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -16,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"personal-agent/internal/attachment"
+	"personal-agent/internal/llm"
 	"personal-agent/internal/session"
 	"personal-agent/internal/store"
 )
@@ -325,8 +329,9 @@ func TestMessageRequiresAuth(t *testing.T) {
 func TestMessageHandlerInvoked(t *testing.T) {
 	srv, _ := newTestServer(t, "tok")
 	var gotID, gotText string
-	srv.SetMessageHandler(func(ctx context.Context, sessionID, text string) error {
-		gotID, gotText = sessionID, text
+	var gotImages []llm.ImageRef
+	srv.SetMessageHandler(func(ctx context.Context, sessionID, text string, images []llm.ImageRef) error {
+		gotID, gotText, gotImages = sessionID, text, images
 		return nil
 	})
 
@@ -341,8 +346,8 @@ func TestMessageHandlerInvoked(t *testing.T) {
 	if out["ok"] != true {
 		t.Fatalf("body = %v, want ok:true", out)
 	}
-	if gotID != "s-1" || gotText != "hello" {
-		t.Fatalf("handler got (%q, %q), want (s-1, hello)", gotID, gotText)
+	if gotID != "s-1" || gotText != "hello" || len(gotImages) != 0 {
+		t.Fatalf("handler got (%q, %q, %v), want (s-1, hello, nil)", gotID, gotText, gotImages)
 	}
 
 	// Empty text → 400 and the handler is not invoked.
@@ -685,5 +690,171 @@ func TestSessionTitleDelete(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("DELETE unknown → %d, want 404", rec.Code)
+	}
+}
+
+// png1x1 is a minimal valid 1x1 PNG byte stream (media type image/png).
+var png1x1 = []byte{
+	0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49,
+	0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02,
+	0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44,
+	0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x00, 0x03, 0x00,
+	0x01, 0x6D, 0x26, 0x0B, 0xBC, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
+	0xAE, 0x42, 0x60, 0x82,
+}
+
+// TestAttachmentUploadGet covers the P5 attachment APIs: a multipart upload
+// (POST) returns the attachment view, the byte echo (GET) returns the stored
+// bytes with the right Content-Type, unknown ids answer 404, and an unwired
+// store answers 501.
+func TestAttachmentUploadGet(t *testing.T) {
+	srv, st := newTestServer(t, "tok")
+	att, err := attachment.NewStore(filepath.Join(t.TempDir(), "att"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	srv.SetAttachmentStore(att)
+	if err := st.CreateSession(context.Background(), "s-1", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Upload a PNG through a multipart form.
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", "pic.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(png1x1); err != nil {
+		t.Fatal(err)
+	}
+	mw.Close()
+	req := httptest.NewRequest("POST", "/api/sessions/s-1/attachments", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload → %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+	var av attachmentView
+	if err := json.Unmarshal(rec.Body.Bytes(), &av); err != nil {
+		t.Fatalf("decode upload: %v", err)
+	}
+	if av.ID == "" || av.MediaType != "image/png" || av.Bytes != int64(len(png1x1)) {
+		t.Fatalf("attachment view = %+v, want png %d bytes", av, len(png1x1))
+	}
+
+	// Echo the bytes back.
+	rec = doReq(t, srv.Handler(), "GET", "/api/sessions/s-1/attachments/"+av.ID, "tok")
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("echo → %d %q, want 200 image/png", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if !bytes.Equal(rec.Body.Bytes(), png1x1) {
+		t.Fatalf("echo bytes differ from upload")
+	}
+
+	// Unknown attachment id → 404; upload to unknown session → 404.
+	if rec := doReq(t, srv.Handler(), "GET", "/api/sessions/s-1/attachments/nope", "tok"); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown attachment → %d, want 404", rec.Code)
+	}
+	if rec := doReq(t, srv.Handler(), "GET", "/api/sessions/s-nope/attachments/"+av.ID, "tok"); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown session echo → %d, want 404", rec.Code)
+	}
+
+	// Unwired store → 501.
+	srv2, _ := newTestServer(t, "tok")
+	req = httptest.NewRequest("POST", "/api/sessions/s-1/attachments", strings.NewReader("x"))
+	req.Header.Set("Authorization", "Bearer tok")
+	rec = httptest.NewRecorder()
+	srv2.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("upload without store → %d, want 501", rec.Code)
+	}
+}
+
+// TestMessageWithImages covers the P5 images field of POST /api/sessions/
+// {id}/message: uploaded ids are resolved to ImageRefs and passed to the
+// injected handler; an unknown id answers 400; images without a store answer
+// 501.
+func TestMessageWithImages(t *testing.T) {
+	srv, st := newTestServer(t, "tok")
+	att, err := attachment.NewStore(filepath.Join(t.TempDir(), "att"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	srv.SetAttachmentStore(att)
+	if err := st.CreateSession(context.Background(), "s-1", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var gotText string
+	var gotImages []llm.ImageRef
+	srv.SetMessageHandler(func(ctx context.Context, sessionID, text string, images []llm.ImageRef) error {
+		gotText, gotImages = text, images
+		return nil
+	})
+
+	// Upload, then send a message carrying the image id.
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", "pic.png")
+	_, _ = fw.Write(png1x1)
+	mw.Close()
+	req := httptest.NewRequest("POST", "/api/sessions/s-1/attachments", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	var av attachmentView
+	_ = json.Unmarshal(rec.Body.Bytes(), &av)
+
+	rec = doReqBody(t, srv.Handler(), "POST", "/api/sessions/s-1/message", "tok",
+		`{"text":"描述","images":["`+av.ID+`"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("message with image → %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if gotText != "描述" || len(gotImages) != 1 || gotImages[0].ID != av.ID || gotImages[0].MediaType != "image/png" {
+		t.Fatalf("handler got (%q, %+v), want (描述, [png %s])", gotText, gotImages, av.ID)
+	}
+
+	// Unknown image id → 400.
+	rec = doReqBody(t, srv.Handler(), "POST", "/api/sessions/s-1/message", "tok",
+		`{"text":"x","images":["nope"]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown image → %d, want 400", rec.Code)
+	}
+
+	// Images without a wired store → 501.
+	srv2, _ := newTestServer(t, "tok")
+	srv2.SetMessageHandler(func(ctx context.Context, sessionID, text string, images []llm.ImageRef) error { return nil })
+	rec = doReqBody(t, srv2.Handler(), "POST", "/api/sessions/s-1/message", "tok",
+		`{"text":"x","images":["any"]}`)
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("images without store → %d, want 501", rec.Code)
+	}
+}
+
+// TestEventViewImages verifies the events API exposes the image refs carried by
+// a user/message event (only ref metadata — bytes stay in the attachment store).
+func TestEventViewImages(t *testing.T) {
+	srv, st := newTestServer(t, "tok")
+	ref := llm.ImageRef{ID: "img-1", MediaType: "image/png"}
+	seedSession(t, st, "s-1", []session.Event{
+		{Seq: 1, Type: "user/message", At: time.Now(), Version: 1,
+			Data: mustData(t, session.NewUserMessageWithBlocks("看图", []llm.ContentBlock{{Kind: llm.BlockImage, Image: ref}}))},
+	})
+	rec := doReq(t, srv.Handler(), "GET", "/api/sessions/s-1/events", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("events → %d, want 200", rec.Code)
+	}
+	var evs []eventView
+	if err := json.Unmarshal(rec.Body.Bytes(), &evs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(evs) != 1 || len(evs[0].Images) != 1 {
+		t.Fatalf("images = %d, want 1 (event %+v)", len(evs[0].Images), evs[0])
+	}
+	if evs[0].Images[0].ID != "img-1" || evs[0].Images[0].MediaType != "image/png" {
+		t.Fatalf("image view = %+v, want img-1/png", evs[0].Images[0])
 	}
 }

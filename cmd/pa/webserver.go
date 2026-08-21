@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 
+	"personal-agent/internal/llm"
 	"personal-agent/internal/session"
 	"personal-agent/internal/webserver"
 )
@@ -110,8 +111,8 @@ func (a *app) registerWebServer() error {
 	// M10 W1 (ADR D-WEB2): inject the interactive handlers — message dispatch
 	// (with implicit resume), session new/resume and the real-time event source
 	// (the hub). The webserver stays generic; cmd/pa provides the behavior.
-	srv.SetMessageHandler(func(ctx context.Context, sessionID, text string) error {
-		return a.webMessage(ctx, sessionID, text)
+	srv.SetMessageHandler(func(ctx context.Context, sessionID, text string, images []llm.ImageRef) error {
+		return a.webMessage(ctx, sessionID, text, images)
 	})
 	srv.SetSessionManager(func(ctx context.Context, action, id string) (string, error) {
 		return a.webSessionManager(ctx, action, id)
@@ -127,6 +128,12 @@ func (a *app) registerWebServer() error {
 	// a disabled capability answers an empty list, never an error.
 	srv.SetSubagentProvider(a.webSubagents)
 	srv.SetJobsProvider(a.webJobs)
+	// M10 P5 (ADR D-WEB2-I): wire the image-attachment store when multimodal is
+	// enabled (registerAttachments created it); otherwise the attachment APIs
+	// stay at 501 and image-carrying messages answer 501/400.
+	if a.attachStore != nil {
+		srv.SetAttachmentStore(a.attachStore)
+	}
 	a.webserver = srv
 	go func() {
 		if err := srv.Serve(); err != nil {
@@ -140,14 +147,31 @@ func (a *app) registerWebServer() error {
 // the target session differs from the current one it is resumed first (attachSink
 // already rebinds to the new session), then the turn runs under the global serial
 // lock with a silent loop (chunks already persist; the SSE event stream renders
-// the flow).
-func (a *app) webMessage(ctx context.Context, sessionID, text string) error {
-	if strings.TrimSpace(text) == "" {
+// the flow). P5: an images list logs a user/message event carrying the image
+// blocks first (only the refs — the bytes live in the attachment store, same
+// path as /attach, D4: the loop is untouched), then the text turn runs.
+func (a *app) webMessage(ctx context.Context, sessionID, text string, images []llm.ImageRef) error {
+	if strings.TrimSpace(text) == "" && len(images) == 0 {
 		return errors.New("empty message text")
 	}
 	if sessionID != "" && sessionID != a.currentID {
 		if err := a.resumeSession(ctx, sessionID); err != nil {
 			return err
+		}
+	}
+	if len(images) > 0 {
+		if !a.cfg.LLM.Multimodal.Enabled || a.attachStore == nil {
+			return fmt.Errorf("multimodal disabled (llm.multimodal.enabled=false)")
+		}
+		blocks := make([]llm.ContentBlock, 0, len(images))
+		for _, img := range images {
+			blocks = append(blocks, llm.ContentBlock{Kind: llm.BlockImage, Image: img})
+		}
+		if a.log == nil {
+			return fmt.Errorf("no active session")
+		}
+		if _, err := a.log.Append(session.EventUserMessage, session.NewUserMessageWithBlocks("", blocks)); err != nil {
+			return fmt.Errorf("web message: log image: %w", err)
 		}
 	}
 	return a.runTurn(ctx, text, false)

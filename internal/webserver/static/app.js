@@ -60,19 +60,36 @@ function showLogin(msg) {
 }
 function hideLogin() { loginEl.classList.add("hidden"); }
 
-// ---- theme ---------------------------------------------------------------
+// ---- theme (P5: light / dark / system, dsh ThemeRuntime) ---------------------
+function currentDark() {
+  const pref = localStorage.getItem(KEY_THEME) || "system";
+  if (pref === "light") return false;
+  if (pref === "dark") return true;
+  return !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+}
 function applyTheme() {
-  const dark = (localStorage.getItem(KEY_THEME) || "dark") !== "light";
+  const dark = currentDark();
+  document.documentElement.style.colorScheme = dark ? "dark" : "light";
   document.body.setAttribute("data-ds-dark-theme", dark ? "true" : "false");
+  let meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) { meta = document.createElement("meta"); meta.name = "theme-color"; document.head.appendChild(meta); }
+  meta.content = dark ? "#151517" : "#FFFFFF";
   const icon = $("theme-toggle");
   if (icon) icon.textContent = dark ? "☀️" : "🌙";
   const icon2 = $("theme-toggle-settings");
   if (icon2) icon2.textContent = dark ? "☀️" : "🌙";
 }
 function toggleTheme() {
-  const dark = (localStorage.getItem(KEY_THEME) || "dark") === "dark";
+  const dark = currentDark();
   localStorage.setItem(KEY_THEME, dark ? "light" : "dark");
   applyTheme();
+}
+function initThemeSystem() {
+  if (!window.matchMedia) return;
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    // system follows the OS; a manual preference short-circuits (dsh ThemeRuntime)
+    if ((localStorage.getItem(KEY_THEME) || "system") === "system") applyTheme();
+  });
 }
 
 // ---- layout: frame grid + drag + narrow -----------------------------------
@@ -188,11 +205,26 @@ function renderMarkdown(text) {
 }
 
 // ---- message stream --------------------------------------------------------
-function addUserMsg(text, timeIso) {
+// addUserMsg renders a user bubble; images (P5) is an optional list of
+// {src, id} thumbnails shown above the text.
+function addUserMsg(text, timeIso, images) {
   const inner = msgInner();
   const node = document.createElement("div");
   node.className = "msg user";
-  node.innerHTML = `<div class="msg-time">${fmtTime(timeIso)}</div><div class="bubble">${esc(text)}</div>`;
+  let imgs = "";
+  if (images && images.length) {
+    const cls = images.length === 1 ? "single" : "multi";
+    imgs = `<div class="msg-images ${cls}">${images.map((im) => `<img class="msg-image" src="${esc(im.src)}" alt="图片" loading="lazy">`).join("")}</div>`;
+  }
+  node.innerHTML = `<div class="msg-time">${fmtTime(timeIso)}</div>${imgs}<div class="bubble">${esc(text)}</div>`;
+  // failed history images retry once with a cache-busting query
+  node.querySelectorAll(".msg-image").forEach((img) => {
+    img.addEventListener("error", () => {
+      if (img.dataset.retried) return;
+      img.dataset.retried = "1";
+      img.src = img.src.split("?")[0] + "?retry=" + Date.now();
+    });
+  });
   inner.appendChild(node);
   scrollToBottom(true);
 }
@@ -226,36 +258,57 @@ function addReasoning(reasoningText, timeIso) {
   inner.appendChild(node);
 }
 
-function addAssistant(text, timeIso, copyable) {
+function addAssistant(text, timeIso, seq) {
   const inner = msgInner();
   const node = document.createElement("div");
   node.className = "msg assistant";
+  const fb = seq != null
+    ? `<button class="act-btn" data-act="up" title="好">👍</button>
+       <button class="act-btn" data-act="down" title="差">👎</button>`
+    : "";
   node.innerHTML = `
-    <div class="msg-time">${fmtTime(timeIso)}</div>
     <div class="markdown">${text ? renderMarkdown(text) : "<p></p>"}</div>
-    <button class="copy-btn" title="复制">复制</button>`;
-  const btn = node.querySelector(".copy-btn");
-  if (btn && copyable) {
-    btn.addEventListener("click", () => {
-      navigator.clipboard?.writeText(text).catch(() => {});
-    });
-  } else if (btn) { btn.remove(); }
+    <div class="actions-row">
+      <button class="act-btn" data-act="copy" title="复制">⧉</button>
+      ${fb}
+      <span class="act-time">${fmtTime(timeIso)}</span>
+    </div>`;
+  node.querySelector('[data-act="copy"]').addEventListener("click", () => {
+    navigator.clipboard?.writeText(text || "").catch(() => {});
+  });
+  if (seq != null) {
+    // P5 feedback: localStorage per (session, seq) — optimistic, no backend.
+    const k = `pa_fb:${currentID || ""}:${seq}`;
+    const upBtn = node.querySelector('[data-act="up"]');
+    const downBtn = node.querySelector('[data-act="down"]');
+    const cur = localStorage.getItem(k);
+    if (cur === "up") upBtn.classList.add("active-up");
+    if (cur === "down") downBtn.classList.add("active-down");
+    const set = (val) => {
+      const next = localStorage.getItem(k) === val ? "" : val;
+      if (next) localStorage.setItem(k, next); else localStorage.removeItem(k);
+      upBtn.classList.toggle("active-up", next === "up");
+      downBtn.classList.toggle("active-down", next === "down");
+    };
+    upBtn.addEventListener("click", () => set("up"));
+    downBtn.addEventListener("click", () => set("down"));
+  }
   inner.appendChild(node);
   return node.querySelector(".markdown");
 }
 
 // appendAssistantStreaming: mutate the live assistant bubble with chunk text.
-function appendAssistantStreaming(chunk) {
+function appendAssistantStreaming(chunk, seq) {
   let md = streamState && streamState.node;
   if (!md) {
     removeRunning();
-    const node = addAssistant("", null, true);
+    const node = addAssistant("", null, seq);
     streamState = { node };
   }
   streamState.node.append(esc(chunk));
   scrollToBottom(true);
 }
-function finishAssistant(text, timeIso) {
+function finishAssistant(text, timeIso, seq) {
   removeRunning();
   if (streamState && streamState.node) {
     // replace accumulated DOM text with the final rendered markdown
@@ -263,7 +316,7 @@ function finishAssistant(text, timeIso) {
     streamState = null;
   } else if (text) {
     // replay path (snapshot with no streaming chunks): render the bubble fresh
-    addAssistant(text, timeIso, true);
+    addAssistant(text, timeIso, seq);
   }
   if (streamActive) { streamActive = false; loadSessions(); }
   scrollToBottom(true);
@@ -452,6 +505,7 @@ async function deleteSession(id) {
     if (sseAbort) { sseAbort.abort(); sseAbort = null; }
     streamState = null;
     runningNode = null;
+    clearDrafts();
     localStorage.removeItem(KEY_CURRENT);
     currentID = "";
     messagesEl.querySelector(".messages-inner")?.remove();
@@ -520,10 +574,17 @@ async function loadEvents(id) {
 
 function renderEvent(ev, replay) {
   switch (ev.type) {
-    case "user/message": addUserMsg(ev.summary || "", ev.time); break;
+    case "user/message": {
+      const imgs = (ev.images || []).map((iv) => ({
+        src: `/api/sessions/${encodeURIComponent(currentID)}/attachments/${iv.id}`,
+        id: iv.id,
+      }));
+      addUserMsg(ev.summary || "", ev.time, imgs.length ? imgs : null);
+      break;
+    }
     case "assistant/message":
       if (ev.reasoning) addReasoning(ev.reasoning, ev.time);
-      finishAssistant(ev.summary || "", ev.time);
+      finishAssistant(ev.summary || "", ev.time, ev.Seq);
       break;
     case "tool/result":
     case "tool/error":
@@ -582,7 +643,7 @@ async function connectStream(id) {
 function handleStreamEvent(ev) {
   if (!currentID) return;
   if (ev.type === "assistant/chunk") {
-    appendAssistantStreaming(ev.summary || "");
+    appendAssistantStreaming(ev.summary || "", ev.Seq);
     return;
   }
   renderEvent(ev, false);
@@ -613,18 +674,27 @@ composerText.addEventListener("input", () => {
 
 async function sendMessage() {
   const text = composerText.value.trim();
-  if (!text || !currentID) return;
+  if ((!text && drafts.length === 0) || !currentID) return;
   setComposerDisabled(true);
   try {
-    addUserMsg(text, new Date().toISOString());
+    addUserMsg(text, new Date().toISOString(), drafts.length ? drafts.map((d) => ({ src: d.url })) : null);
     addRunning();
     streamActive = true;
     loadSessions(); // blue running dot on the current row
+    let images = [];
+    if (drafts.length) {
+      for (const d of drafts) {
+        const id = await uploadDraft(d);
+        if (!id) throw new Error("图片上传失败，已保留草稿");
+        images.push(id);
+      }
+      clearDrafts();
+    }
     composerText.value = "";
     syncGrow();
     const res = await api(`/api/sessions/${encodeURIComponent(currentID)}/message`, {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, images }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -639,6 +709,119 @@ async function sendMessage() {
   } finally {
     setComposerDisabled(false);
   }
+}
+
+// ---- P5: image attachments (dsh ui-attachment) -------------------------------
+const MAX_DRAFTS = 10, MAX_IMG_BYTES = 10 * 1024 * 1024;
+const ACCEPTED_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+let drafts = [];
+
+function draftAcceptable(f) { return ACCEPTED_TYPES.includes(f.type); }
+function addDraftFile(f) {
+  if (!draftAcceptable(f)) { toast("仅支持 PNG / JPG / WebP / GIF 图片"); return; }
+  if (f.size > MAX_IMG_BYTES) { toast("图片超过 10MB"); return; }
+  if (drafts.length >= MAX_DRAFTS) { toast("一次最多 10 张图片"); return; }
+  drafts.push({ id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())), file: f, name: f.name, url: URL.createObjectURL(f) });
+  renderDraftRail();
+}
+function renderDraftRail() {
+  let rail = document.querySelector(".draft-rail");
+  if (drafts.length === 0) { if (rail) rail.remove(); return; }
+  if (!rail) {
+    rail = document.createElement("div");
+    rail.className = "draft-rail";
+    composerBox.closest(".composer-card").before(rail);
+  }
+  rail.textContent = "";
+  for (const d of drafts) {
+    const th = document.createElement("div");
+    th.className = "draft-thumb";
+    th.innerHTML = `<img src="${d.url}" alt="${esc(d.name)}"><button class="draft-remove" title="移除">✕</button>`;
+    th.querySelector(".draft-remove").addEventListener("click", (e) => { e.stopPropagation(); removeDraft(d); });
+    th.addEventListener("click", () => openLightbox(d.url));
+    rail.appendChild(th);
+  }
+  const count = document.createElement("span");
+  count.className = "draft-count";
+  count.textContent = `${drafts.length}/${MAX_DRAFTS}`;
+  rail.appendChild(count);
+}
+function removeDraft(d) {
+  drafts = drafts.filter((x) => x !== d);
+  URL.revokeObjectURL(d.url);
+  renderDraftRail();
+}
+function clearDrafts() {
+  for (const d of drafts) URL.revokeObjectURL(d.url);
+  drafts = [];
+  renderDraftRail();
+}
+async function uploadDraft(d) {
+  const fd = new FormData();
+  fd.append("file", d.file, d.name);
+  const headers = {};
+  if (token()) headers.Authorization = "Bearer " + token();
+  const res = await fetch(`/api/sessions/${encodeURIComponent(currentID)}/attachments`, { method: "POST", headers, body: fd });
+  if (res.status === 401) { showLogin("令牌无效或已过期"); throw new Error("unauthorized"); }
+  if (!res.ok) return null;
+  const body = await res.json();
+  return body.id || null;
+}
+
+// paste + whole-page drop (dsh has no upload button — only these two paths)
+composerText.addEventListener("paste", (e) => {
+  const files = e.clipboardData ? [...e.clipboardData.files] : [];
+  const imgs = files.filter(draftAcceptable);
+  if (imgs.length) { e.preventDefault(); for (const f of imgs) addDraftFile(f); }
+});
+let dragDepth = 0;
+function hasImageFiles(dt) {
+  return dt && dt.types && dt.types.includes("Files") &&
+    [...(dt.items || [])].some((i) => i.kind === "file" && i.type.startsWith("image/"));
+}
+document.addEventListener("dragover", (e) => {
+  if (!hasImageFiles(e.dataTransfer)) return;
+  e.preventDefault();
+  dragDepth++;
+  showDropOverlay();
+});
+document.addEventListener("dragleave", (e) => {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) hideDropOverlay();
+});
+document.addEventListener("drop", (e) => {
+  dragDepth = 0;
+  hideDropOverlay();
+  if (!hasImageFiles(e.dataTransfer)) return;
+  e.preventDefault();
+  for (const f of e.dataTransfer.files) addDraftFile(f);
+});
+function showDropOverlay() {
+  let ov = document.querySelector(".drop-overlay");
+  if (!ov) { ov = document.createElement("div"); ov.className = "drop-overlay"; ov.textContent = "松开以添加图片"; document.body.appendChild(ov); }
+}
+function hideDropOverlay() { document.querySelector(".drop-overlay")?.remove(); }
+
+// lightbox (original-size preview)
+function openLightbox(src) {
+  const lb = document.createElement("div");
+  lb.className = "lightbox";
+  lb.innerHTML = `<img src="${esc(src)}" alt="原图"><button class="lb-close" title="关闭">✕</button>`;
+  const close = () => lb.remove();
+  lb.addEventListener("click", (e) => { if (e.target === lb || e.target.classList.contains("lb-close")) close(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); }, { once: true });
+  document.body.appendChild(lb);
+}
+
+// mini toast
+let toastTimer = null;
+function toast(msg) {
+  let t = document.querySelector(".toast");
+  if (!t) { t = document.createElement("div"); t.className = "toast"; document.body.appendChild(t); }
+  t.textContent = msg;
+  t.classList.add("show");
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
 }
 composerText.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
@@ -711,15 +894,16 @@ function renderSettingsNav() {
 }
 
 function renderGeneral(c) {
-  const dark = (localStorage.getItem(KEY_THEME) || "dark") === "dark";
+  const pref = localStorage.getItem(KEY_THEME) || "system";
   const cubes = `
     <div class="theme-cubes">
-      <button class="theme-cube${!dark ? " active" : ""}" data-theme="light">浅色</button>
-      <button class="theme-cube${dark ? " active" : ""}" data-theme="dark">深色</button>
+      <button class="theme-cube${pref === "light" ? " active" : ""}" data-theme="light">浅色</button>
+      <button class="theme-cube${pref === "dark" ? " active" : ""}" data-theme="dark">深色</button>
+      <button class="theme-cube${pref === "system" ? " active" : ""}" data-theme="system">跟随系统</button>
     </div>`;
   const sec = settingsSectionEl();
   sec.innerHTML = `<h2>通用设置</h2><p class="intro">修改 config.yaml 后重启生效（无运行时热改）。</p>` +
-    rowHTML("外观", "切换界面深浅主题（仅本机浏览器记忆）", cubes) +
+    rowHTML("外观", "浅色 / 深色 / 跟随系统（仅本机浏览器记忆）", cubes) +
     rowHTML("会话模式", "修改 config.yaml 后重启生效", `<span class="row-value">${esc(c.mode || "standard")}</span>`) +
     (c.web_server_addr ? rowHTML("Web 服务地址", "访问本工作台的地址", `<span class="row-value">${esc(c.web_server_addr)}</span>`) : "") +
     rowHTML("配置文件", "修改后重启生效，无运行时热改（ADR D-WEB2-D）", `<span class="row-value">config.yaml</span>`);
@@ -994,6 +1178,7 @@ function boot() {
   setupDrag();
   setupNarrow();
   renderColumns();
+  initThemeSystem();
   applyTheme();
   syncGrow();
   updatePlaceholder();

@@ -113,7 +113,7 @@ func TestRunTurnSerial(t *testing.T) {
 func TestWebMessageRunsTurn(t *testing.T) {
 	a := makeTurnApp()
 	a.currentID = "s-a"
-	if err := a.webMessage(context.Background(), "s-a", "hi"); err != nil {
+	if err := a.webMessage(context.Background(), "s-a", "hi", nil); err != nil {
 		t.Fatalf("webMessage: %v", err)
 	}
 	for _, typ := range []string{session.EventUserMessage, session.EventAssistantChunk, session.EventAssistantMessage} {
@@ -142,7 +142,7 @@ func TestWebMessageResumesOtherSession(t *testing.T) {
 	a := makeTurnApp()
 	a.store = st
 	a.currentID = "s-a"
-	if err := a.webMessage(ctx, "s-other", "hi"); err != nil {
+	if err := a.webMessage(ctx, "s-other", "hi", nil); err != nil {
 		t.Fatalf("webMessage: %v", err)
 	}
 	if a.currentID != "s-other" {
@@ -344,7 +344,7 @@ func TestWebSessionNewThenMessageAfterRequestCtxCancelled(t *testing.T) {
 
 	// A later, unrelated request's message must still persist (the sink must
 	// NOT be bound to the cancelled request ctx).
-	if err := a.webMessage(context.Background(), sid, "hello"); err != nil {
+	if err := a.webMessage(context.Background(), sid, "hello", nil); err != nil {
 		t.Fatalf("webMessage after request ctx cancelled: %v (persist sink must use baseCtx)", err)
 	}
 

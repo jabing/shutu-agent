@@ -505,8 +505,8 @@ workflow:
 # 监听. token 必填且只在此配置出现明文, 进程内只存 SHA-256 摘要; 空 token 且
 # enabled 时启动报错 (fail-closed 防裸奔). addr 默认本机 (个人门户不默认暴露).
 web_server:
-  enabled: false
-  addr: 127.0.0.1:8080
+  enabled: true
+  addr: 127.0.0.1:18099
   token: ""
 
 

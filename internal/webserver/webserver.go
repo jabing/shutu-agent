@@ -18,10 +18,13 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
 
+	"personal-agent/internal/attachment"
+	"personal-agent/internal/llm"
 	"personal-agent/internal/session"
 	"personal-agent/internal/store"
 )
@@ -52,7 +55,7 @@ type Server struct {
 	// M10 W1 interactive wiring (ADR D-WEB2-A/B/C): the optional handlers the
 	// composition root injects after New. All three are nil until a Setter is
 	// called; a nil handler makes its API answer 501.
-	msgFn  func(ctx context.Context, sessionID, text string) error
+	msgFn  func(ctx context.Context, sessionID, text string, images []llm.ImageRef) error
 	sessFn func(ctx context.Context, action, id string) (string, error)
 	evSrc  func(sessionID string, sink func(session.Event)) func()
 
@@ -70,7 +73,18 @@ type Server struct {
 	// outputs or session content).
 	subFn  func(ctx context.Context) ([]map[string]any, error)
 	jobsFn func(ctx context.Context) ([]map[string]any, error)
+
+	// P5 (ADR D-WEB2-I): the image-attachment store wired by the composition
+	// root when multimodal is enabled. nil (the default) makes the attachment
+	// APIs answer 501 and message bodies with images answer 400.
+	att *attachment.Store
 }
+
+// SetAttachmentStore wires the image-attachment store (P5): POST/GET
+// /api/sessions/{id}/attachments and the images field of POST /api/sessions/
+// {id}/message. Called by the composition root; nil (default) keeps the
+// attachment APIs at 501.
+func (s *Server) SetAttachmentStore(st *attachment.Store) { s.att = st }
 
 // New validates the wiring and builds the portal handler. token is optional:
 // empty opens the portal to the local machine (dsh-style, no login); a token
@@ -111,6 +125,10 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	// override back to first-user-message inference.
 	mux.Handle("PATCH /api/sessions/{id}/title", s.requireAuth(http.HandlerFunc(s.handleSessionTitle)))
 	mux.Handle("DELETE /api/sessions/{id}", s.requireAuth(http.HandlerFunc(s.handleSessionDelete)))
+	// M10 P5 (ADR D-WEB2-I): image attachments — multipart upload (POST) and
+	// byte echo (GET). Both stay behind the same bearer middleware.
+	mux.Handle("POST /api/sessions/{id}/attachments", s.requireAuth(http.HandlerFunc(s.handleAttachmentUpload)))
+	mux.Handle("GET /api/sessions/{id}/attachments/{attID}", s.requireAuth(http.HandlerFunc(s.handleAttachmentGet)))
 	mux.Handle("GET /api/sessions/{id}/events/stream", s.requireAuth(http.HandlerFunc(s.handleEventStream)))
 	// M10 W2 (ADR D-WEB2-D): the read-only sanitized config view.
 	mux.Handle("GET /api/config", s.requireAuth(http.HandlerFunc(s.handleConfig)))
@@ -151,9 +169,10 @@ func (s *Server) Close() error {
 }
 
 // SetMessageHandler wires the message dispatch API (POST
-// /api/sessions/{id}/message). Called by the composition root (cmd/pa) at
-// registration time; nil (the default) makes the API answer 501.
-func (s *Server) SetMessageHandler(fn func(ctx context.Context, sessionID, text string) error) {
+// /api/sessions/{id}/message). images carries the parsed image refs of the
+// message (P5), nil/empty for text-only turns. Called by the composition root
+// (cmd/pa) at registration time; nil (the default) makes the API answer 501.
+func (s *Server) SetMessageHandler(fn func(ctx context.Context, sessionID, text string, images []llm.ImageRef) error) {
 	s.msgFn = fn
 }
 
@@ -200,10 +219,10 @@ func (s *Server) SetJobsProvider(fn func(ctx context.Context) ([]map[string]any,
 // wiring (M10 W1, ADR D-WEB2). The composition root reads it in its wiring
 // tests; nil fields mean the corresponding API answers 501.
 type InteractiveHandlers struct {
-	Message  func(ctx context.Context, sessionID, text string) error
-	Session  func(ctx context.Context, action, id string) (string, error)
-	Event    func(sessionID string, sink func(session.Event)) func()
-	Config   func() map[string]any
+	Message   func(ctx context.Context, sessionID, text string, images []llm.ImageRef) error
+	Session   func(ctx context.Context, action, id string) (string, error)
+	Event     func(sessionID string, sink func(session.Event)) func()
+	Config    func() map[string]any
 	Subagents func(ctx context.Context) ([]map[string]any, error)
 	Jobs      func(ctx context.Context) ([]map[string]any, error)
 }
@@ -461,26 +480,71 @@ func (s *Server) handleKBStub(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "KB admin not implemented (KB 全量后挂)"})
 }
 
+// maxEventImages bounds how many image refs the events API exposes per message
+// (P5, aligned with the frontend default 10).
+const maxEventImages = 10
+
+// imageView is one image reference in an event's images list (P5).
+type imageView struct {
+	ID        string `json:"id"`
+	MediaType string `json:"media_type"`
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
+}
+
 // eventView is one event's bounded public summary (D-WEB-4: data is never
 // exposed wholesale). M10 W4 (D-WEB2-H) adds the fields the dsh-style message
 // stream needs: the assistant's reasoning chain (思维链), the tool-card title
-// and its bounded output.
+// and its bounded output. P5 adds the image refs carried by user/assistant
+// messages (bytes never leave the attachment store; the browser fetches them
+// through the authorized echo endpoint).
 type eventView struct {
-	Seq        uint64    `json:"seq"`
-	Type       string    `json:"type"`
-	Time       time.Time `json:"time"`
-	Summary    string    `json:"summary"`
-	Reasoning  string    `json:"reasoning,omitempty"`   // assistant/message 的思维链（有界）
-	ToolName   string    `json:"tool_name,omitempty"`   // tool/result、tool/error 的工具名
-	ToolOutput string    `json:"tool_output,omitempty"` // tool/result 的有界输出
+	Seq        uint64      `json:"seq"`
+	Type       string      `json:"type"`
+	Time       time.Time   `json:"time"`
+	Summary    string      `json:"summary"`
+	Reasoning  string      `json:"reasoning,omitempty"`   // assistant/message 的思维链（有界）
+	ToolName   string      `json:"tool_name,omitempty"`   // tool/result、tool/error 的工具名
+	ToolOutput string      `json:"tool_output,omitempty"` // tool/result 的有界输出
+	Images     []imageView `json:"images,omitempty"`      // P5: 该消息携带的图片引用
 }
 
 // toEventView builds the public view for one event (bounded summary + the W4
-// extra fields).
+// extra fields + the P5 image refs).
 func toEventView(ev session.Event) eventView {
 	v := eventView{Seq: ev.Seq, Type: ev.Type, Time: ev.At, Summary: summarize(ev)}
 	v.Reasoning, v.ToolName, v.ToolOutput = extraFields(ev)
+	v.Images = extractImages(ev)
 	return v
+}
+
+// extractImages pulls the image refs out of a user/assistant message's content
+// blocks (only ref metadata — the bytes live in the attachment store). Unknown
+// payloads yield nil; the frontend hides history images when absent.
+func extractImages(ev session.Event) []imageView {
+	if ev.Type != "user/message" && ev.Type != "assistant/message" {
+		return nil
+	}
+	var d struct {
+		Content []llm.ContentBlock `json:"content"`
+	}
+	if json.Unmarshal(ev.Data, &d) != nil {
+		return nil
+	}
+	var out []imageView
+	for _, b := range d.Content {
+		if b.Kind != llm.BlockImage {
+			continue
+		}
+		out = append(out, imageView{
+			ID: b.Image.ID, MediaType: b.Image.MediaType,
+			Width: b.Image.Width, Height: b.Image.Height,
+		})
+		if len(out) >= maxEventImages {
+			break
+		}
+	}
+	return out
 }
 
 // extraFields extracts the W4 per-type fields from an event's Data blob by
@@ -572,8 +636,10 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 // handleMessage implements POST /api/sessions/{id}/message (M10 W1, ADR
 // D-WEB2-A): it dispatches one user message to the injected handler, which runs
 // the turn (the streaming process arrives on the SSE stream). The response 200
-// {"ok":true} means the Run has completed. An empty text answers 400; an
-// unwired handler answers 501.
+// {"ok":true} means the Run has completed. P5 extends the body with an optional
+// images list (attachment ids → ImageRef, resolved through the attachment
+// store). An empty text without images answers 400; an unwired handler answers
+// 501.
 func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	if s.msgFn == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "message handler not wired"})
@@ -581,21 +647,136 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	var body struct {
-		Text string `json:"text"`
+		Text   string   `json:"text"`
+		Images []string `json:"images"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
 		return
 	}
-	if strings.TrimSpace(body.Text) == "" {
+	if strings.TrimSpace(body.Text) == "" && len(body.Images) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "text is required"})
 		return
 	}
-	if err := s.msgFn(r.Context(), id, body.Text); err != nil {
+	var images []llm.ImageRef
+	if len(body.Images) > 0 {
+		if s.att == nil {
+			writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "images not supported"})
+			return
+		}
+		for _, imgID := range body.Images {
+			ref, err := s.att.GetByID(imgID)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "image " + imgID + " not found"})
+				return
+			}
+			images = append(images, ref)
+		}
+	}
+	if err := s.msgFn(r.Context(), id, body.Text, images); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// maxWebImageBytes caps a single uploaded image via the web portal (P5). The
+// frontend enforces the same default (10MB); the backend fails closed so the
+// portal never writes a giant file even if the client lies.
+const maxWebImageBytes = 10 << 20
+
+// attachmentView is the POST /api/sessions/{id}/attachments response.
+type attachmentView struct {
+	ID        string `json:"id"`
+	MediaType string `json:"media_type"`
+	Bytes     int64  `json:"bytes"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+}
+
+// handleAttachmentUpload implements POST /api/sessions/{id}/attachments (P5):
+// a multipart form with a "file" field. The bytes are validated and stored by
+// the attachment store; the session must exist. An unwired store answers 501.
+func (s *Server) handleAttachmentUpload(w http.ResponseWriter, r *http.Request) {
+	if s.att == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "attachment store not wired"})
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := s.store.LoadSession(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "session not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad multipart form"})
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "file field required"})
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxWebImageBytes+1))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "read file failed"})
+		return
+	}
+	// Media type: prefer the filename extension, fall back to content sniffing.
+	mediaType := attachment.MediaTypeForExtension(strings.ToLower(filepath.Ext(header.Filename)))
+	if mediaType == "" {
+		mediaType = http.DetectContentType(data)
+	}
+	ref, err := s.att.SaveImage(mediaType, data, maxWebImageBytes)
+	if err != nil {
+		switch {
+		case errors.Is(err, attachment.ErrUnsupportedType):
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unsupported type"})
+		case errors.Is(err, attachment.ErrEmptyData):
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "empty"})
+		case errors.Is(err, attachment.ErrTooLarge):
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "too large"})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, attachmentView{
+		ID: ref.ID, MediaType: ref.MediaType, Bytes: ref.Bytes,
+		Width: ref.Width, Height: ref.Height,
+	})
+}
+
+// handleAttachmentGet implements GET /api/sessions/{id}/attachments/{attID}
+// (P5): it echoes the stored image bytes with their Content-Type for the
+// browser <img> / lightbox. 404 when the session or attachment is unknown.
+func (s *Server) handleAttachmentGet(w http.ResponseWriter, r *http.Request) {
+	if s.att == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "attachment store not wired"})
+		return
+	}
+	if _, err := s.store.LoadSession(r.Context(), r.PathValue("id")); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "session not found"})
+		return
+	}
+	ref, err := s.att.GetByID(r.PathValue("attID"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "attachment not found"})
+		return
+	}
+	data, err := s.att.Read(ref)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "attachment not readable"})
+		return
+	}
+	w.Header().Set("Content-Type", ref.MediaType)
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 // handleEventStream implements GET /api/sessions/{id}/events/stream — the SSE
