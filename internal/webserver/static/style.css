@@ -356,8 +356,15 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
 }
 #ws-dialog-input:focus { border-color: var(--dsw-alias-state-business-primary); }
 .ws-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.ws-view-menu { min-width: 140px; }
+.ws-view-menu { min-width: 150px; }
 .ws-view-menu button { width: 100%; }
+/* dsh ViewOptionsMenu groups the choices under 分组方式 / 排序方式 captions. */
+.ws-view-menu .wm-title {
+  padding: 6px 10px 2px; font-size: 11px; line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+.ws-view-menu .wm-title:first-child { padding-top: 4px; }
+.ws-view-menu button + .wm-title { margin-top: 4px; border-top: 1px solid var(--dsw-alias-border-l1); padding-top: 6px; }
 
 /* Icon glyphs injected from the dsh web set (icons.js) — sized by CSS. */
 .icon-button svg, .ws-header-btn svg, .foot-ico svg, .ns-ico svg, .ws-clear svg { width: 16px; height: 16px; display: block; }

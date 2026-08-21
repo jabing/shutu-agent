@@ -458,9 +458,11 @@ function fmtShort(iso) {
 
 // ---- P6 workspace grouping (dsh grouped sidebar view) ----------------------
 // groupBy is persisted in localStorage like dsh's store; grouped is the
-// default (dsh ships grouped). wsGroupOpen remembers per-group collapse.
+// default (dsh ships grouped). orderBy (manual/updated) mirrors dsh's
+// ViewOptionsMenu sort mode. wsGroupOpen remembers per-group collapse.
 const GROUP_SESSION_LIMIT = 5;
 let groupBy = localStorage.getItem("pa_groupby") || "workspace";
+let orderBy = localStorage.getItem("pa_orderby") || "manual";
 let wsGroups = [];      // [{id,title,session_ids}]
 let wsUngrouped = [];   // ungrouped session ids
 let wsGroupOpen = {};
@@ -474,6 +476,9 @@ function setWsOpen(key, open) {
 }
 
 async function loadSessions() {
+  // dsh section label: 工作区 in grouped views, 会话 in the flat list.
+  const label = $("ws-label");
+  if (label) label.textContent = groupBy === "flat" ? "会话" : "工作区";
   let res;
   try {
     res = await api("/api/sessions");
@@ -581,11 +586,15 @@ function appendSessionItem(container, s) {
   container.appendChild(li);
 }
 
-// renderFlat draws the single-list view (dsh FlatList). Once the user drags
-// any row (flat_sort set), the manual order wins; otherwise recent activity.
+// renderFlat draws the single-list view (dsh FlatList). In manual order a
+// user drag establishes flat_sort (manual order wins); otherwise fall back to
+// the recently-updated list order. In updated order recent activity always wins.
 function renderFlat(list) {
-  const hasManual = list.some((s) => s.flat_sort > 0);
-  const arr = hasManual ? [...list].sort((a, b) => a.flat_sort - b.flat_sort) : list;
+  let arr = list;
+  if (orderBy === "manual") {
+    const hasManual = list.some((s) => s.flat_sort > 0);
+    if (hasManual) arr = [...list].sort((a, b) => a.flat_sort - b.flat_sort);
+  }
   for (const s of arr) appendSessionItem(sessionList, s);
 }
 
@@ -598,7 +607,13 @@ function renderGrouped(list) {
   const byId = new Map(list.map((s) => [s.id, s]));
   const groups = [];
   for (const w of wsGroups) {
-    groups.push({ key: w.id, title: w.title, ws: true, ids: w.session_ids.filter((id) => byId.has(id)) });
+    const ids = w.session_ids.filter((id) => byId.has(id));
+    // dsh orderBy=updated re-sorts rows by recent activity inside each group;
+    // manual order keeps the backend's sort (workspace Sort asc) as-is.
+    if (orderBy === "updated") {
+      ids.sort((a, b) => new Date(byId.get(b).updated_at) - new Date(byId.get(a).updated_at));
+    }
+    groups.push({ key: w.id, title: w.title, ws: true, ids });
   }
   const unIds = wsUngrouped.filter((id) => byId.has(id));
   if (unIds.length > 0) groups.push({ key: "__u", title: "未分组", ws: false, ids: unIds });
@@ -962,7 +977,23 @@ async function submitWsDialog() {
     loadSessions();
   } catch (e) { if (e.message !== "unauthorized") console.error(e); }
 }
-$("ws-add").addEventListener("click", () => openWsDialog("create"));
+$("ws-add").addEventListener("click", () => $("ws-folder").click());
+// dsh add-workspace opens a folder dialog; the selected folder's name becomes
+// the new workspace title (the workspace itself stays a grouping bucket in the
+// local store — no directory is bound yet).
+$("ws-folder").addEventListener("change", async () => {
+  const f = $("ws-folder").files && $("ws-folder").files[0];
+  if (f && f.webkitRelativePath) {
+    const folderName = f.webkitRelativePath.split("/")[0];
+    try {
+      await api("/api/workspaces", { method: "POST", body: JSON.stringify({ title: folderName }) });
+      groupBy = "workspace";
+      localStorage.setItem("pa_groupby", "workspace");
+    } catch (e) { if (e.message !== "unauthorized") console.error(e); }
+  }
+  $("ws-folder").value = "";
+  loadSessions();
+});
 $("ws-dialog-ok").addEventListener("click", submitWsDialog);
 $("ws-dialog-cancel").addEventListener("click", closeWsDialog);
 $("ws-dialog-input").addEventListener("keydown", (e) => {
@@ -980,9 +1011,10 @@ $("view-toggle").addEventListener("click", (e) => {
 });
 viewMenu.addEventListener("click", (e) => {
   const v = e.target.dataset.view;
-  if (!v) return;
-  groupBy = v;
-  localStorage.setItem("pa_groupby", v);
+  const o = e.target.dataset.order;
+  if (!v && !o) return;
+  if (v) { groupBy = v; localStorage.setItem("pa_groupby", v); }
+  if (o) { orderBy = o; localStorage.setItem("pa_orderby", o); }
   viewMenu.classList.add("hidden");
   loadSessions();
 });

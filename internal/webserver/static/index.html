@@ -53,11 +53,12 @@
           <span class="ns-label">新会话</span>
         </button>
 
-        <!-- Section header (dsh WorkspaceBrowser sectionHeader): 会话 label +
-             a search icon that expands into an inline input, plus the view
-             options (grouped/flat) and add-workspace controls (P6). -->
+        <!-- Section header (dsh WorkspaceBrowser sectionHeader): a label that
+             reads 工作区 in grouped views and 会话 in the flat list, plus a
+             search icon, the view options (dsh ViewOptionsMenu: group + order)
+             and an add-workspace control that opens a folder picker. -->
         <div class="ws-header">
-          <span class="ws-label">会话</span>
+          <span class="ws-label" id="ws-label">工作区</span>
           <div class="ws-search" id="ws-search">
             <button id="search-toggle" class="icon-button ws-search-btn" data-icon="search" title="搜索会话" type="button"></button>
             <input id="session-search" type="text" placeholder="搜索会话…" autocomplete="off"
@@ -67,12 +68,19 @@
           <button id="view-toggle" class="icon-button ws-header-btn" data-icon="personalization" title="视图选项" type="button"></button>
           <button id="ws-add" class="icon-button ws-header-btn" data-icon="projectadd" title="新建工作区" type="button"></button>
         </div>
-        <!-- View-options popover (grouped / date / flat, dsh ViewOptionsMenu). -->
+        <!-- View-options popover (dsh ViewOptionsMenu): group mode + sort mode. -->
         <div id="view-menu" class="si-pop ws-view-menu hidden">
-          <button data-view="workspace">按工作区分组</button>
-          <button data-view="date">按日期分组</button>
-          <button data-view="flat">平铺展示</button>
+          <div class="wm-title">分组方式</div>
+          <button data-view="workspace">按工作区</button>
+          <button data-view="date">按日期</button>
+          <button data-view="flat">单列表</button>
+          <div class="wm-title">排序方式</div>
+          <button data-order="manual">手动排序</button>
+          <button data-order="updated">最近更新</button>
         </div>
+        <!-- Add-workspace opens the native folder picker (dsh directory flow):
+             selecting a folder creates a workspace named after it. -->
+        <input id="ws-folder" type="file" webkitdirectory hidden>
         <!-- Workspace create/rename dialog. -->
         <div id="ws-dialog" class="ws-dialog hidden">
           <div class="ws-dialog-card" role="dialog" aria-modal="true">
