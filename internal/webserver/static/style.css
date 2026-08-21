@@ -476,10 +476,15 @@ mark {
 .foot-actions, .foot-settings {
   display: flex; gap: 2px; min-width: 0; width: 100%;
 }
+/* Settings foot row (dsh ui-settings-general .trigger): a 42px bar that
+   overhangs 2px each side, icon + label left-aligned; rail becomes the 36px
+   circle (see the rail block below). */
 .foot-action {
-  flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center;
-  gap: 6px; height: 32px; padding: 0 8px; border: none; border-radius: 8px;
-  background: transparent; font: inherit; font-size: 13px; cursor: pointer;
+  flex: none; min-width: 0; display: inline-flex; align-items: center;
+  justify-content: flex-start; gap: 8px;
+  width: calc(100% + 4px); height: 42px; margin: 4px -2px;
+  padding: 0 10px 0 8px; border: none; border-radius: 12px; box-sizing: border-box;
+  background: transparent; font: inherit; font-size: 14px; cursor: pointer;
   color: var(--dsw-alias-label-tertiary); text-decoration: none; overflow: hidden;
 }
 .foot-action:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
@@ -636,7 +641,8 @@ mark {
   justify-content: center; width: auto;
 }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .foot-action {
-  flex: none; width: 36px; height: 36px; padding: 0;
+  flex: none; width: 36px; height: 36px; margin: 0; padding: 0;
+  justify-content: center; border-radius: 50%;
 }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .foot-label { display: none; }
 
