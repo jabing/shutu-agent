@@ -1608,10 +1608,10 @@ function renderGeneral(c) {
 // Each row shows the display name, a 自定义 tag for custom providers, the active
 // tag, a credential dot (configured = a key is present in settings or env →
 // green, missing → red), the configured model, and actions: 编辑 (registered
-// provider, opens model + key editor), 增加 (dormant built-in, opens the key-only
-// setup card), 删除 (custom only). The 增加提供方 button opens a picker of the
-// existing dormant built-in providers — dsh's add flow: choose a provider, then
-// just enter its API key. 增加自定义提供方 declares a brand-new OpenAI-compatible
+// provider, opens model + key editor), 删除 (custom only). Dormant built-ins
+// (known but not yet registered) do NOT appear as rows — they are only reached
+// through the 增加提供方 picker, dsh's add flow: choose a provider, then just
+// enter its API key. 增加自定义提供方 declares a brand-new OpenAI-compatible
 // endpoint. Keys default from the environment variable; a key entered here takes
 // precedence (配置后以配置的为准, user 2026-09).
 const PROVIDER_ENV = { deepseek: "DEEPSEEK_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY" };
@@ -1630,14 +1630,16 @@ function renderModel(c) {
   const sorted = providers.sort((a, b) => (Number(b.configured) - Number(a.configured)) || (Number(b.registered) - Number(a.registered)));
   const envName = (id) => PROVIDER_ENV[id] || (id.toUpperCase().replace(/-/g, "_") + "_API_KEY");
   // Dormant built-in providers = known but not yet registered (no key): these
-  // are the dsh "addable" providers offered by 增加提供方.
+  // are the dsh "addable" providers offered by 增加提供方. They do NOT appear as
+  // standalone rows — they are only reachable through the picker (增加提供方).
   const dormant = sorted.filter((p) => !p.custom && !p.registered);
+  const rows = sorted.filter((p) => p.custom || p.registered);
 
   let t = `<h2>模型</h2>
     <p class="intro">配置 API Key 后即可使用以下提供方。切换提供方 / 模型即时生效（下一条消息即用新模型）；Key 默认从环境变量读取，在本页填入的 Key 以配置值为准（覆盖环境变量）。</p>
     <ul class="m-rows">`;
 
-  for (const p of sorted) {
+  for (const p of rows) {
     const name = PROVIDER_DISPLAY[p.id] || p.name || p.id;
     const active = p.id === currentProvider;
     if (modelEditing === p.id) {
