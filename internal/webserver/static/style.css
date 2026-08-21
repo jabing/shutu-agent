@@ -229,6 +229,12 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
   background: transparent; cursor: pointer; color: var(--dsw-alias-label-secondary);
 }
 .icon-button:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+/* Sidebar-toggle (dsh ui-sidebar): the expanded state shows the panel icon;
+   the rail resting state shows the brand mark and swaps in the panel icon on
+   hover (figma sidebar-hover flow). */
+.toggle-panel { display: inline-flex; }
+.toggle-mark { display: none; }
+.toggle-mark img { width: 24px; height: 24px; display: block; object-fit: contain; }
 
 /* New Session: 38px elevated bar (dsh ui-sidebar .newSession) */
 .new-session-bar {
@@ -564,23 +570,27 @@ mark {
   .runs-refresh.spinning { animation: none; }
 }
 
-/* narrow rail (56px, dsh ui-sidebar rail): the logo row keeps the brand mark
-   (the expand affordance) and drops the name + panel toggle; the New Session
-   bar, section-header search, session rows and foot collapse to icons. */
+/* narrow rail (56px, dsh ui-sidebar rail): the standalone brand button is
+   dropped; the toggle becomes the brand mark (the expand affordance) and swaps
+   to the panel icon on hover. The New Session bar, section-header search,
+   session rows and foot collapse to icons. */
 .frame[data-sidebar-collapsed="true"] > .col-sidebar { padding: 18px 10px 6px; }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .logo-row {
   height: 36px; padding: 0; margin-bottom: 12px; justify-content: flex-start;
 }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .brand-name,
-.frame[data-sidebar-collapsed="true"] > .col-sidebar #sidebar-toggle,
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .brand,
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .ns-label,
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .ws-label { display: none; }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .icon-button {
   width: 36px; height: 36px; color: var(--dsw-alias-label-primary);
 }
-.frame[data-sidebar-collapsed="true"] > .col-sidebar .brand {
-  flex: none; justify-content: center; width: 36px; height: 36px;
-}
+/* Rail toggle = brand mark resting, panel icon on hover (dsh railMark flow). */
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .toggle-panel { display: none; }
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .toggle-mark { display: inline-flex; }
+.frame[data-sidebar-collapsed="true"] > .col-sidebar #sidebar-toggle:hover .toggle-panel { display: inline-flex; }
+.frame[data-sidebar-collapsed="true"] > .col-sidebar #sidebar-toggle:hover .toggle-mark { display: none; }
+.frame[data-sidebar-collapsed="true"] > .col-sidebar .toggle-panel svg { width: 18px; height: 18px; }
 .frame[data-sidebar-collapsed="true"] > .col-sidebar .new-session-bar {
   align-self: flex-start; width: 36px; height: 36px; padding: 0; margin: 0 0 12px;
   gap: 0; border-color: transparent; background: transparent;

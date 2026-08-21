@@ -75,8 +75,11 @@ function applyTheme() {
   if (!meta) { meta = document.createElement("meta"); meta.name = "theme-color"; document.head.appendChild(meta); }
   meta.content = dark ? "#151517" : "#FFFFFF";
   // Brand logo: the user's monochrome PNG — white mark on dark, black on light.
+  // The rail toggle's brand mark follows the same theme (dsh brand mark slot).
   const logo = $("brand-logo");
   if (logo) logo.src = dark ? "/static/logo_w.png" : "/static/logo_b.png";
+  const tlogo = $("toggle-logo");
+  if (tlogo) tlogo.src = dark ? "/static/logo_w.png" : "/static/logo_b.png";
   const icon = $("theme-toggle");
   if (icon) icon.textContent = dark ? "☀️" : "🌙";
   const icon2 = $("theme-toggle-settings");

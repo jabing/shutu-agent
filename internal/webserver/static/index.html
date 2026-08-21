@@ -37,7 +37,14 @@
             </span>
             <span class="brand-name">SHUTU&nbsp;<em class="brand-agent">AGENT</em></span>
           </button>
-          <button id="sidebar-toggle" class="icon-button" data-icon="panelleft" title="折叠侧栏" type="button"></button>
+          <button id="sidebar-toggle" class="icon-button" title="折叠侧栏" type="button">
+            <!-- dsh rail behavior: resting rail shows the brand mark; hovering
+                 swaps in the panel (expand) icon; expanded always shows it. -->
+            <span class="toggle-mark" aria-hidden="true">
+              <img id="toggle-logo" alt="" width="24" height="24" src="/static/logo_b.png">
+            </span>
+            <span class="toggle-panel" data-icon="panelleft" aria-hidden="true"></span>
+          </button>
         </div>
 
         <!-- New Session bar (dsh 38px elevated bar; rail keeps the icon). -->
