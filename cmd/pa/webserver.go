@@ -222,7 +222,15 @@ func (a *app) webMessage(ctx context.Context, sessionID, text string, images []l
 			return fmt.Errorf("web message: log image: %w", err)
 		}
 	}
-	return a.runTurn(ctx, text, false)
+	if err := a.runTurn(ctx, text, false); err != nil {
+		return err
+	}
+	// session-title alignment (dsh): after the first eligible message, the
+	// deterministic fallback is stored and the asynchronous model title is
+	// scheduled. This runs after the turn, outside turnMu, so it never delays
+	// the answer.
+	a.ensureSessionTitle(ctx, sessionID)
+	return nil
 }
 
 // webSessionManager implements the session new/resume API (ADR D-WEB2-C),

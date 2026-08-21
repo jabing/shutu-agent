@@ -562,7 +562,9 @@ function injectIcons() {
 }
 
 // appendSessionItem appends one session row into a container (shared by the
-// flat list and the grouped sublists). dsh SessionNodeItem row contract.
+// flat list and the grouped sublists). dsh SessionNodeItem row contract: a
+// blank (no prompt yet) session shows the localized New Session label and no
+// timestamp or rename/fork/archive verbs — only the destructive delete remains.
 function appendSessionItem(container, s) {
   let state = s.blank ? "idle" : "done";
   if (s.id === currentID && streamActive) state = "running";
@@ -570,10 +572,11 @@ function appendSessionItem(container, s) {
   li.className = "session-item" + (s.id === currentID ? " active" : "");
   li.dataset.id = s.id;
   li.draggable = true;
+  const title = s.title || "新会话";
   li.innerHTML = `
     <span class="si-dot" data-state="${state}"></span>
-    <span class="si-title${s.blank ? " empty" : ""}">${esc(s.title || s.id)}</span>
-    <span class="si-time">${fmtShort(s.updated_at)}</span>
+    <span class="si-title${s.blank ? " empty" : ""}">${esc(title)}</span>
+    ${s.blank ? "" : `<span class="si-time">${fmtShort(s.updated_at)}</span>`}
     <button class="si-menu" title="会话操作">${PA_ICONS.ellipsis}</button>`;
   li.addEventListener("click", (e) => {
     if (e.target.closest(".si-menu")) return;
@@ -1025,7 +1028,6 @@ document.addEventListener("click", (e) => {
 let openMenuEl = null;
 function closeAnyMenu() {
   if (openMenuEl) { openMenuEl.remove(); openMenuEl = null; }
-  document.querySelectorAll(".session-item.renaming").forEach((el) => el.classList.remove("renaming"));
 }
 document.addEventListener("click", (e) => { if (!e.target.closest(".si-pop")) closeAnyMenu(); });
 
@@ -1033,18 +1035,23 @@ function openMenu(li, s) {
   closeAnyMenu();
   const pop = document.createElement("div");
   pop.className = "si-pop";
-  // dsh SessionRowMenu: rename / fork / archive (+ delete as a local extra —
-  // dsh has no delete UI, this is Shutu AI Agent's own destructive action).
-  pop.innerHTML = `
-    <button data-act="rename">${PA_ICONS.edit}<span>重命名</span></button>
-    <button data-act="fork">${PA_ICONS.branch}<span>派生会话</span></button>
-    <button data-act="archive">${PA_ICONS.archive}<span>归档</span></button>
-    <button data-act="delete" class="danger">${PA_ICONS.trash}<span>删除会话</span></button>`;
+  // dsh SessionRowMenu: rename / fork / archive for titled sessions; a blank
+  // provisional session has no content to rename/fork/archive, so those verbs
+  // stay off — the destructive delete (Shutu AI Agent's local extra, dsh has no
+  // delete UI) remains available.
+  const items = [];
+  if (!s.blank) {
+    items.push(`<button data-act="rename">${PA_ICONS.edit}<span>重命名</span></button>`);
+    items.push(`<button data-act="fork">${PA_ICONS.branch}<span>派生会话</span></button>`);
+    items.push(`<button data-act="archive">${PA_ICONS.archive}<span>归档</span></button>`);
+  }
+  items.push(`<button data-act="delete" class="danger">${PA_ICONS.trash}<span>删除会话</span></button>`);
+  pop.innerHTML = items.join("");
   pop.addEventListener("click", (e) => {
     const act = e.target.closest("button")?.dataset.act;
     if (!act) return;
     closeAnyMenu();
-    if (act === "rename") startRename(li, s);
+    if (act === "rename") openSessionRename(s);
     if (act === "fork") forkSession(s.id);
     if (act === "archive") archiveSession(s.id);
     if (act === "delete") deleteSession(s.id);
@@ -1076,37 +1083,44 @@ async function archiveSession(id) {
   } catch (e) { if (e.message !== "unauthorized") console.error(e); }
 }
 
-function startRename(li, s) {
-  li.classList.add("renaming");
-  const title = li.querySelector(".si-title");
-  const old = title.textContent;
-  const input = document.createElement("input");
-  input.className = "si-rename";
-  input.value = s.title || old;
-  li.replaceChild(input, title);
-  input.focus();
-  input.select();
-  let done = false;
-  const commit = async (save) => {
-    if (done) return;
-    done = true;
-    const val = save ? input.value.trim() : "";
-    if (save && val) {
-      try {
-        await api(`/api/sessions/${encodeURIComponent(s.id)}/title`, {
-          method: "PATCH", body: JSON.stringify({ title: val }),
-        });
-      } catch (e) { if (e.message !== "unauthorized") console.error(e); }
-    }
-    loadSessions();
-  };
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); commit(true); }
-    if (e.key === "Escape") { e.preventDefault(); commit(false); }
-  });
-  input.addEventListener("blur", () => commit(true));
-  li.addEventListener("click", (e) => { if (e.target !== input) commit(true); });
+// ---- session rename dialog (dsh browser-owned Modal) ----------------------
+// The rename dialog is browser-owned so it outlives row unmounts during a
+// sidebar collapse. Rename pins the session's title against automatic revision
+// (dsh session-title rename semantics); an unchanged title is allowed.
+let srTarget = null; // {id, currentTitle}
+function openSessionRename(s) {
+  srTarget = { id: s.id, currentTitle: s.title || "" };
+  const inp = $("sr-dialog-input");
+  inp.value = s.title || "";
+  $("sr-dialog").classList.remove("hidden");
+  inp.focus();
+  inp.select();
 }
+function closeSessionRename() {
+  $("sr-dialog").classList.add("hidden");
+  srTarget = null;
+}
+async function submitSessionRename() {
+  if (!srTarget) return;
+  const title = $("sr-dialog-input").value.trim();
+  if (!title) return;
+  try {
+    await api(`/api/sessions/${encodeURIComponent(srTarget.id)}/title`, {
+      method: "PATCH", body: JSON.stringify({ title }),
+    });
+    closeSessionRename();
+    loadSessions();
+  } catch (e) { if (e.message !== "unauthorized") console.error(e); }
+}
+$("sr-dialog-ok").addEventListener("click", submitSessionRename);
+$("sr-dialog-cancel").addEventListener("click", closeSessionRename);
+$("sr-dialog-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); submitSessionRename(); }
+  if (e.key === "Escape") { e.preventDefault(); closeSessionRename(); }
+});
+$("sr-dialog").addEventListener("click", (e) => {
+  if (e.target === $("sr-dialog")) closeSessionRename();
+});
 
 async function deleteSession(id) {
   const wasCurrent = id === currentID;

@@ -21,9 +21,12 @@ type SessionMeta struct {
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	EventCount int
-	// Title is the user-set title (renamed via the web sidebar, P2). When
-	// empty the UI falls back to the first-user-message inference.
+	// Title is the accepted display title (fallback / LLM / user rename).
+	// When empty the UI falls back to the first-user-message inference.
 	Title string
+	// TitleSource is the producer of the accepted title: "" | fallback | llm
+	// | user. "user" pins the title so automatic work never re-revises it.
+	TitleSource string
 	// WorkspaceID is the owning workspace (P6 grouping), empty for the
 	// ungrouped bucket.
 	WorkspaceID string
@@ -74,10 +77,15 @@ type Store interface {
 	// ListSessions returns every session's metadata, most recently updated
 	// first.
 	ListSessions(ctx context.Context) ([]SessionMeta, error)
-	// SetSessionTitle stores a user-set title for a session. A non-empty title
-	// overrides the UI's first-user-message inference; an empty title clears the
-	// override and returns to inference. ErrNotFound when the id has no row.
-	SetSessionTitle(ctx context.Context, sessionID, title string) error
+	// GetSessionMeta returns one session's metadata. ErrNotFound when the id
+	// has no row.
+	GetSessionMeta(ctx context.Context, sessionID string) (SessionMeta, error)
+	// SetSessionTitle stores (or clears) the accepted title for a session and
+	// records its producer ("" | session.TitleSourceFallback |
+	// session.TitleSourceLLM | session.TitleSourceUser). An empty title clears
+	// the stored title and its source and returns to inference. ErrNotFound
+	// when the id has no row.
+	SetSessionTitle(ctx context.Context, sessionID, title, source string) error
 	// SetSessionWorkspace moves a session into a workspace; an empty
 	// workspaceID returns it to the ungrouped bucket. ErrNotFound when the
 	// session id has no row.

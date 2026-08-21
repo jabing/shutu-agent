@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -408,7 +409,7 @@ func TestSearchAndFlatOrder(t *testing.T) {
 	mk("s2", "今天天气很好")
 	mk("s3", "再次部署网关")
 	// Set a title for one hit to confirm it is carried.
-	if err := st.SetSessionTitle(ctx, "s1", "网关部署手册"); err != nil {
+	if err := st.SetSessionTitle(ctx, "s1", "网关部署手册", session.TitleSourceUser); err != nil {
 		t.Fatalf("set title: %v", err)
 	}
 
@@ -457,5 +458,37 @@ func TestSearchAndFlatOrder(t *testing.T) {
 	}
 	if byID["s3"].WorkspaceID != "w1" {
 		t.Fatalf("flat reorder changed membership: s3 ws = %q", byID["s3"].WorkspaceID)
+	}
+}
+
+// TestMigrateLegacyTitleBecomesUserPin verifies that a pre-title-source row
+// carrying a non-empty title (written only by the old sidebar rename) is pinned
+// as user-sourced after migrating, so automatic title revision never overwrites
+// a pre-existing rename.
+func TestMigrateLegacyTitleBecomesUserPin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pa.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, created_at INTEGER, updated_at INTEGER, title TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO sessions (id, created_at, updated_at, title) VALUES ('s-old', 1, 1, '老标题')`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	st, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	meta, err := st.GetSessionMeta(context.Background(), "s-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Title != "老标题" || meta.TitleSource != session.TitleSourceUser {
+		t.Fatalf("legacy pin: title=%q source=%q, want user", meta.Title, meta.TitleSource)
 	}
 }

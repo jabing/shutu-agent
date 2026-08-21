@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS settings (
 func migrateSchema(db *sql.DB) error {
 	steps := []struct{ table, col, ddl string }{
 		{"sessions", "title", `ALTER TABLE sessions ADD COLUMN title TEXT`},
+		{"sessions", "title_source", `ALTER TABLE sessions ADD COLUMN title_source TEXT`},
 		{"sessions", "workspace_id", `ALTER TABLE sessions ADD COLUMN workspace_id TEXT`},
 		{"sessions", "archived_at", `ALTER TABLE sessions ADD COLUMN archived_at INTEGER`},
 		{"sessions", "sort", `ALTER TABLE sessions ADD COLUMN sort INTEGER NOT NULL DEFAULT 0`},
@@ -69,6 +70,15 @@ func migrateSchema(db *sql.DB) error {
 				return fmt.Errorf("store: migrate %s.%s: %w", st.table, st.col, err)
 			}
 		}
+	}
+	// Pre-title-source rows: before the session-title alignment the `title`
+	// column was written only by an explicit rename (the sidebar's PATCH), so a
+	// non-empty legacy title is a user pin. Mark it so automatic revisions never
+	// overwrite a pre-existing rename.
+	if _, err := db.Exec(`UPDATE sessions SET title_source = 'user'
+		WHERE title IS NOT NULL AND title <> ''
+		AND (title_source IS NULL OR title_source = '')`); err != nil {
+		return fmt.Errorf("store: migrate legacy title pins: %w", err)
 	}
 	return nil
 }
@@ -202,7 +212,7 @@ func (s *SQLiteStore) LoadSession(ctx context.Context, sessionID string) ([]sess
 // manual drag order of the flat view.
 func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT s.id, s.created_at, s.updated_at, s.title, s.workspace_id, s.archived_at, s.sort, s.flat_sort, COUNT(e.seq)
+		SELECT s.id, s.created_at, s.updated_at, s.title, s.title_source, s.workspace_id, s.archived_at, s.sort, s.flat_sort, COUNT(e.seq)
 		FROM sessions s LEFT JOIN events e ON e.session_id = s.id
 		GROUP BY s.id
 		ORDER BY s.updated_at DESC, s.created_at DESC`)
@@ -214,15 +224,16 @@ func (s *SQLiteStore) ListSessions(ctx context.Context) ([]SessionMeta, error) {
 	for rows.Next() {
 		var m SessionMeta
 		var created, updated int64
-		var title, workspaceID sql.NullString
+		var title, titleSource, workspaceID sql.NullString
 		var archived sql.NullInt64
 		var count int
-		if err := rows.Scan(&m.ID, &created, &updated, &title, &workspaceID, &archived, &m.Sort, &m.FlatSort, &count); err != nil {
+		if err := rows.Scan(&m.ID, &created, &updated, &title, &titleSource, &workspaceID, &archived, &m.Sort, &m.FlatSort, &count); err != nil {
 			return nil, fmt.Errorf("store: scan session meta: %w", err)
 		}
 		m.CreatedAt = time.Unix(0, created).UTC()
 		m.UpdatedAt = time.Unix(0, updated).UTC()
 		m.Title = title.String
+		m.TitleSource = titleSource.String
 		m.WorkspaceID = workspaceID.String
 		if archived.Valid {
 			m.ArchivedAt = time.Unix(0, archived.Int64).UTC()
@@ -375,13 +386,16 @@ func (s *SQLiteStore) SetSessionWorkspace(ctx context.Context, sessionID, worksp
 	return nil
 }
 
-// SetSessionTitle stores (or clears) the user-set title override.
-func (s *SQLiteStore) SetSessionTitle(ctx context.Context, sessionID, title string) error {
-	var tv any
+// SetSessionTitle stores (or clears) the accepted title and its producer. An
+// empty title clears both columns and returns the session to inference.
+func (s *SQLiteStore) SetSessionTitle(ctx context.Context, sessionID, title, source string) error {
+	var tv, sv any
 	if title != "" {
 		tv = title
+		sv = source
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE sessions SET title = ? WHERE id = ?`, tv, sessionID)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE sessions SET title = ?, title_source = ? WHERE id = ?`, tv, sv, sessionID)
 	if err != nil {
 		return fmt.Errorf("store: set title %q: %w", sessionID, err)
 	}
@@ -389,6 +403,37 @@ func (s *SQLiteStore) SetSessionTitle(ctx context.Context, sessionID, title stri
 		return fmt.Errorf("%w: %q", ErrNotFound, sessionID)
 	}
 	return nil
+}
+
+// GetSessionMeta returns one session's durable metadata. ErrNotFound when the
+// id has no row.
+func (s *SQLiteStore) GetSessionMeta(ctx context.Context, sessionID string) (SessionMeta, error) {
+	var m SessionMeta
+	var created, updated int64
+	var title, titleSource, workspaceID sql.NullString
+	var archived sql.NullInt64
+	var count int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT s.id, s.created_at, s.updated_at, s.title, s.title_source, s.workspace_id, s.archived_at, s.sort, s.flat_sort, COUNT(e.seq)
+		FROM sessions s LEFT JOIN events e ON e.session_id = s.id
+		WHERE s.id = ?`, sessionID).Scan(
+		&m.ID, &created, &updated, &title, &titleSource, &workspaceID, &archived, &m.Sort, &m.FlatSort, &count,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return SessionMeta{}, fmt.Errorf("%w: %q", ErrNotFound, sessionID)
+		}
+		return SessionMeta{}, fmt.Errorf("store: get session meta %q: %w", sessionID, err)
+	}
+	m.CreatedAt = time.Unix(0, created).UTC()
+	m.UpdatedAt = time.Unix(0, updated).UTC()
+	m.Title = title.String
+	m.TitleSource = titleSource.String
+	m.WorkspaceID = workspaceID.String
+	if archived.Valid {
+		m.ArchivedAt = time.Unix(0, archived.Int64).UTC()
+	}
+	m.EventCount = count
+	return m, nil
 }
 
 // DeleteSession removes the session row; events cascade (ON DELETE CASCADE,

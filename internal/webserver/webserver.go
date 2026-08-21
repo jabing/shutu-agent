@@ -39,10 +39,6 @@ var staticFS embed.FS
 // exposes (防超大载荷 / 防泄露完整日志正文, D-WEB-4).
 const maxSummary = 200
 
-// maxTitle is the rune cap on the session-list title (first user message, M10
-// W4 D-WEB2-H).
-const maxTitle = 80
-
 // Server is the M10 web portal: a net/http server over the read-only session
 // store. Authentication is optional (D-WEB-2 change, user decision 2026-08-20):
 // when token == "" every API route is open to the local machine (the
@@ -616,18 +612,18 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		v := sessionView{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, EventCount: m.EventCount, Blank: m.EventCount == 0, WorkspaceID: m.WorkspaceID, Sort: m.Sort, FlatSort: m.FlatSort}
 		if m.Title != "" {
-			// User-set title (P2 rename) wins over inference.
-			v.Title = boundRunes(m.Title, maxTitle)
+			// Accepted title (fallback / LLM / user rename), normalized at
+			// write; re-normalize defensively for legacy rows.
+			v.Title = session.NormalizeTitle(m.Title, session.TitleMaxBytes)
 		} else if m.EventCount > 0 {
-			// The sidebar title is the first user message, bounded (a personal
-			// portal list is small; this is O(events of each session), same
-			// order as the existing stats rollup).
+			// The deterministic first-prompt fallback (dsh session-title):
+			// first eligible words of the first user message, byte-bounded.
 			if evs, err := s.store.LoadSession(r.Context(), m.ID); err == nil {
 				for _, ev := range evs {
 					if ev.Type == "user/message" {
 						var d struct{ Text string }
-						if json.Unmarshal(ev.Data, &d) == nil {
-							v.Title = boundRunes(d.Text, maxTitle)
+						if json.Unmarshal(ev.Data, &d) == nil && strings.TrimSpace(d.Text) != "" {
+							v.Title = session.FallbackTitle(d.Text, session.TitleFallbackMaxWords, session.TitleFallbackMaxBytes)
 							break
 						}
 					}
@@ -640,8 +636,10 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSessionTitle implements PATCH /api/sessions/{id}/title (P2 sidebar
-// rename). The request body is {"title":"..."} (UTF-8, bounded); an empty title
-// clears the override back to inference.
+// rename). The request body is {"title":"..."} (UTF-8, normalized and bounded
+// to session.TitleMaxBytes); an empty title clears the override back to
+// inference. A non-empty title is recorded with the user source, which pins it
+// against future automatic revisions (dsh session-title rename semantics).
 func (s *Server) handleSessionTitle(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var body struct{ Title string }
@@ -649,8 +647,8 @@ func (s *Server) handleSessionTitle(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad request: " + err.Error()})
 		return
 	}
-	title := boundRunes(body.Title, maxTitle)
-	if err := s.store.SetSessionTitle(r.Context(), id, title); err != nil {
+	title := session.NormalizeTitle(body.Title, session.TitleMaxBytes)
+	if err := s.store.SetSessionTitle(r.Context(), id, title, session.TitleSourceUser); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "session not found"})
 			return
@@ -906,11 +904,11 @@ func (s *Server) handleSessionFork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Carry the source title and workspace membership over to the clone.
-	srcTitle, srcWorkspace := "", ""
+	srcTitle, srcTitleSource, srcWorkspace := "", "", ""
 	if all, err := s.store.ListSessions(r.Context()); err == nil {
 		for _, m := range all {
 			if m.ID == id {
-				srcTitle, srcWorkspace = m.Title, m.WorkspaceID
+				srcTitle, srcTitleSource, srcWorkspace = m.Title, m.TitleSource, m.WorkspaceID
 				break
 			}
 		}
@@ -936,7 +934,7 @@ func (s *Server) handleSessionFork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if srcTitle != "" {
-		_ = s.store.SetSessionTitle(r.Context(), forkID, srcTitle)
+		_ = s.store.SetSessionTitle(r.Context(), forkID, srcTitle, srcTitleSource)
 	}
 	if srcWorkspace != "" {
 		_ = s.store.SetSessionWorkspace(r.Context(), forkID, srcWorkspace)

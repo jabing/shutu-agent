@@ -534,6 +534,12 @@ type app struct {
 	// skill.enabled — so the 技能 settings page can list/enable/disable/delete/
 	// add/migrate skill files even when the model-facing skill capability is off.
 	skillManager *skill.Manager
+	// titleMu guards titleDone, the per-process set of sessions whose
+	// asynchronous model title has already been attempted (dsh-session-title
+	// alignment): the model title fires at most once per session per process,
+	// so a failed run never re-fires on every later turn.
+	titleMu   sync.Mutex
+	titleDone map[string]bool
 	schedules    schedule.Engine // nil when schedule disabled (D10)
 	plans      plan.Engine       // nil when plan disabled (D10)
 	spills     spill.Engine      // nil when spill disabled (D10)
@@ -776,6 +782,10 @@ func (a *app) repl(ctx context.Context) {
 			// the AutoSpill policy is idempotent by content hash and this is
 			// the only invocation point. Fail-open by contract.
 			a.spillAutoSpill(ctx)
+			// session-title alignment (dsh): after the first eligible message,
+			// materialize the deterministic fallback and schedule the
+			// asynchronous model title.
+			a.ensureSessionTitle(ctx, a.currentID)
 		}
 	}
 	if err := scanner.Err(); err != nil {

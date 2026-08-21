@@ -92,6 +92,17 @@
             </div>
           </div>
         </div>
+        <!-- Session rename dialog (dsh browser-owned Modal): pins the title. -->
+        <div id="sr-dialog" class="ws-dialog hidden">
+          <div class="ws-dialog-card" role="dialog" aria-modal="true">
+            <div class="ws-dialog-title" id="sr-dialog-title">重命名会话</div>
+            <input id="sr-dialog-input" type="text" placeholder="会话名称" maxlength="80" autocomplete="off">
+            <div class="ws-dialog-actions">
+              <button id="sr-dialog-cancel" class="btn-ghost" type="button">取消</button>
+              <button id="sr-dialog-ok" class="sec-btn primary" type="button">保存</button>
+            </div>
+          </div>
+        </div>
 
         <ul id="session-list" class="session-list"></ul>
         <!-- P4: runs panel (subagents + background jobs), anchored above the
