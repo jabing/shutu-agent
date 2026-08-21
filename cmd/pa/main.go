@@ -84,7 +84,29 @@ func main() {
 		cfg.Mode = v
 		config.ApplyModePreset(&cfg)
 	}
-	if v, ok := settings["terminal_enabled"]; ok && cfg.Mode != config.ModeMinimal {
+	// The General-settings "default terminal" row picks the shell (dsh
+	// Powershell / Git Bash / WSL). Any non-"off" choice enables the terminal
+	// and maps to the platform shell executable; minimal keeps its forced
+	// terminal (D-MODE-2) but still honors the chosen shell. A legacy
+	// terminal_enabled on/off value is honored for databases written before
+	// the shell row existed.
+	if v, ok := settings["terminal_shell"]; ok {
+		switch v {
+		case "off":
+			if cfg.Mode != config.ModeMinimal {
+				cfg.Terminal.Enabled = false
+			}
+		case "powershell":
+			cfg.Terminal.Enabled = true
+			cfg.Terminal.Shell = "powershell.exe"
+		case "gitbash":
+			cfg.Terminal.Enabled = true
+			cfg.Terminal.Shell = "bash.exe"
+		case "wsl":
+			cfg.Terminal.Enabled = true
+			cfg.Terminal.Shell = "wsl.exe"
+		}
+	} else if v, ok := settings["terminal_enabled"]; ok && cfg.Mode != config.ModeMinimal {
 		cfg.Terminal.Enabled = v == "true"
 	}
 

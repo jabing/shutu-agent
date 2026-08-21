@@ -1529,7 +1529,7 @@ function renderGeneral(c) {
     `<select id="${id}" class="row-select">${opts.map(([v, label]) => `<option value="${v}"${cur === v ? " selected" : ""}>${label}</option>`).join("")}</select>`;
   const ap = localStorage.getItem("pa_agent_preset") || "standard";
   const pp = localStorage.getItem("pa_permission_preset") || "standard";
-  const te = localStorage.getItem("pa_terminal_enabled") || "false";
+  const ts = localStorage.getItem("pa_terminal_shell") || "off";
   const sec = settingsSectionEl();
   sec.innerHTML = `<h2>通用设置</h2>` +
     appearance +
@@ -1551,10 +1551,11 @@ function renderGeneral(c) {
       <div class="row-text"><div class="row-title">权限</div><div class="row-desc">新会话默认工具权限（只读 / 标准 / 全部），重启后生效。</div></div>
       ${sel("permission-select", pp, [["readonly", "只读"], ["standard", "标准"], ["full", "全部"]])}
     </div>` +
-    // Default terminal (数驼 M9): the persistent-shell switch.
+    // Default terminal (dsh 通用设置): pick the shell (Powershell / Git Bash
+    // / WSL). Any choice except "关闭" enables the persistent terminal (M9).
     `<div class="settings-row">
-      <div class="row-text"><div class="row-title">默认终端</div><div class="row-desc">启用持久终端（terminal.enabled），重启后生效。</div></div>
-      ${sel("terminal-select", te, [["false", "关闭"], ["true", "启用"]])}
+      <div class="row-text"><div class="row-title">默认终端</div><div class="row-desc">选择终端使用的 shell（PowerShell / Git Bash / WSL），重启后生效。</div></div>
+      ${sel("terminal-select", ts, [["off", "关闭"], ["powershell", "PowerShell"], ["gitbash", "Git Bash"], ["wsl", "WSL"]])}
     </div>` +
     // dsh EnterBehaviorRow: title + description + selector pill.
     `<div class="settings-row">
@@ -1575,7 +1576,7 @@ function renderGeneral(c) {
   const enter = sec.querySelector("#enter-select");
   if (enter) enter.addEventListener("change", (e) => { localStorage.setItem("pa_enter", e.target.value); });
   // Durably persist the three host-backed rows on change.
-  [["#agent-preset-select", "agent_preset"], ["#permission-select", "permission_preset"], ["#terminal-select", "terminal_enabled"]]
+  [["#agent-preset-select", "agent_preset"], ["#permission-select", "permission_preset"], ["#terminal-select", "terminal_shell"]]
     .forEach(([q, key]) => {
       const el = sec.querySelector(q);
       if (!el) return;
@@ -1596,7 +1597,7 @@ function renderGeneral(c) {
       const d = await res.json();
       if (d.agent_preset && sec.querySelector("#agent-preset-select")) sec.querySelector("#agent-preset-select").value = d.agent_preset;
       if (d.permission_preset && sec.querySelector("#permission-select")) sec.querySelector("#permission-select").value = d.permission_preset;
-      if (d.terminal_enabled && sec.querySelector("#terminal-select")) sec.querySelector("#terminal-select").value = d.terminal_enabled;
+      if (d.terminal_shell && sec.querySelector("#terminal-select")) sec.querySelector("#terminal-select").value = d.terminal_shell;
     } catch (e) { if (e.message !== "unauthorized") console.error("load settings", e); }
   })();
 }

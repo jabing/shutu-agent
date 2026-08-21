@@ -396,10 +396,10 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"agent_preset":       stored["agent_preset"],
 		"permission_preset":  stored["permission_preset"],
-		"terminal_enabled":   stored["terminal_enabled"],
+		"terminal_shell":     stored["terminal_shell"],
 		"mode_options":       []string{"minimal", "standard", "code"},
 		"permission_options": []string{"readonly", "standard", "full"},
-		"terminal_options":   []string{"true", "false"},
+		"terminal_options":   []string{"off", "powershell", "gitbash", "wsl"},
 		"restart_required":   true,
 	}
 	if s.cfgFn != nil {
@@ -423,7 +423,7 @@ func (s *Server) handleSettingsPatch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		AgentPreset      string `json:"agent_preset"`
 		PermissionPreset string `json:"permission_preset"`
-		TerminalEnabled  string `json:"terminal_enabled"`
+		TerminalShell    string `json:"terminal_shell"`
 	}
 	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body)
 	if body.AgentPreset != "" {
@@ -446,12 +446,13 @@ func (s *Server) handleSettingsPatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if body.TerminalEnabled != "" {
-		if body.TerminalEnabled != "true" && body.TerminalEnabled != "false" {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid terminal_enabled"})
+	if body.TerminalShell != "" {
+		if body.TerminalShell != "off" && body.TerminalShell != "powershell" &&
+			body.TerminalShell != "gitbash" && body.TerminalShell != "wsl" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid terminal_shell"})
 			return
 		}
-		if err := s.store.SetSetting(r.Context(), "terminal_enabled", body.TerminalEnabled); err != nil {
+		if err := s.store.SetSetting(r.Context(), "terminal_shell", body.TerminalShell); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return
 		}
