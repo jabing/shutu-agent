@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/llm"
-	"personal-agent/internal/mcp"
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/mcp"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // fakeMcpClient is an in-memory mcp.Client for the wiring tests: it serves

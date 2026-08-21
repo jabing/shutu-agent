@@ -8,8 +8,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"personal-agent/internal/llm"
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // testEvent builds one session event carrying data through the session package's

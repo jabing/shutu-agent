@@ -14,12 +14,12 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/llm"
-	"personal-agent/internal/prompt"
-	"personal-agent/internal/ralph"
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/prompt"
+	"github.com/jabing/shutu-agent/internal/ralph"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // ralphFakeLLM is a scripted llm.LLM: Stream returns a fixed single-delta text

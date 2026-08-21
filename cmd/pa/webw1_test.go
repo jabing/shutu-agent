@@ -16,12 +16,12 @@ import (
 	"testing"
 	"time"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/llm"
-	"personal-agent/internal/prompt"
-	"personal-agent/internal/session"
-	"personal-agent/internal/store"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/prompt"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/store"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // turnLLM is a scripted llm.LLM for the W1 turn tests: it records how many

@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"os"
 
-	"personal-agent/internal/fs"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/fs"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // registerFs creates the local FileService (root = fs.root, defaulting to

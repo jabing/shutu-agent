@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"os"
 
-	"personal-agent/internal/code"
+	"github.com/jabing/shutu-agent/internal/code"
 )
 
 // registerCode creates the local subprocess Provider + Engine, registers the

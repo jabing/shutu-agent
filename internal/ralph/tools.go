@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"strings"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // RalphToolName is the fresh-agent loop tool name (D-GAP-3).

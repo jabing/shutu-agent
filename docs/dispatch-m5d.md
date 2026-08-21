@@ -4,7 +4,7 @@
 
 ---
 
-请阅读 `D:\dev-projects\Agent\personal-agent\Agent.md`、`docs/design.md`（§4 pre-step 扩展点、§7 提示词分节、§10 D1/D3/D4/D10）**和 `docs/decisions/2026-08-18-m5-agent-core.md`（M5 主 ADR，本段对应"决策 ④"）**，并通读参考源码 `D:\dev-projects\Agent\deepseek-harness\packages\skill\`（重点：`skill/`（注册表 `src/index.ts`）、`skill-filesystem/`（本地发现）、`tool-skill/`（目录注入 + `skill` 加载工具））以及 `docs/subsystems/skills.md`（Provider 契约、发现优先级、技能身份、目录与工具契约），按设计基线实现 **M5d 技能**（M5 第四段；本段验收标准见下，M5 完整验收标准见 Agent.md 第 4 节）。
+请阅读 `D:\dev-projects\Agent\shutu-agent\Agent.md`、`docs/design.md`（§4 pre-step 扩展点、§7 提示词分节、§10 D1/D3/D4/D10）**和 `docs/decisions/2026-08-18-m5-agent-core.md`（M5 主 ADR，本段对应"决策 ④"）**，并通读参考源码 `D:\dev-projects\Agent\deepseek-harness\packages\skill\`（重点：`skill/`（注册表 `src/index.ts`）、`skill-filesystem/`（本地发现）、`tool-skill/`（目录注入 + `skill` 加载工具））以及 `docs/subsystems/skills.md`（Provider 契约、发现优先级、技能身份、目录与工具契约），按设计基线实现 **M5d 技能**（M5 第四段；本段验收标准见下，M5 完整验收标准见 Agent.md 第 4 节）。
 
 **前置依赖**：本段依赖 **M5b 的 pre-step 扩展点**（目录注入挂在 pre-step 注入器上）。若 M5b 验收后 `PreStep` 接口有调整，以**当前代码**为准。
 

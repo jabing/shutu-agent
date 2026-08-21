@@ -13,8 +13,8 @@ import (
 	"fmt"
 	"os"
 
-	"personal-agent/internal/plan"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/plan"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // registerPlans creates the in-memory Provider + Engine and registers the six

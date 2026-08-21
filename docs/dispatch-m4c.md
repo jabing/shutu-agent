@@ -4,7 +4,7 @@
 
 ---
 
-请阅读 `D:\dev-projects\Agent\personal-agent\Agent.md`、`docs/design.md`（§8 已定稿）**和 `docs/research-m4-kb.md`，并通读参考源码 `D:\dev-projects\Agent\dsh-knowledge\`（重点：`src/extraction.ts`、`docs/architecture.md` 提取流程）**。M4a 已实现 `internal/kb` 内核（KB 接口 + SQLite FTS5 Provider），M4b 已实现工具与召回注入。本段补上 dsh-knowledge 的灵魂：**回答后提取回写**。
+请阅读 `D:\dev-projects\Agent\shutu-agent\Agent.md`、`docs/design.md`（§8 已定稿）**和 `docs/research-m4-kb.md`，并通读参考源码 `D:\dev-projects\Agent\dsh-knowledge\`（重点：`src/extraction.ts`、`docs/architecture.md` 提取流程）**。M4a 已实现 `internal/kb` 内核（KB 接口 + SQLite FTS5 Provider），M4b 已实现工具与召回注入。本段补上 dsh-knowledge 的灵魂：**回答后提取回写**。
 
 **M4c 范围**：
 

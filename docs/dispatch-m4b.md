@@ -4,7 +4,7 @@
 
 ---
 
-请阅读 `D:\dev-projects\Agent\personal-agent\Agent.md`、`docs/design.md`（§8 已定稿）**和 `docs/research-m4-kb.md`，并通读参考源码 `D:\dev-projects\Agent\dsh-knowledge\`（重点：`src/tools.ts`、`src/recall.ts`、`src/retrieval.ts`）**。M4a 已实现 `internal/kb`（KB 接口 + SQLite FTS5 Provider + `kb/recall` 事件类型）。本段在 M4a 内核之上实现**工具消费面与召回注入**。
+请阅读 `D:\dev-projects\Agent\shutu-agent\Agent.md`、`docs/design.md`（§8 已定稿）**和 `docs/research-m4-kb.md`，并通读参考源码 `D:\dev-projects\Agent\dsh-knowledge\`（重点：`src/tools.ts`、`src/recall.ts`、`src/retrieval.ts`）**。M4a 已实现 `internal/kb`（KB 接口 + SQLite FTS5 Provider + `kb/recall` 事件类型）。本段在 M4a 内核之上实现**工具消费面与召回注入**。
 
 **M4b 范围**：
 

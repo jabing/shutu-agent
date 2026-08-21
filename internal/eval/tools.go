@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"strings"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // Tool names (whitelisted when eval.enabled; see config.evalToolNames).

@@ -4,7 +4,7 @@
 
 ---
 
-请阅读 `D:\dev-projects\Agent\personal-agent\Agent.md` 和 `docs/design.md`，按设计基线实现 **M3 安全与完善**（里程碑验收标准见 Agent.md 第 4 节）。
+请阅读 `D:\dev-projects\Agent\shutu-agent\Agent.md` 和 `docs/design.md`，按设计基线实现 **M3 安全与完善**（里程碑验收标准见 Agent.md 第 4 节）。
 
 **M3 范围**（对应 design.md §5、D10 与 Agent.md 路线图 M3 行）：
 

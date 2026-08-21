@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/llm"
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // byteTokens is a deterministic 1 token-per-byte estimator for tests.

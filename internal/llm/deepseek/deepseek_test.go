@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 // newTestClient starts a fake DeepSeek endpoint and returns a Client pointed

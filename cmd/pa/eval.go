@@ -18,10 +18,10 @@ import (
 	"os"
 	"strings"
 
-	"personal-agent/internal/eval"
-	"personal-agent/internal/interact"
-	"personal-agent/internal/llm"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/eval"
+	"github.com/jabing/shutu-agent/internal/interact"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // registerEval wires the task-evaluation seam (ADR 2026-08-20-eval-seam.md)

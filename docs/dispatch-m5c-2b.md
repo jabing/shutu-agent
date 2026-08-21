@@ -4,11 +4,11 @@
 
 ---
 
-你的任务是实现 Go 项目 `D:\dev-projects\Agent\personal-agent` 的 **M5c-2b：/compact 命令 + PreStep 自动压缩接线 + compaction/* 事件落日志 + 单元测试**。这是 M5c-2 的子任务（M5c-2a 另一个会话已做 session `compaction/*` 事件 + config `CompactionConfig`，你**依赖它们**）。你是实施会话。
+你的任务是实现 Go 项目 `D:\dev-projects\Agent\shutu-agent` 的 **M5c-2b：/compact 命令 + PreStep 自动压缩接线 + compaction/* 事件落日志 + 单元测试**。这是 M5c-2 的子任务（M5c-2a 另一个会话已做 session `compaction/*` 事件 + config `CompactionConfig`，你**依赖它们**）。你是实施会话。
 
 **必读（先读这些，不要通读参考源码）**：
-1. `D:\dev-projects\Agent\personal-agent\docs\dispatch-m5c-2.md` —— 你的主契约，重点读「实现内容」第 3（/compact）、4（PreStep）、5（事件落日志）条。**第 1、2 条（事件 + config）已由 M5c-2a 完成，跳过。**
-2. `D:\dev-projects\Agent\personal-agent\docs\decisions\2026-08-18-m5-agent-core.md` 的「决策 ③」。
+1. `D:\dev-projects\Agent\shutu-agent\docs\dispatch-m5c-2.md` —— 你的主契约，重点读「实现内容」第 3（/compact）、4（PreStep）、5（事件落日志）条。**第 1、2 条（事件 + config）已由 M5c-2a 完成，跳过。**
+2. `D:\dev-projects\Agent\shutu-agent\docs\decisions\2026-08-18-m5-agent-core.md` 的「决策 ③」。
 3. 现有代码（按需精读片段）：
    - `internal/compaction/service.go`（Engine/Trigger/Result/SessionLike）、`basic.go`（BasicEngine/NewBasic）。
    - `internal/session/session.go` —— **`EventCompactionStart/Summary/End/Prune` + `New*` 构造（M5c-2a 已加）**、`NewUserMessageReplace`、`Append`、`DeriveHistory`。
@@ -25,7 +25,7 @@
 
 **纪律**：**日志仍追加式（D1）**——压缩只追加摘要 user/message + compaction/* 观测事件，绝不物理删除旧事件；**不改 loop 的 turn/step 结构（D4）**——只通过已存在的 PreStep 扩展点接线，不动 loop.go；主循环串行（D5）；零新依赖；CGO-free；原有测试全绿。**不要动**：`internal/compaction`、`internal/loop/loop.go`（只读）、jobs、subagent、kb、store、tools 包（只读参考）。**不要做**：M5d 技能、KB 补全、pruner 接线（可选，非强制）。
 
-**环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`。用 pwsh 执行命令。git 提交用 `git -C D:\dev-projects\Agent\personal-agent -c user.name='Personal Agent' -c user.email='dev@personal-agent.local' commit -m "..."`。不要提交 `pa.exe`、`data/`、缓存目录。
+**环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'`。用 pwsh 执行命令。git 提交用 `git -C D:\dev-projects\Agent\shutu-agent -c user.name='Personal Agent' -c user.email='dev@shutu-agent.local' commit -m "..."`。不要提交 `pa.exe`、`data/`、缓存目录。
 
 **上下文管理（关键）**：**分阶段提交**（/compact 命令一次 → PreStep + 事件接线一次，信息含 "M5c-2b"）；只按需精读片段，不要通读参考库；报告只列文件名 + 一句话。
 

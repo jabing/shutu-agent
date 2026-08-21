@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/jobs"
-	"personal-agent/internal/schedule"
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/jobs"
+	"github.com/jabing/shutu-agent/internal/schedule"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // makeScheduleApp builds a minimal app for schedule wiring tests: only the

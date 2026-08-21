@@ -13,10 +13,10 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/kb"
-	"personal-agent/internal/llm"
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/kb"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // extractStubLLM is a scriptable llm.LLM used by extractTurn tests.

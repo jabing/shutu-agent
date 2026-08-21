@@ -4,12 +4,12 @@
 
 ---
 
-你的任务是实现 Go 项目 `D:\dev-projects\Agent\personal-agent` 的 **M6f-1：`internal/mcp` 接缝（Service 定义 + 多 Provider）+ 自实现 JSON-RPC 2.0 over stdio 的 MCP 客户端内核 + 单元测试**。这是 M6f 的第一派发（M6f-2 做 mcp 工具 + mcp/* 事件 + config + 组合根接线把 MCP server 的工具桥接进注册表，依赖你的接缝）。**零新依赖**：MCP 客户端自实现 JSON-RPC（标准库 encoding/json + bufio + os/exec 即可，这是 ADR 声明的首个零新依赖例外——优先自实现，不引 SDK）。你是实施会话。
+你的任务是实现 Go 项目 `D:\dev-projects\Agent\shutu-agent` 的 **M6f-1：`internal/mcp` 接缝（Service 定义 + 多 Provider）+ 自实现 JSON-RPC 2.0 over stdio 的 MCP 客户端内核 + 单元测试**。这是 M6f 的第一派发（M6f-2 做 mcp 工具 + mcp/* 事件 + config + 组合根接线把 MCP server 的工具桥接进注册表，依赖你的接缝）。**零新依赖**：MCP 客户端自实现 JSON-RPC（标准库 encoding/json + bufio + os/exec 即可，这是 ADR 声明的首个零新依赖例外——优先自实现，不引 SDK）。你是实施会话。
 
-**直接开工，不要做任何前置检查**：不要跑 baseline check、不要验证环境。你的主要输入是 `D:\dev-projects\Agent\personal-agent\docs\dispatch-m6f-1.md`（本文件即主契约），**先完整读它**，然后立即用 write 工具创建文件。
+**直接开工，不要做任何前置检查**：不要跑 baseline check、不要验证环境。你的主要输入是 `D:\dev-projects\Agent\shutu-agent\docs\dispatch-m6f-1.md`（本文件即主契约），**先完整读它**，然后立即用 write 工具创建文件。
 
 **读这些（按需精读片段，不要通读）**：
-1. `D:\dev-projects\Agent\personal-agent\docs\decisions\2026-08-19-m6-agent-full.md` —— M6 主 ADR，重点读 M6f 行（工具生态：MCP 优先自实现 JSON-RPC；SDK 仅在协议复杂度超过时考虑；fs 安全封装）。
+1. `D:\dev-projects\Agent\shutu-agent\docs\decisions\2026-08-19-m6-agent-full.md` —— M6 主 ADR，重点读 M6f 行（工具生态：MCP 优先自实现 JSON-RPC；SDK 仅在协议复杂度超过时考虑；fs 安全封装）。
 2. `internal/schedule/service.go` + `internal/code/service.go` —— 接缝模板（Provider/Engine + 哨兵错误 + Close 幂等；code 的子进程/超时/输出边界可参考）。
 3. `internal/tools/` —— tools.Tool 结构化接口（M6f-2 要桥接，但本派发只读参考其工具形状）。
 4. 参考（只借鉴思路，不精读）：`D:\dev-projects\Agent\deepseek-harness\packages\mcp\mcp-client\src\transport.ts`、`connection.ts`、`tools.ts`。
@@ -50,8 +50,8 @@
 **纪律**：**本任务不落任何日志事件、不加任何工具、不加 config**（M6f-2 的事）；不改 loop turn/step（D4）；Client 调用是前台串行（D5，无后台 goroutine 泄漏）；**零新依赖**（标准库即可，绝不引 MCP SDK）；CGO-free；原有测试全绿。**不要动**：loop、cmd/pa、config、jobs、subagent、compaction、skill、kb、store、tools、session（只读参考）、schedule、plan、spill、interact、code 包（只读参考）。**不要做**：mcp 工具/事件/config/组合根桥接（M6f-2）、fs（M6f-3）。
 
 **环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）。每次 Go 命令这样跑（用 pwsh）：
-`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'; & 'C:\Program Files\Go\bin\go.exe' test ./...`
-git 提交：`git -C D:\dev-projects\Agent\personal-agent -c user.name='Personal Agent' -c user.email='dev@personal-agent.local' commit -m "M6f-1: <what>"`。不要提交 pa.exe/data/缓存。
+`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'; & 'C:\Program Files\Go\bin\go.exe' test ./...`
+git 提交：`git -C D:\dev-projects\Agent\shutu-agent -c user.name='Personal Agent' -c user.email='dev@shutu-agent.local' commit -m "M6f-1: <what>"`。不要提交 pa.exe/data/缓存。
 
 **上下文管理（关键）**：**分阶段提交**——① service.go 接缝 + stdio.go（JSON-RPC 传输+客户端）→ ② 测试（伪 server），每阶段一次 commit（信息含 "M6f-1"）。不要通读任何参考库。报告只列文件名+一句话。
 

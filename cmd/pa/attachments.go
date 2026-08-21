@@ -19,10 +19,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"personal-agent/internal/attachment"
-	"personal-agent/internal/config"
-	"personal-agent/internal/llm"
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/attachment"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // multimodalEnabled reports whether the image-attachment capability is on

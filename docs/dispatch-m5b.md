@@ -4,7 +4,7 @@
 
 ---
 
-请阅读 `D:\dev-projects\Agent\personal-agent\Agent.md`、`docs/design.md`（§4 pre-step 扩展点、§10 D4/D5）**和 `docs/decisions/2026-08-18-m5-agent-core.md`（M5 主 ADR，本段对应"决策 ②"）**，并通读参考源码 `D:\dev-projects\Agent\deepseek-harness\packages\subagent\`（重点：`subagent/`（Provider 注册表、`src/types.ts`、`src/index.ts`）、`subagent-spawn-in-process/`（进程内新会话子代理）、`tool-subagent/`（委托工具）、`tool-subagent-control/`（send_message/interrupt/list）、`tool-subagent-report/`（报告通道））以及 `docs/subsystems/subagent.md`（Provider 契约、深度、seed、结果、事件），按设计基线实现 **M5b 子代理**（M5 第二段；本段验收标准见下，M5 完整验收标准见 Agent.md 第 4 节）。
+请阅读 `D:\dev-projects\Agent\shutu-agent\Agent.md`、`docs/design.md`（§4 pre-step 扩展点、§10 D4/D5）**和 `docs/decisions/2026-08-18-m5-agent-core.md`（M5 主 ADR，本段对应"决策 ②"）**，并通读参考源码 `D:\dev-projects\Agent\deepseek-harness\packages\subagent\`（重点：`subagent/`（Provider 注册表、`src/types.ts`、`src/index.ts`）、`subagent-spawn-in-process/`（进程内新会话子代理）、`tool-subagent/`（委托工具）、`tool-subagent-control/`（send_message/interrupt/list）、`tool-subagent-report/`（报告通道））以及 `docs/subsystems/subagent.md`（Provider 契约、深度、seed、结果、事件），按设计基线实现 **M5b 子代理**（M5 第二段；本段验收标准见下，M5 完整验收标准见 Agent.md 第 4 节）。
 
 **前置依赖**：本段依赖 **M5a 的 `internal/jobs.Registry`**（子代理后台续跑挂在 job 上）。若 M5a 验收后 `jobs` 接口有调整，以**当前代码**为准（`internal/jobs/service.go`），本文档中的 `jobs` 引用仅为契约意图。
 

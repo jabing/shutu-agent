@@ -16,7 +16,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
 
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 // Tool is one capability the agent can invoke.

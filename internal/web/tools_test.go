@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // stubSearchProvider 是内存 SearchProvider：按查询返回固定结果、记录收到的

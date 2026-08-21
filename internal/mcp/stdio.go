@@ -20,7 +20,7 @@ const (
 	// protocolVersion is the MCP protocol version negotiated at initialize.
 	protocolVersion = "2024-11-05"
 	// clientName and clientVersion identify this client to the server.
-	clientName    = "personal-agent"
+	clientName    = "shutu-agent"
 	clientVersion = "0.1.0"
 	// jsonRPCErrMethodNotFound is the JSON-RPC 2.0 code for an unknown method;
 	// a server answers tools/call for an unknown tool (or an unsupported

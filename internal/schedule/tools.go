@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // Tool names (whitelisted when schedule.enabled; see config.scheduleToolNames).

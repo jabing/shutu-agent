@@ -12,10 +12,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"personal-agent/internal/llm"
-	"personal-agent/internal/prompt"
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/prompt"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // maxSteps bounds the number of tool-call steps in one turn, so a misbehaving

@@ -17,8 +17,8 @@ import (
 	"os"
 	"strings"
 
-	"personal-agent/internal/terminal"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/terminal"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // registerTerminal wires the M9 persistent-terminal seam when terminal.enabled

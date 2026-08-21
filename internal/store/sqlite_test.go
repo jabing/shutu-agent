@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"personal-agent/internal/llm"
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 func openSQLite(t *testing.T) *SQLiteStore {

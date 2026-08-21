@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // makeCodeApp builds a minimal app for code wiring tests: only the fields

@@ -4,7 +4,7 @@
 
 ## 背景
 
-M5 四段（jobs/subagent/compaction/skill）完成后，personal-agent 已具备 dsh 八个能力族的对齐实现。用户问"补齐真正的功能差距后是否与 dsh Agent 有相同的代码能力"，结论：任务类功能补齐后个人任务能力相当，但**代码能力还有四个实质缺口**（代码沙箱、MCP 工具生态、LSP、fs/workspace 封装），且架构上双端/插件系统永不追平（D4 取舍，是优点非缺陷）。
+M5 四段（jobs/subagent/compaction/skill）完成后，github.com/jabing/shutu-agent 已具备 dsh 八个能力族的对齐实现。用户问"补齐真正的功能差距后是否与 dsh Agent 有相同的代码能力"，结论：任务类功能补齐后个人任务能力相当，但**代码能力还有四个实质缺口**（代码沙箱、MCP 工具生态、LSP、fs/workspace 封装），且架构上双端/插件系统永不追平（D4 取舍，是优点非缺陷）。
 
 本 ADR 把"能力面补全"定为一个新里程碑族 **M6**，全部以接缝方式挂现有薄核心（D4），逐段验收（M5 同款纪律）。
 

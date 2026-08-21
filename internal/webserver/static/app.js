@@ -1,4 +1,4 @@
-/* Personal Agent — dsh-style workspace (P1). Vanilla JS, no build, zero
+/* Shutu AI Agent — dsh-style workspace (P1). Vanilla JS, no build, zero
    dependencies. Ported UI conventions from dsh web (ui-layout / ui-conversation
    / ui-theme). Auth is optional (D-WEB2-G): no token configured → the portal
    serves open; a 401 drops to the login view. */
@@ -1002,7 +1002,7 @@ function openMenu(li, s) {
   const pop = document.createElement("div");
   pop.className = "si-pop";
   // dsh SessionRowMenu: rename / fork / archive (+ delete as a local extra —
-  // dsh has no delete UI, this is personal-agent's own destructive action).
+  // dsh has no delete UI, this is Shutu AI Agent's own destructive action).
   pop.innerHTML = `
     <button data-act="rename">${PA_ICONS.edit}<span>重命名</span></button>
     <button data-act="fork">${PA_ICONS.branch}<span>派生会话</span></button>

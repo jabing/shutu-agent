@@ -6,7 +6,7 @@
 
 ## 背景
 
-dsh 提供四种 agent preset（`apps/cli/config/agent-presets/`）：标准（standard，完整编码 agent）、PTC（code，标准 + Code Mode SDK 程序化组合）、极简（minimal，固定 persona + 持久 shell + str_replace_editor 双工具）、创造（cordis，标准 + 插件自修改）。personal-agent 无插件系统（编译期接缝，见 `3271a7c` 与用户明确拍板「不考虑运行时插件能力」），因此：
+dsh 提供四种 agent preset（`apps/cli/config/agent-presets/`）：标准（standard，完整编码 agent）、PTC（code，标准 + Code Mode SDK 程序化组合）、极简（minimal，固定 persona + 持久 shell + str_replace_editor 双工具）、创造（cordis，标准 + 插件自修改）。github.com/jabing/shutu-agent 无插件系统（编译期接缝，见 `3271a7c` 与用户明确拍板「不考虑运行时插件能力」），因此：
 - 创造模式架构上不适用（其核心 cordis_mount 评估模型写的 JS / 运行时检查 / preset 创作建立在插件系统上）——用户明确排除。
 - 三种可支持的模式实现为 **config 驱动的编译期接缝**：一次运行一个模式，通过 `agent.mode` 设置切换（重启生效）。
 

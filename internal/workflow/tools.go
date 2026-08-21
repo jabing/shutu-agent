@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"strings"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // WorkflowRunToolName is the task-DAG orchestration tool name (D-GAP-2).

@@ -1,7 +1,7 @@
 # 知识库实测指引（M4 验收后 · 手动体验）
 
 > 目的：在真实 REPL 里体验 M4 知识库的**检索 / 主动召回 / 提取回写**三个能力。
-> 前提：已设置 `$env:DEEPSEEK_API_KEY`。所有命令在 `D:\dev-projects\Agent\personal-agent` 下执行。
+> 前提：已设置 `$env:DEEPSEEK_API_KEY`。所有命令在 `D:\dev-projects\Agent\shutu-agent` 下执行。
 
 ## 0. 启用（用独立测试配置，不影响默认 config.yaml）
 

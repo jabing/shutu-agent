@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // fakeAccess implements TerminalAccess for tests. It does not enforce an

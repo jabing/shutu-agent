@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // makeJobsApp builds a minimal app for registerJobs tests: only the fields

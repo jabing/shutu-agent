@@ -23,7 +23,7 @@ import (
 	"os"
 	"strings"
 
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 const (

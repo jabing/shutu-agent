@@ -28,7 +28,7 @@ import (
 	"io"
 	"strings"
 
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 // extraction bounds (dsh-knowledge: query slice 4000, existing limit 10, body

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 // boolPtr returns a pointer to v (test helper for *bool config fields, e.g.

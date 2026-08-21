@@ -4,11 +4,11 @@
 
 ---
 
-你的任务是实现 Go 项目 `D:\dev-projects\Agent\personal-agent` 的 **M5c-1：compaction 折叠规则改造 + `internal/compaction` 接缝 + 基础 Provider + tool-result 剪枝 + 单元测试**。这是 M5c 的第一半（第二半由另一个会话做：/compact 命令 + 事件 + config + PreStep 接线）。你是实施会话。
+你的任务是实现 Go 项目 `D:\dev-projects\Agent\shutu-agent` 的 **M5c-1：compaction 折叠规则改造 + `internal/compaction` 接缝 + 基础 Provider + tool-result 剪枝 + 单元测试**。这是 M5c 的第一半（第二半由另一个会话做：/compact 命令 + 事件 + config + PreStep 接线）。你是实施会话。
 
 **必读（先读这些）**：
-1. `D:\dev-projects\Agent\personal-agent\docs\dispatch-m5c.md` —— 背景契约，重点读「M5c 范围」第 1（接缝 + Provider + 剪枝）条和第 3（事件）条的**设计部分**。**本任务做第 1 条 + 折叠规则改造 + 测试**；第 2（PreStep 接线）、3（事件类型）、4（config）、`/compact` 命令是 M5c-2 的事。
-2. `D:\dev-projects\Agent\personal-agent\docs\decisions\2026-08-18-m5-agent-core.md` 的「决策 ③」（压缩语义、事件三连锁、遮蔽、配对边界）。
+1. `D:\dev-projects\Agent\shutu-agent\docs\dispatch-m5c.md` —— 背景契约，重点读「M5c 范围」第 1（接缝 + Provider + 剪枝）条和第 3（事件）条的**设计部分**。**本任务做第 1 条 + 折叠规则改造 + 测试**；第 2（PreStep 接线）、3（事件类型）、4（config）、`/compact` 命令是 M5c-2 的事。
+2. `D:\dev-projects\Agent\shutu-agent\docs\decisions\2026-08-18-m5-agent-core.md` 的「决策 ③」（压缩语义、事件三连锁、遮蔽、配对边界）。
 3. 现有代码：
    - `internal/session/session.go` —— **`derive()` 纯函数（第 158–201 行）是折叠规则改造点**：`compaction/summary` 标记的 `user/message` 带 `surfaceOp: {op: "replace", start, end}`，derive 遇到时跳过被遮蔽 seq 的旧事件、以摘要消息替代。日志仍追加式（D1，旧事件物理保留）。
    - `internal/llm/`（复用摘要模型）+ `internal/loop/loop.go`（PreStep 注入器容器，M5b-1 已升级——本任务不接线，只保证接缝可被 M5c-2 接）。
@@ -60,7 +60,7 @@
 
 **纪律**：不改 loop 的 turn/step 结构（D4）；**日志仍追加式（D1）**——压缩绝不物理删除旧事件，被遮蔽事件保留在日志，只是派生时跳过（fold 规则改造在 `session.derive`，属 M2 预留的"派生规则只改折叠"位）；主循环串行（D5）；零新依赖（标准库即可）；CGO-free；原有测试全绿（尤其 session 的 derive 测试）。**不要动**：loop 源码、cmd/pa、config、jobs、subagent、tools 包（只读参考）。**本任务不做**：/compact 命令、`compaction/*` 事件类型、config、PreStep 接线（M5c-2）。
 
-**环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`。用 pwsh 执行命令。git 提交用 `git -C D:\dev-projects\Agent\personal-agent -c user.name='Personal Agent' -c user.email='dev@personal-agent.local' commit -m "..."`。不要提交 `pa.exe`、`data/`、缓存目录。
+**环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'`。用 pwsh 执行命令。git 提交用 `git -C D:\dev-projects\Agent\shutu-agent -c user.name='Personal Agent' -c user.email='dev@shutu-agent.local' commit -m "..."`。不要提交 `pa.exe`、`data/`、缓存目录。
 
 **上下文管理**：不要通读参考源码，按需精读片段；**分阶段提交**（先折叠规则改造 + session 测试 commit 一次，再 compaction 接缝 + basic Provider + 剪枝 + 测试 commit 一次，信息含 "M5c-1"）；报告只列文件名 + 一句话。
 

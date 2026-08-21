@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"os"
 
-	"personal-agent/internal/ralph"
-	"personal-agent/internal/subagent"
+	"github.com/jabing/shutu-agent/internal/ralph"
+	"github.com/jabing/shutu-agent/internal/subagent"
 )
 
 // registerRalph wires the fresh-agent loop seam (D-GAP-3) when ralph.enabled

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"personal-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/config"
 )
 
 // blockUntilCtxDone is a tool whose Execute waits on the context; the Execute

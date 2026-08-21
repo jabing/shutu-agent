@@ -16,11 +16,11 @@ import (
 	"strings"
 	"sync"
 
-	"personal-agent/internal/llm"
-	"personal-agent/internal/loop"
-	"personal-agent/internal/prompt"
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/loop"
+	"github.com/jabing/shutu-agent/internal/prompt"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // Deps wires the SpawnProvider to the core components it reuses for every child

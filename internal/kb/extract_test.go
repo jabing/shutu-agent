@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/kb"
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/kb"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 // stubLLM is a scriptable llm.LLM for extraction tests: it streams one fixed

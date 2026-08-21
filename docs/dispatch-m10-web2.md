@@ -97,7 +97,7 @@ func (a *app) runTurn(ctx context.Context, text string, interactive bool) error 
 `go build ./...` + `go vet ./internal/webserver/ ./cmd/pa/` + `go test -count=1 -timeout 90s ./internal/webserver/ ./cmd/pa/ -run 'Message|SessionNew|SessionResume|EventsStream|RunTurn|WebMessage|EventHub|RegisterWebServer|SSE' -v` 全 PASS 后提交；随后 `go test -count=1 -timeout 90s ./...` 全绿确认。env 同 M10a。
 
 ## 环境
-- Go：`C:\Program Files\Go\bin\go.exe`；env：`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`；提交身份 `-c user.name='Personal Agent' -c user.email='dev@personal-agent.local'`；pwsh，workdir=`D:\dev-projects\Agent\personal-agent`。
+- Go：`C:\Program Files\Go\bin\go.exe`；env：`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'`；提交身份 `-c user.name='Personal Agent' -c user.email='dev@shutu-agent.local'`；pwsh，workdir=`D:\dev-projects\Agent\shutu-agent`。
 - **警告**：不要用 PowerShell 的 Set-Content/Add-Content 改写含 UTF-8 的文件（会破坏编码 → illegal UTF-8）。改前端/Go 用文件编辑能力写 UTF-8；误改坏就删除重建。
 - **尽快产出**：按 1→5 顺序实现，写完核心（1-3）即可先提交一部分再补前端？——**不**：契约要求一次提交。但实现顺序建议 1→2→3（后端+测试可独立验证）→4（前端）→5 测试→提交。
 
@@ -233,7 +233,7 @@ func (a *app) runTurn(ctx context.Context, text string, interactive bool) error 
 - 前端：无构建验证（静态文件直接读）；自查 DOM id 一致、无 JS 语法错误（可用 node --check 若环境有；无则人工核对）。
 
 ## 环境
-- Go：`C:\Program Files\Go\bin\go.exe`；env（每个 go 命令都要设）：`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`；提交身份 `-c user.name='Personal Agent' -c user.email='dev@personal-agent.local'`；pwsh，workdir=`D:\dev-projects\Agent\personal-agent`。
+- Go：`C:\Program Files\Go\bin\go.exe`；env（每个 go 命令都要设）：`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'`；提交身份 `-c user.name='Personal Agent' -c user.email='dev@shutu-agent.local'`；pwsh，workdir=`D:\dev-projects\Agent\shutu-agent`。
 - **警告**：不要用 PowerShell Set-Content/Add-Content 改 UTF-8 文件（破坏编码）；改文件用文件编辑能力；误改坏删除重建。前端文件建议整文件重写时用文件编辑（write 全量）保证 UTF-8。
 
 ## 报告（简短）
@@ -247,7 +247,7 @@ func (a *app) runTurn(ctx context.Context, text string, interactive bool) error 
 
 ## 页面移植清单（逐页）
 
-| 页 | dsh 源码 | personal-agent 移植内容 | 后端依赖 |
+| 页 | dsh 源码 | github.com/jabing/shutu-agent 移植内容 | 后端依赖 |
 |---|---|---|---|
 | **P1 工作台布局 + 聊天核心页** | `ui-layout/AppFrame.tsx` + `ui-conversation/src/client/{chat/*, skeleton/*, queue/*}` | 三栏框架（可拖拽/窄屏折叠）+ 会话消息流（MessageItem/ReasoningRow/ToolNode/ContextMeter/EmptyHero）+ 输入栏（InputBar/自动增高/Enter 发送）+ 队列 dock + 会话顶栏 | sessions/events(+reasoning/tool)/message/resume/SSE（已就绪 + 下方 W4a 扩展） |
 | **P2 侧栏 + 会话管理** | `ui-sidebar` + `ui-conversation/src/client/stores.ts` | 左侧会话栏（列表/新建/恢复/切换/标题/时间，当前高亮） | sessions 列表 |
@@ -255,19 +255,19 @@ func (a *app) runTurn(ctx context.Context, text string, interactive bool) error 
 | **P4 子代理 + 后台任务** | `ui-subagent` + `ui-jobs` | 子代理列表 + 后台任务列表（状态徽标/时间） | /api/subagents + /api/jobs（下方 W4a） |
 | **P5 主题 + 反馈 + 附件** | `ui-theme/src/styles`（--dsw-* token）+ `ui-message-feedback` + `ui-attachment` | 深/浅主题 token 对齐 + 消息反馈按钮 + 图片/附件显示 | token 对齐前端；feedback 需新 API（可选）；attachment 需 events 含图片 |
 
-**架构排除**（personal-agent 无 Cordis/Slots/运行时插件，用户已拍板）：`ui-slots`、`ui-settings-plugins`、`ui-settings-plugin-inventory`、`ui-renderer` 动态机制、`ui-commands` popup 服务面、`ui-permission-presets`、`ui-directory-picker-*`（依赖沙箱 FS 服务）。
+**架构排除**（github.com/jabing/shutu-agent 无 Cordis/Slots/运行时插件，用户已拍板）：`ui-slots`、`ui-settings-plugins`、`ui-settings-plugin-inventory`、`ui-renderer` 动态机制、`ui-commands` popup 服务面、`ui-permission-presets`、`ui-directory-picker-*`（依赖沙箱 FS 服务）。
 
 ## 前置：W4a 后端（events 扩展 + 子代理/任务 API）
 按上面「提交 1：W4a」实施（eventView 加 reasoning/tool_name/tool_output；`GET /api/subagents` + `GET /api/jobs` 注入 provider nil→501；cmd/pa webSubagents/webJobs 脱敏）。
 
 ## 实施纪律（每页）
 - **每页一个提交**（`P1: …`…`P5: …`），提交前 `go build ./...` + `go test -count=1 -timeout 90s ./...` 全绿（后端如有改动）+ 前端自查（DOM id 一致、无 JS 语法错）。
-- 先由**研究规格**驱动：读 dsh 对应 `ui-*` 源码 → 产出该页移植规格（布局/DOM 层级/组件外观/交互/中文文案/数据需求）→ 再写 vanilla JS。规格进 `D:\dev-projects\Agent\personal-agent\.web-port/`（供控制器验收与后续页复用）。
+- 先由**研究规格**驱动：读 dsh 对应 `ui-*` 源码 → 产出该页移植规格（布局/DOM 层级/组件外观/交互/中文文案/数据需求）→ 再写 vanilla JS。规格进 `D:\dev-projects\Agent\shutu-agent\.web-port/`（供控制器验收与后续页复用）。
 - 视觉：CSS 变量主题对齐 dsh `--dsw-*` token 语义（见 `ui-theme/src/styles/`）；零外部资源（无图标库/字体 CDN，unicode 符号）；产品文案中文。
 - loop.go 零改动（D4）；认证默认直开已生效（D-WEB2-G，不要加回登录）；`config.yaml` 保持 M 不提交；零新依赖；CGO-free；gofmt。
 
 ## 环境
-- Go：`C:\Program Files\Go\bin\go.exe`；env（每个 go 命令都要设）：`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`；提交身份 `-c user.name='Personal Agent' -c user.email='dev@personal-agent.local'`；pwsh，workdir=`D:\dev-projects\Agent\personal-agent`。
+- Go：`C:\Program Files\Go\bin\go.exe`；env（每个 go 命令都要设）：`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'`；提交身份 `-c user.name='Personal Agent' -c user.email='dev@shutu-agent.local'`；pwsh，workdir=`D:\dev-projects\Agent\shutu-agent`。
 - **警告**：不要用 PowerShell Set-Content/Add-Content 改 UTF-8 文件（破坏编码）；前端文件整文件重写用文件编辑（write 全量）保证 UTF-8；中文产品文案保持 UTF-8。
 
 ## 报告（简短）

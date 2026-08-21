@@ -18,11 +18,11 @@ import (
 	"sync"
 	"testing"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/interact"
-	"personal-agent/internal/llm"
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/interact"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // evalFakeLLM is a scripted llm.LLM: Stream records every request and returns

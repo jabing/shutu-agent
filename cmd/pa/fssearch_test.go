@@ -14,9 +14,9 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/fssearch"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/fssearch"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // makeFsSearchApp builds a minimal app for registerFsSearch tests: only the

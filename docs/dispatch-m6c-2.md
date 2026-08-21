@@ -4,13 +4,13 @@
 
 ---
 
-你的任务是实现 Go 项目 `D:\dev-projects\Agent\personal-agent` 的 **M6c-2：`spill_*` 工具 + `spill/*` 事件 + config + 组合根接线（含自动沉淀 D5 路径）+ 单元测试**。这是 M6c 的第二半（第一半 M6c-1 已做 `internal/spill` 接缝 + 策略内核，你**依赖它们**）。你是实施会话。
+你的任务是实现 Go 项目 `D:\dev-projects\Agent\shutu-agent` 的 **M6c-2：`spill_*` 工具 + `spill/*` 事件 + config + 组合根接线（含自动沉淀 D5 路径）+ 单元测试**。这是 M6c 的第二半（第一半 M6c-1 已做 `internal/spill` 接缝 + 策略内核，你**依赖它们**）。你是实施会话。
 
-**直接开工，不要做任何前置检查**。你的主要输入是 `D:\dev-projects\Agent\personal-agent\docs\dispatch-m6c-2.md`（本文件即主契约），**先完整读它**，然后立即用 write 工具创建/修改文件。
+**直接开工，不要做任何前置检查**。你的主要输入是 `D:\dev-projects\Agent\shutu-agent\docs\dispatch-m6c-2.md`（本文件即主契约），**先完整读它**，然后立即用 write 工具创建/修改文件。
 
 **读这些（按需精读片段，不要通读）**：
-1. `D:\dev-projects\Agent\personal-agent\docs\dispatch-m6c-1.md` —— 接缝契约（Engine/Memo/Provider 签名、AutoSpill 语义）。
-2. `D:\dev-projects\Agent\personal-agent\docs\decisions\2026-08-19-m6-agent-full.md` —— M6 主 ADR（M6c 行 + spill/kb 边界）。
+1. `D:\dev-projects\Agent\shutu-agent\docs\dispatch-m6c-1.md` —— 接缝契约（Engine/Memo/Provider 签名、AutoSpill 语义）。
+2. `D:\dev-projects\Agent\shutu-agent\docs\decisions\2026-08-19-m6-agent-full.md` —— M6 主 ADR（M6c 行 + spill/kb 边界）。
 3. 现有代码（按需精读）：
    - `internal/spill/service.go` + `mem.go` + `policy.go`（M6c-1 已做）。
    - `internal/session/session.go` —— 各能力事件的 log-only 模式（模板）。
@@ -35,8 +35,8 @@
 **纪律**：**日志仍追加式（D1）**；不改 loop turn/step 结构（D4）——自动沉淀走已有扩展点（PreStep 或 turn 收尾），**若必须改 loop 则不允许**，改接线位置（如命令处理后）实现；串行路径（D5）；零新依赖；CGO-free；原有测试全绿。**不要动**：`internal/spill/service.go`/`mem.go`/`policy.go`（M6c-1 已验收，只读；tools.go 新建）、loop.go（只读，不要改）、compaction、subagent、skill、kb、store、schedule、plan 包（只读参考）。**不要做**：M6d–M6f、KB 补全、把 spill 并入 kb。
 
 **环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）。每次 Go 命令这样跑（用 pwsh）：
-`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'; & 'C:\Program Files\Go\bin\go.exe' test ./...`
-git 提交：`git -C D:\dev-projects\Agent\personal-agent -c user.name='Personal Agent' -c user.email='dev@personal-agent.local' commit -m "M6c-2: <what>"`。不要提交 pa.exe/data/缓存。
+`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'; & 'C:\Program Files\Go\bin\go.exe' test ./...`
+git 提交：`git -C D:\dev-projects\Agent\shutu-agent -c user.name='Personal Agent' -c user.email='dev@shutu-agent.local' commit -m "M6c-2: <what>"`。不要提交 pa.exe/data/缓存。
 
 **上下文管理（关键）**：**分阶段提交**——① session 事件 → ② config → ③ tools → ④ 自动沉淀 + 组合根，每阶段一次 commit（信息含 "M6c-2"）。不要通读任何参考库。报告只列文件名+一句话。
 

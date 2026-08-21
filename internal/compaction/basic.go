@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"personal-agent/internal/llm"
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // TokenEstimator estimates the token count of one string. Providers accept it

@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 // Knowledge entry types (design.md §8, dsh-knowledge 同款数据模型).

@@ -7,9 +7,9 @@
 
 ## 背景
 
-dsh web 的核心功能面：实时对话（发消息 + 流式 assistant 输出 + 结构化工具卡片）、会话管理（列表/新建/恢复）、事件/消息流浏览、设置（provider/model/caps）、统计 dashboard。personal-agent 的 M10 目前只有只读浏览 + dashboard + KB 空壳。
+dsh web 的核心功能面：实时对话（发消息 + 流式 assistant 输出 + 结构化工具卡片）、会话管理（列表/新建/恢复）、事件/消息流浏览、设置（provider/model/caps）、统计 dashboard。github.com/jabing/shutu-agent 的 M10 目前只有只读浏览 + dashboard + KB 空壳。
 
-要让 personal-agent 达到 dsh 级，最大缺口是**交互**：web 发消息 → agent 执行 → 流式回显。这需要把 web 变成**第二交互面**（与 REPL 并列），触碰「REPL 是唯一交互面」的历史假设，但**可以不改 loop 核心**（D4 保持）——因为：
+要让 github.com/jabing/shutu-agent 达到 dsh 级，最大缺口是**交互**：web 发消息 → agent 执行 → 流式回显。这需要把 web 变成**第二交互面**（与 REPL 并列），触碰「REPL 是唯一交互面」的历史假设，但**可以不改 loop 核心**（D4 保持）——因为：
 
 - `Loop.Run(ctx, text)` 是公开的 turn 入口（loop.go:104），REPL 每次 `a.newLoop().Run` 驱动它；
 - 每次流式 chunk **已落库** `assistant/chunk`（loop.go:240）+ `onText`/`onError` 回调（loop.go:237/229）；
@@ -40,7 +40,7 @@ dsh web 的核心功能面：实时对话（发消息 + 流式 assistant 输出 
 - 复用 `/llm-status` 的只读心智（llm-status 是 REPL 命令——web 的 config API 独立实现，不调 REPL）。
 
 ### D-WEB2-E 排除：插件 / Slots / 主题运行时（架构边界，诚实声明）
-- dsh 的 Cordis 插件 / Slots / 运行时主题在 personal-agent 不存在（编译期接缝 + 无插件运行时，用户已拍板排除「创造模式」）。
+- dsh 的 Cordis 插件 / Slots / 运行时主题在 github.com/jabing/shutu-agent 不存在（编译期接缝 + 无插件运行时，用户已拍板排除「创造模式」）。
 - web 提供**前端主题**（深/浅色 CSS 变量切换，localStorage 记忆）——这是静态前端能力，非运行时插件。
 - 不承诺 dsh 的插件面板、主题商店等。
 
@@ -68,9 +68,9 @@ dsh web 的核心功能面：实时对话（发消息 + 流式 assistant 输出 
 - 后端只读状态 API（subagents / jobs）与 `GET /api/config` 扩展均走脱敏（不泄露密钥/敏感事件正文）。
 
 ### D-WEB2-I 逐页移植 dsh web 源码（用户指示 2026-08-20）
-- 用户指示：参照 dsh web 源码（`D:\dev-projects\Agent\deepseek-harness\packages\client\ui-*`，只读参照）**逐页移植**到 personal-agent。
+- 用户指示：参照 dsh web 源码（`D:\dev-projects\Agent\deepseek-harness\packages\client\ui-*`，只读参照）**逐页移植**到 github.com/jabing/shutu-agent。
 - 页面移植清单：P1 工作台布局 + 聊天核心页（ui-layout AppFrame 三栏 + ui-conversation 消息流/思维链/工具卡片/输入栏）→ P2 侧栏 + 会话管理（ui-sidebar）→ P3 设置 + 模型选择（ui-settings* + ui-model-selection）→ P4 子代理 + 后台任务（ui-subagent + ui-jobs）→ P5 主题 + 反馈 + 附件（ui-theme token + ui-message-feedback + ui-attachment）。
-- **架构排除**（personal-agent 无 Cordis/Slots/运行时插件，用户已拍板）：ui-slots、ui-settings-plugins、ui-settings-plugin-inventory、ui-renderer 动态机制、ui-commands popup 服务面、ui-permission-presets、ui-directory-picker-*。
+- **架构排除**（github.com/jabing/shutu-agent 无 Cordis/Slots/运行时插件，用户已拍板）：ui-slots、ui-settings-plugins、ui-settings-plugin-inventory、ui-renderer 动态机制、ui-commands popup 服务面、ui-permission-presets、ui-directory-picker-*。
 - 移植 = 页面结构/布局/功能/视觉/中文文案对齐 dsh；实现语言 vanilla JS + Go 后端（React 代码不照搬，零依赖纪律保持）。每页一个提交；先研究产出移植规格（`.web-port/`）再实现。
 
 ## 理由

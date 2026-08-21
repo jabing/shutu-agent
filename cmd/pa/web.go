@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"os"
 
-	"personal-agent/internal/tools"
-	"personal-agent/internal/web"
+	"github.com/jabing/shutu-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/web"
 )
 
 // registerWeb 在 web.enabled 时创建 Engine + provider + 注册 web_* 工具（白名单

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // eventCapture records one emitted event's type and payload.

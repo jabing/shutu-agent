@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // defaultRecallLimit is the number of memos Recall returns when limit <= 0.

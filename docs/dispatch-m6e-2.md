@@ -4,13 +4,13 @@
 
 ---
 
-你的任务是实现 Go 项目 `D:\dev-projects\Agent\personal-agent` 的 **M6e-2：`code_run` 工具 + `code/*` 事件 + config + 组合根接线 + 单元测试**。这是 M6e 的第二半（第一半 M6e-1 已做 `internal/code` 接缝 + 本地子进程沙箱，你**依赖它们**）。你是实施会话。
+你的任务是实现 Go 项目 `D:\dev-projects\Agent\shutu-agent` 的 **M6e-2：`code_run` 工具 + `code/*` 事件 + config + 组合根接线 + 单元测试**。这是 M6e 的第二半（第一半 M6e-1 已做 `internal/code` 接缝 + 本地子进程沙箱，你**依赖它们**）。你是实施会话。
 
-**直接开工，不要做任何前置检查**。你的主要输入是 `D:\dev-projects\Agent\personal-agent\docs\dispatch-m6e-2.md`（本文件即主契约），**先完整读它**，然后立即用 write 工具创建/修改文件。
+**直接开工，不要做任何前置检查**。你的主要输入是 `D:\dev-projects\Agent\shutu-agent\docs\dispatch-m6e-2.md`（本文件即主契约），**先完整读它**，然后立即用 write 工具创建/修改文件。
 
 **读这些（按需精读片段，不要通读）**：
-1. `D:\dev-projects\Agent\personal-agent\docs\dispatch-m6e-1.md` —— 接缝契约（Engine/Result/RunRequest 签名、受控隔离语义、网络声明性边界）。
-2. `D:\dev-projects\Agent\personal-agent\docs\decisions\2026-08-19-m6-agent-full.md` —— M6 主 ADR（M6e 行）。
+1. `D:\dev-projects\Agent\shutu-agent\docs\dispatch-m6e-1.md` —— 接缝契约（Engine/Result/RunRequest 签名、受控隔离语义、网络声明性边界）。
+2. `D:\dev-projects\Agent\shutu-agent\docs\decisions\2026-08-19-m6-agent-full.md` —— M6 主 ADR（M6e 行）。
 3. 现有代码（按需精读）：
    - `internal/code/service.go` + `local.go`（M6e-1 已做）。
    - `internal/session/session.go` —— 各能力事件的 log-only 模式（模板）。
@@ -31,8 +31,8 @@
 **纪律**：**日志仍追加式（D1）**；不改 loop turn/step（D4）；串行路径（D5）；零新依赖（os/exec 标准库）；CGO-free；原有测试全绿。**不要动**：`internal/code/service.go`/`local.go`（M6e-1 已验收，只读；tools.go 新建）、loop.go（只读，不要改）、compaction、subagent、skill、kb、store、schedule、plan、spill、interact 包（只读参考）。**不要做**：M6f、KB 补全、强隔离（e2b 云端）。
 
 **环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）。每次 Go 命令这样跑（用 pwsh）：
-`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'; & 'C:\Program Files\Go\bin\go.exe' test ./...`
-git 提交：`git -C D:\dev-projects\Agent\personal-agent -c user.name='Personal Agent' -c user.email='dev@personal-agent.local' commit -m "M6e-2: <what>"`。不要提交 pa.exe/data/缓存。
+`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'; & 'C:\Program Files\Go\bin\go.exe' test ./...`
+git 提交：`git -C D:\dev-projects\Agent\shutu-agent -c user.name='Personal Agent' -c user.email='dev@shutu-agent.local' commit -m "M6e-2: <what>"`。不要提交 pa.exe/data/缓存。
 
 **上下文管理（关键）**：**分阶段提交**——① session 事件 → ② config → ③ tools → ④ 组合根，每阶段一次 commit（信息含 "M6e-2"）。不要通读任何参考库。报告只列文件名+一句话。
 

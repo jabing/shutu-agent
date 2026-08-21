@@ -28,7 +28,7 @@ import (
 	"strings"
 	"sync"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // Tool names (whitelisted when subagent.enabled; see config.subagentToolNames).

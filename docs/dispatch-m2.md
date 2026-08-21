@@ -4,7 +4,7 @@
 
 ---
 
-请阅读 `D:\dev-projects\Agent\personal-agent\Agent.md` 和 `docs/design.md`，按设计基线实现 **M2 持久化与会话**（里程碑验收标准见 Agent.md 第 4 节）。
+请阅读 `D:\dev-projects\Agent\shutu-agent\Agent.md` 和 `docs/design.md`，按设计基线实现 **M2 持久化与会话**（里程碑验收标准见 Agent.md 第 4 节）。
 
 **M2 范围**（对应 design.md §2/§3/§6/§7 与 D8）：
 

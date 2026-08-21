@@ -19,10 +19,10 @@ import (
 	"os"
 	"strings"
 
-	"personal-agent/internal/llm"
-	"personal-agent/internal/loop"
-	"personal-agent/internal/session"
-	"personal-agent/internal/skill"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/loop"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/skill"
 )
 
 // registerSkills creates the filesystem provider + skill Registry and

@@ -4,12 +4,12 @@
 
 ---
 
-你的任务是实现 Go 项目 `D:\dev-projects\Agent\personal-agent` 的 **M6e-1：`internal/code` 代码沙箱接缝（Service 定义 + 多 Provider）+ 本地子进程沙箱实现 + 单元测试**。这是 M6e 的第一半（第二半 M6e-2 做 code_run 工具 + code/* 事件 + config + 组合根接线，依赖你的接缝）。你是实施会话。
+你的任务是实现 Go 项目 `D:\dev-projects\Agent\shutu-agent` 的 **M6e-1：`internal/code` 代码沙箱接缝（Service 定义 + 多 Provider）+ 本地子进程沙箱实现 + 单元测试**。这是 M6e 的第一半（第二半 M6e-2 做 code_run 工具 + code/* 事件 + config + 组合根接线，依赖你的接缝）。你是实施会话。
 
-**直接开工，不要做任何前置检查**：不要跑 baseline check、不要验证环境。你的主要输入是 `D:\dev-projects\Agent\personal-agent\docs\dispatch-m6e-1.md`（本文件即主契约），**先完整读它**，然后立即用 write 工具创建文件。
+**直接开工，不要做任何前置检查**：不要跑 baseline check、不要验证环境。你的主要输入是 `D:\dev-projects\Agent\shutu-agent\docs\dispatch-m6e-1.md`（本文件即主契约），**先完整读它**，然后立即用 write 工具创建文件。
 
 **读这些（按需精读片段，不要通读）**：
-1. `D:\dev-projects\Agent\personal-agent\docs\decisions\2026-08-19-m6-agent-full.md` —— M6 主 ADR，重点读 M6e 行（代码沙箱；**受控隔离** = 进程边界 + 超时 + 配额 + 默认无网络；强隔离 e2b 云端不做）。
+1. `D:\dev-projects\Agent\shutu-agent\docs\decisions\2026-08-19-m6-agent-full.md` —— M6 主 ADR，重点读 M6e 行（代码沙箱；**受控隔离** = 进程边界 + 超时 + 配额 + 默认无网络；强隔离 e2b 云端不做）。
 2. `internal/schedule/service.go` + `internal/interact/service.go` —— 接缝模板（Provider/Engine + 哨兵错误 + Close 幂等）。
 3. `internal/tools/run_command.go` —— M3 run_command 现有实现（补强对象；参考其 exec/超时/输出截断写法）。
 4. 参考（只借鉴思路，不精读）：`D:\dev-projects\Agent\deepseek-harness\packages\code-runtime\code-runtime\src\types.ts`（沙箱接口形状）；`e2b\subprocess-e2b\src\process.ts`（子进程模型）。
@@ -53,8 +53,8 @@
 **纪律**：**本任务不落任何日志事件、不加任何工具、不加 config**（M6e-2 的事）；不改 loop turn/step（D4）；子进程执行是**前台串行**（Run 同步返回，无后台 goroutine；D5）；零新依赖（os/exec 是标准库）；CGO-free；原有测试全绿。**不要动**：loop、cmd/pa、config、jobs、subagent、compaction、skill、kb、store、tools、session（只读参考）、schedule、plan、spill、interact 包（只读参考）。**不要做**：code_run 工具、code/* 事件、config、组合根接线（M6e-2）。
 
 **环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）。每次 Go 命令这样跑（用 pwsh）：
-`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'; & 'C:\Program Files\Go\bin\go.exe' test ./...`
-git 提交：`git -C D:\dev-projects\Agent\personal-agent -c user.name='Personal Agent' -c user.email='dev@personal-agent.local' commit -m "M6e-1: <what>"`。不要提交 pa.exe/data/缓存。
+`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'; & 'C:\Program Files\Go\bin\go.exe' test ./...`
+git 提交：`git -C D:\dev-projects\Agent\shutu-agent -c user.name='Personal Agent' -c user.email='dev@shutu-agent.local' commit -m "M6e-1: <what>"`。不要提交 pa.exe/data/缓存。
 
 **上下文管理（关键）**：**分阶段提交**——① service.go 接缝 + local.go → ② 测试，每阶段一次 commit（信息含 "M6e-1"）。不要通读任何参考库。报告只列文件名+一句话。
 

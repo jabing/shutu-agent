@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"os"
 
-	"personal-agent/internal/subagent"
-	"personal-agent/internal/workflow"
+	"github.com/jabing/shutu-agent/internal/subagent"
+	"github.com/jabing/shutu-agent/internal/workflow"
 )
 
 // registerWorkflow wires the task-DAG orchestration seam (D-GAP-2) when

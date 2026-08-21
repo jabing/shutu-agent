@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 func TestAppendAssignsSeqAndType(t *testing.T) {

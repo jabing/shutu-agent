@@ -18,7 +18,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 const schema = `

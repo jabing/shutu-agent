@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 // sseEvent is one parsed SSE event: the event name plus the joined data field.

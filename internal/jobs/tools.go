@@ -28,7 +28,7 @@ import (
 	"sync"
 	"time"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // Tool names (whitelisted when jobs.enabled; see config.jobsToolNames).

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/store"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/store"
 )
 
 func makeWebServerApp(t *testing.T, enabled bool, token string) (*app, *store.SQLiteStore) {

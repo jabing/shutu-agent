@@ -20,9 +20,9 @@ import (
 	"strings"
 	"sync"
 
-	"personal-agent/internal/llm"
-	"personal-agent/internal/session"
-	"personal-agent/internal/webserver"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/webserver"
 )
 
 // eventHub is the real-time event broadcaster (ADR D-WEB2-B): attachSink

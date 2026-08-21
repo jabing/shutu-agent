@@ -4,7 +4,7 @@
 
 ---
 
-请阅读 `D:\dev-projects\Agent\personal-agent\Agent.md`、`docs/design.md`（§4 pre-step 扩展点、§3 事件、§10 D1/D4/D5）**和 `docs/decisions/2026-08-18-m5-agent-core.md`（M5 主 ADR，本段对应"决策 ③"）**，并通读参考源码 `D:\dev-projects\Agent\deepseek-harness\packages\compaction\`（重点：`compaction/`（接缝 `src/types.ts`、`src/index.ts`）、`compaction-basic/`（token 压力 + 摘要）、`compaction-tool-result-pruner/`（tool-result 剪枝）、`command-compact/`（人工命令））以及 `docs/subsystems/compaction.md`（`compaction/*` 事件、`CompactionResult`、service 语义），按设计基线实现 **M5c 上下文压缩**（M5 第三段；本段验收标准见下，M5 完整验收标准见 Agent.md 第 4 节）。
+请阅读 `D:\dev-projects\Agent\shutu-agent\Agent.md`、`docs/design.md`（§4 pre-step 扩展点、§3 事件、§10 D1/D4/D5）**和 `docs/decisions/2026-08-18-m5-agent-core.md`（M5 主 ADR，本段对应"决策 ③"）**，并通读参考源码 `D:\dev-projects\Agent\deepseek-harness\packages\compaction\`（重点：`compaction/`（接缝 `src/types.ts`、`src/index.ts`）、`compaction-basic/`（token 压力 + 摘要）、`compaction-tool-result-pruner/`（tool-result 剪枝）、`command-compact/`（人工命令））以及 `docs/subsystems/compaction.md`（`compaction/*` 事件、`CompactionResult`、service 语义），按设计基线实现 **M5c 上下文压缩**（M5 第三段；本段验收标准见下，M5 完整验收标准见 Agent.md 第 4 节）。
 
 **前置依赖**：本段依赖 **M5b 的 pre-step 扩展点**（自动压缩挂在 pre-step 注入器上）与现有 `internal/llm`（摘要模型）。若 M5b 验收后 `PreStep` 接口有调整，以**当前代码**为准。
 

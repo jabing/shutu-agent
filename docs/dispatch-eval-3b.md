@@ -203,7 +203,7 @@ func (a *app) evalStatus() error {
 	// nil when eval disabled (D10).
 	evalEng eval.Engine
 ```
-（imports 加 `personal-agent/internal/eval`）
+（imports 加 `github.com/jabing/shutu-agent/internal/eval`）
 2. **注册调用**（`registerInteracts()` 块之后加）：
 ```go
 	// eval: wire the task-evaluation seam — the CompositeEvaluator (rule → LLM
@@ -255,7 +255,7 @@ func (a *app) evalStatus() error {
 
 ## 环境
 
-- Go：`C:\Program Files\Go\bin\go.exe`；env：`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`；提交身份 `-c user.name='Personal Agent' -c user.email='dev@personal-agent.local'`；pwsh，workdir=`D:\dev-projects\Agent\personal-agent`。
+- Go：`C:\Program Files\Go\bin\go.exe`；env：`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'`；提交身份 `-c user.name='Personal Agent' -c user.email='dev@shutu-agent.local'`；pwsh，workdir=`D:\dev-projects\Agent\shutu-agent`。
 
 ## 报告（简短）
 提交 hash + go test 结果 + 偏离说明。不要贴代码。

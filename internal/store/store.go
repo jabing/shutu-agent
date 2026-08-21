@@ -9,7 +9,7 @@ import (
 	"errors"
 	"time"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // ErrNotFound is returned when a session id has no row in the store.

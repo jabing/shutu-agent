@@ -17,11 +17,11 @@ import (
 	"os"
 	"strings"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/llm"
-	"personal-agent/internal/llm/anthropic"
-	"personal-agent/internal/llm/deepseek"
-	"personal-agent/internal/llm/openai"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/llm/anthropic"
+	"github.com/jabing/shutu-agent/internal/llm/deepseek"
+	"github.com/jabing/shutu-agent/internal/llm/openai"
 )
 
 // registerLLM builds the provider registry and injects the selected provider

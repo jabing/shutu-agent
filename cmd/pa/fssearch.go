@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"os"
 
-	"personal-agent/internal/fssearch"
+	"github.com/jabing/shutu-agent/internal/fssearch"
 )
 
 // registerFsSearch wires the file-content-search seam (D-GAP-1) when

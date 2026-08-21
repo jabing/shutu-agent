@@ -36,7 +36,7 @@ import (
 	"strings"
 	"time"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // ToolRunName is the code-sandbox tool (whitelisted when code.enabled; see

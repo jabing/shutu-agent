@@ -24,7 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // ToolName is the skill consumer tool name (whitelisted when skill.enabled;

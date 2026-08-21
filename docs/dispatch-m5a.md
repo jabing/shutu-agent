@@ -4,7 +4,7 @@
 
 ---
 
-请阅读 `D:\dev-projects\Agent\personal-agent\Agent.md`、`docs/design.md`（§10 已更新 D5/D4）**和 `docs/decisions/2026-08-18-m5-agent-core.md`（M5 主 ADR，本段对应"决策 ①"）**，并通读参考源码 `D:\dev-projects\Agent\deepseek-harness\packages\jobs\`（重点：`jobs/`（Service 定义 `src/types.ts`、`src/index.ts`）、`jobs-local/`（本地注册表）、`tool-jobs/`（模型侧工具））以及 `docs/subsystems/jobs.md`（job 生命周期、owner 隔离、快照契约），按设计基线实现 **M5a 后台任务**（M5 第一段；本段验收标准见下，M5 完整验收标准见 Agent.md 第 4 节）。
+请阅读 `D:\dev-projects\Agent\shutu-agent\Agent.md`、`docs/design.md`（§10 已更新 D5/D4）**和 `docs/decisions/2026-08-18-m5-agent-core.md`（M5 主 ADR，本段对应"决策 ①"）**，并通读参考源码 `D:\dev-projects\Agent\deepseek-harness\packages\jobs\`（重点：`jobs/`（Service 定义 `src/types.ts`、`src/index.ts`）、`jobs-local/`（本地注册表）、`tool-jobs/`（模型侧工具））以及 `docs/subsystems/jobs.md`（job 生命周期、owner 隔离、快照契约），按设计基线实现 **M5a 后台任务**（M5 第一段；本段验收标准见下，M5 完整验收标准见 Agent.md 第 4 节）。
 
 **M5a 范围（只做后台任务，不碰子代理/压缩/技能）**：
 
@@ -91,4 +91,4 @@
 - 本派发文档已自包含实现所需的一切契约与验收标准。**不要通读** `deepseek-harness/packages/jobs/` 全部源码——只在某个语义不确定时精读对应文件（如 `jobs/src/types.ts` 的 JobSnapshot 字段、`jobs-local/src/index.ts` 的并发上限逻辑）。读文件用 read 的 offset/limit 只读需要的片段，不要整文件大段贴入。
 - **分阶段提交**：每完成一个模块（接口 → Provider → 事件 → 工具 → config → 测试）就 `git add` + commit 一次（提交信息含 M5a + 模块名），不要攒到最后一次性提交。这样即使中途上下文耗尽，已完成的模块也已入库。
 - 不要粘贴大段源码到报告里；报告只列文件名 + 一句话说明。
-- **环境注意**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设置 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`。用 pwsh 执行；git 提交用 `-c user.name='Personal Agent' -c user.email='dev@personal-agent.local'`。不要提交 `pa.exe`、`data/`、缓存目录。
+- **环境注意**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设置 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'`。用 pwsh 执行；git 提交用 `-c user.name='Personal Agent' -c user.email='dev@shutu-agent.local'`。不要提交 `pa.exe`、`data/`、缓存目录。

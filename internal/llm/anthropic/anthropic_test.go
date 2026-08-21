@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 // newTestProvider starts a fake Anthropic Messages endpoint and returns a

@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"os"
 
-	"personal-agent/internal/spill"
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/spill"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // registerSpills creates the in-memory Provider + Engine and registers the

@@ -4,12 +4,12 @@
 
 ---
 
-你的任务是实现 Go 项目 `D:\dev-projects\Agent\personal-agent` 的 **M5c-1a：session 折叠规则改造（`derive()` + `NewUserMessageReplace`）+ 单元测试**。这是 M5c 的一个**小**子任务（M5c-1b 另一个会话做 compaction 接缝）。你是实施会话。
+你的任务是实现 Go 项目 `D:\dev-projects\Agent\shutu-agent` 的 **M5c-1a：session 折叠规则改造（`derive()` + `NewUserMessageReplace`）+ 单元测试**。这是 M5c 的一个**小**子任务（M5c-1b 另一个会话做 compaction 接缝）。你是实施会话。
 
 **必读（先读这些，不要通读参考源码）**：
-1. `D:\dev-projects\Agent\personal-agent\docs\dispatch-m5c-1.md` —— 你的主契约，重点读「实现内容」第 1 条（折叠规则改造）。**其余条目是 M5c-1b 的事，只读参考。**
-2. `D:\dev-projects\Agent\personal-agent\internal\session\session.go` —— **`derive()` 纯函数（第 158–201 行）与 `userMessageData`（第 207–209 行）是改造点**。
-3. `D:\dev-projects\Agent\personal-agent\internal\session\session_test.go` —— derive 相关测试模式。
+1. `D:\dev-projects\Agent\shutu-agent\docs\dispatch-m5c-1.md` —— 你的主契约，重点读「实现内容」第 1 条（折叠规则改造）。**其余条目是 M5c-1b 的事，只读参考。**
+2. `D:\dev-projects\Agent\shutu-agent\internal\session\session.go` —— **`derive()` 纯函数（第 158–201 行）与 `userMessageData`（第 207–209 行）是改造点**。
+3. `D:\dev-projects\Agent\shutu-agent\internal\session\session_test.go` —— derive 相关测试模式。
 4. `Agent.md` 第 10 节 D1–D10 纪律。
 
 **实现内容**（严格按契约，只做这一条）：
@@ -20,7 +20,7 @@
 
 **纪律**：**日志仍追加式（D1）**——本任务不删除、不改写任何已落事件，只加新事件类型与折叠规则；`NewUserMessage` 向后兼容；零新依赖；CGO-free；原有测试全绿（尤其 derive 测试）。**不要动**：loop、cmd/pa、config、jobs、subagent、tools、kb、store 包（只读参考）。**不要做**：/compact 命令、compaction/* 事件、config、PreStep 接线、compaction 包（M5c-1b/1c-2）。
 
-**环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`。用 pwsh 执行命令。git 提交用 `git -C D:\dev-projects\Agent\personal-agent -c user.name='Personal Agent' -c user.email='dev@personal-agent.local' commit -m "..."`。不要提交 `pa.exe`、`data/`、缓存目录。
+**环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'`。用 pwsh 执行命令。git 提交用 `git -C D:\dev-projects\Agent\shutu-agent -c user.name='Personal Agent' -c user.email='dev@shutu-agent.local' commit -m "..."`。不要提交 `pa.exe`、`data/`、缓存目录。
 
 **上下文管理（关键）**：这是**小任务**——只读 session.go 的 derive/userMessageData 相关行与 session_test.go 的 derive 测试；不要通读整个文件或参考库。完成即一次性提交（信息含 "M5c-1a"）。
 

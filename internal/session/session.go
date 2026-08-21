@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 // Event type discriminators (v1 vocabulary, see design.md §3).

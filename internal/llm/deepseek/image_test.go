@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 // writeTestImage writes a small fake image file and returns its path. The

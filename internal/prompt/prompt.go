@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 // Section is one ordered block of the system prompt. Order places the section

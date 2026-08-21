@@ -4,11 +4,11 @@
 
 ---
 
-你的任务是实现 Go 项目 `D:\dev-projects\Agent\personal-agent` 的 **M5d-1：`internal/skill` 注册表接缝（多 Provider）+ 文件系统 Provider（默认）+ 单元测试**。这是 M5d 的第一半（第二半 M5d-2 做 skill_load 工具 + skill/* 事件 + config + PreStep 目录注入接线，依赖你的注册表）。你是实施会话。
+你的任务是实现 Go 项目 `D:\dev-projects\Agent\shutu-agent` 的 **M5d-1：`internal/skill` 注册表接缝（多 Provider）+ 文件系统 Provider（默认）+ 单元测试**。这是 M5d 的第一半（第二半 M5d-2 做 skill_load 工具 + skill/* 事件 + config + PreStep 目录注入接线，依赖你的注册表）。你是实施会话。
 
 **必读（先读这些，不要通读参考源码）**：
-1. `D:\dev-projects\Agent\personal-agent\docs\dispatch-m5d.md` —— 背景契约，重点读「M5d 范围」第 1 条的**注册表 + 文件系统 Provider 设计**（Candidate/Definition/Provider/Registry 签名、发现优先级、技能身份、frontmatter、同名裁决）与「约束」「决策记录」节。**第 2（事件）、3（config）、目录注入、skill_load 工具是 M5d-2 的事，只读参考。**
-2. `D:\dev-projects\Agent\personal-agent\docs\decisions\2026-08-18-m5-agent-core.md` 的「决策 ④」。
+1. `D:\dev-projects\Agent\shutu-agent\docs\dispatch-m5d.md` —— 背景契约，重点读「M5d 范围」第 1 条的**注册表 + 文件系统 Provider 设计**（Candidate/Definition/Provider/Registry 签名、发现优先级、技能身份、frontmatter、同名裁决）与「约束」「决策记录」节。**第 2（事件）、3（config）、目录注入、skill_load 工具是 M5d-2 的事，只读参考。**
+2. `D:\dev-projects\Agent\shutu-agent\docs\decisions\2026-08-18-m5-agent-core.md` 的「决策 ④」。
 3. 参考源码（**只借鉴思路与契约，不照搬 TS，不精读**）：`D:\dev-projects\Agent\deepseek-harness\packages\skill\` 的 `skill/`（注册表 `src/index.ts`）、`skill-filesystem/`（本地发现）。
 4. `Agent.md` 第 10 节 D1–D10 纪律。
 
@@ -49,7 +49,7 @@
 
 **纪律**：技能是本地可信文件，**不执行**；零新依赖；CGO-free；原有测试全绿。**不要动**：`internal/compaction`、loop、cmd/pa、config、jobs、subagent、kb、store、tools、session 包（只读参考）。**不要做**：skill_load 工具、skill/* 事件、config、PreStep 目录注入接线（M5d-2）。
 
-**环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`。用 pwsh 执行命令。git 提交用 `git -C D:\dev-projects\Agent\personal-agent -c user.name='Personal Agent' -c user.email='dev@personal-agent.local' commit -m "..."`。不要提交 `pa.exe`、`data/`、缓存目录。
+**环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'`。用 pwsh 执行命令。git 提交用 `git -C D:\dev-projects\Agent\shutu-agent -c user.name='Personal Agent' -c user.email='dev@shutu-agent.local' commit -m "..."`。不要提交 `pa.exe`、`data/`、缓存目录。
 
 **上下文管理（关键）**：**分阶段提交**（service.go 注册表一次 → filesystem.go Provider 一次 → 测试一次，信息含 "M5d-1"）；只按需精读片段，不要通读参考库；报告只列文件名 + 一句话。
 

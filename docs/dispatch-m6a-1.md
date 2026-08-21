@@ -4,11 +4,11 @@
 
 ---
 
-你的任务是实现 Go 项目 `D:\dev-projects\Agent\personal-agent` 的 **M6a-1：`internal/schedule` 定时调度接缝（Service 定义 + 多 Provider）+ 间隔/cron 内核实现 + 单元测试**。这是 M6a 的第一半（第二半 M6a-2 做 schedule_* 工具 + schedule/* 事件 + config + 组合根接线，依赖你的接缝）。你是实施会话。
+你的任务是实现 Go 项目 `D:\dev-projects\Agent\shutu-agent` 的 **M6a-1：`internal/schedule` 定时调度接缝（Service 定义 + 多 Provider）+ 间隔/cron 内核实现 + 单元测试**。这是 M6a 的第一半（第二半 M6a-2 做 schedule_* 工具 + schedule/* 事件 + config + 组合根接线，依赖你的接缝）。你是实施会话。
 
 **必读（先读这些，不要通读参考源码）**：
-1. `D:\dev-projects\Agent\personal-agent\docs\decisions\2026-08-19-m6-agent-full.md` —— M6 主 ADR，重点读 M6a 行（定时调度接缝、D5 触发语义）。
-2. `D:\dev-projects\Agent\personal-agent\Agent.md` 第 10 节 D1–D10 纪律（实际是 §2 设计基线 + §5 开发纪律）+ design.md §10。
+1. `D:\dev-projects\Agent\shutu-agent\docs\decisions\2026-08-19-m6-agent-full.md` —— M6 主 ADR，重点读 M6a 行（定时调度接缝、D5 触发语义）。
+2. `D:\dev-projects\Agent\shutu-agent\Agent.md` 第 10 节 D1–D10 纪律（实际是 §2 设计基线 + §5 开发纪律）+ design.md §10。
 3. 现有代码（按需精读片段）：
    - `internal/jobs/service.go` + `local.go` —— **owner-fenced Registry + 生命周期 + Close 无泄漏模式（你要复制的模板）**。
    - `internal/subagent/service.go` —— 多 Provider 注册表模式。
@@ -58,7 +58,7 @@
 
 **纪律**：**本任务不落任何日志事件、不加任何工具、不加 config**（M6a-2 的事）；不改 loop turn/step（D4）；Tick 是纯推进、无副作用（D5）；零新依赖；CGO-free；原有测试全绿。**不要动**：loop、cmd/pa、config、jobs、subagent、compaction、skill、kb、store、tools、session 包（只读参考）。**不要做**：schedule_* 工具、schedule/* 事件、config、组合根接线（M6a-2）。
 
-**环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`。用 pwsh 执行命令。git 提交用 `git -C D:\dev-projects\Agent\personal-agent -c user.name='Personal Agent' -c user.email='dev@personal-agent.local' commit -m "..."`。不要提交 `pa.exe`、`data/`、缓存目录。
+**环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'`。用 pwsh 执行命令。git 提交用 `git -C D:\dev-projects\Agent\shutu-agent -c user.name='Personal Agent' -c user.email='dev@shutu-agent.local' commit -m "..."`。不要提交 `pa.exe`、`data/`、缓存目录。
 
 **上下文管理（关键）**：**分阶段提交**（service.go 接缝一次 → engine.go+interval.go+cron.go 一次 → 测试一次，信息含 "M6a-1"）；只按需精读片段，不要通读参考库；报告只列文件名 + 一句话。
 

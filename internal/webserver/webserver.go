@@ -26,10 +26,10 @@ import (
 	"strings"
 	"time"
 
-	"personal-agent/internal/attachment"
-	"personal-agent/internal/llm"
-	"personal-agent/internal/session"
-	"personal-agent/internal/store"
+	"github.com/jabing/shutu-agent/internal/attachment"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/store"
 )
 
 //go:embed static

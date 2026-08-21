@@ -86,7 +86,7 @@ func buildWorkerPrompt(objective string, round int, prevBrief string) string
 ```
   prompt 内容（契约原文）：
 ```
-你是 personal-agent 的 fresh 工作代理。目标（不可变）：
+你是 github.com/jabing/shutu-agent 的 fresh 工作代理。目标（不可变）：
 <objective>
 
 这是第 <round> 轮。上一轮进展摘要（第一轮为「无」）：
@@ -207,7 +207,7 @@ func (a *app) registerRalph() error {
 
 ## 环境
 
-- Go：`C:\Program Files\Go\bin\go.exe`；env：`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`；提交身份 `-c user.name='Personal Agent' -c user.email='dev@personal-agent.local'`；pwsh，workdir=`D:\dev-projects\Agent\personal-agent`。
+- Go：`C:\Program Files\Go\bin\go.exe`；env：`$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'`；提交身份 `-c user.name='Personal Agent' -c user.email='dev@shutu-agent.local'`；pwsh，workdir=`D:\dev-projects\Agent\shutu-agent`。
 
 ## 报告（简短）
 提交 hash + go test 结果 + 偏离说明（session id 取法）。不要贴代码。

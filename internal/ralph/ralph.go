@@ -109,7 +109,7 @@ func buildWorkerPrompt(objective string, round int, prevBrief string) string {
 	if prev == "" {
 		prev = "（无）"
 	}
-	return fmt.Sprintf(`你是 personal-agent 的 fresh 工作代理。目标（不可变）：
+	return fmt.Sprintf(`你是数驼 AI Agent 的 fresh 工作代理。目标（不可变）：
 %s
 
 这是第 %d 轮。上一轮进展摘要（第一轮为「无」）：

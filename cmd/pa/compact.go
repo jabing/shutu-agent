@@ -17,11 +17,11 @@ import (
 	"os"
 	"strconv"
 
-	"personal-agent/internal/compaction"
-	"personal-agent/internal/config"
-	"personal-agent/internal/llm"
-	"personal-agent/internal/loop"
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/compaction"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/loop"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // compactedNotice is the short "context was compacted" hint injected by the

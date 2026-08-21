@@ -18,8 +18,8 @@ import (
 	"os"
 	"strings"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/mcp"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/mcp"
 )
 
 // registerMcps creates the stdio Factory, registers the mcp_* tools and bridges

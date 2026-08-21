@@ -6,9 +6,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"personal-agent/internal/llm"
-	"personal-agent/internal/prompt"
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/prompt"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // TestRunPreStepInjectorsInOrder verifies that multiple PreStep injectors run

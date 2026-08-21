@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"strings"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // Tool names (whitelisted when interact.enabled; see config.interactToolNames).

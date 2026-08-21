@@ -13,8 +13,8 @@ import (
 	"fmt"
 	"os"
 
-	"personal-agent/internal/jobs"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/jobs"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // registerJobs creates the Local registry and registers the five job_* tools

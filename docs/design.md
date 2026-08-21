@@ -33,7 +33,7 @@
 ## 2. 总体结构（模块地图）
 
 ```
-personal-agent/
+github.com/jabing/shutu-agent/
 ├── Agent.md                  # 全局规划 + 开发纪律（工作入口）
 ├── cmd/pa/main.go            # 入口：REPL（M1）→ CLI（M2）→ Web 可选（M3）
 ├── internal/

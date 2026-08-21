@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/attachment"
-	"personal-agent/internal/config"
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/attachment"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // attachTestPNG is a tiny fake PNG payload (the store does not decode — bytes

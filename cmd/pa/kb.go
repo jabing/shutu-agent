@@ -16,11 +16,11 @@ import (
 	"strings"
 	"time"
 
-	"personal-agent/internal/kb"
-	"personal-agent/internal/llm"
-	"personal-agent/internal/prompt"
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/kb"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/prompt"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // knowledgePromptOrder matches config/prompts/30-knowledge.md so the dynamic

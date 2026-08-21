@@ -40,7 +40,7 @@ import (
 	"sort"
 	"strings"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // McpServer is one configured MCP server: a unique Name (used as the

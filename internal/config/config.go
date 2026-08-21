@@ -100,7 +100,7 @@ const (
 	DefaultWebFetchMaxResponseBytes = 2097152 // 2 MiB
 	DefaultWebFetchMaxURLBytes      = 2048
 	DefaultWebFetchMaxRedirects     = 5
-	DefaultWebFetchUserAgent        = "personal-agent/0.1 (M7)"
+	DefaultWebFetchUserAgent        = "shutu-agent/0.1 (M7)"
 	DefaultWebDeepSeekBaseURL       = "https://api.deepseek.com/anthropic/v1"
 	DefaultWebDeepSeekModel         = "deepseek-v4-flash"
 	DefaultWebDeepSeekAPIVersion    = "2023-06-01"

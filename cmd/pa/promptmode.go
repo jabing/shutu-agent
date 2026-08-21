@@ -7,8 +7,8 @@
 package main
 
 import (
-	"personal-agent/internal/config"
-	"personal-agent/internal/prompt"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/prompt"
 )
 
 // minimalPersona is the minimal preset's fixed persona (D-MODE-3): 固定、完整、

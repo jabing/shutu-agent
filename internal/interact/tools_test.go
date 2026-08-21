@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // eventRecord captures one (type, payload) pair forwarded through the onEvent

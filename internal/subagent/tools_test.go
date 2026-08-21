@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"personal-agent/internal/llm"
-	"personal-agent/internal/prompt"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/prompt"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // Compile-time assertions: the four subagent_* tools implement the tool method

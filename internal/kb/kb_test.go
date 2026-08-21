@@ -10,8 +10,8 @@ import (
 	"sort"
 	"testing"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/kb"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/kb"
 )
 
 // sample entries (E1..E6) used by the consumer battery. Sources are distinct

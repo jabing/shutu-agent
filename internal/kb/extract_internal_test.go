@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 // fakeStore is a scriptable extractStore standing in for a provider.

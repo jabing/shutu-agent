@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 
 const root = 'D:/dev-projects/Agent/deepseek-harness/packages/client/ui-primitives/src'
-const out = resolve('D:/dev-projects/Agent/personal-agent/internal/webserver/static/icons.js')
+const out = resolve('D:/dev-projects/Agent/shutu-agent/internal/webserver/static/icons.js')
 
 // Icons used by the sidebar / workspace grouping (from ui-sidebar + ui-workspace
 // imports) — plus the FishLogo brand mark and the settings gear for the foot.

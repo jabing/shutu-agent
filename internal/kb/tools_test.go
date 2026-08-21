@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"personal-agent/internal/kb"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/kb"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // TestKBToolsNotRegisteredByDefault proves the three kb tools are not

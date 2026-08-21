@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"os"
 
-	"personal-agent/internal/subagent"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/subagent"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // registerSubagent creates the SpawnProvider + Runtime and registers the four

@@ -26,9 +26,9 @@ import (
 	"os"
 	"strings"
 
-	"personal-agent/internal/interact"
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/interact"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // approveArgsBound mirrors the approval engine's stored-args bound (interact

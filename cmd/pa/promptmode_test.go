@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/config"
 )
 
 // writePromptFile writes a "NNN-name.md" prompt section file into dir and

@@ -26,7 +26,7 @@ const (
 	defaultMaxBodyChars     = 200000
 	defaultFetchTimeoutMs   = 30000
 	defaultMaxRedirects     = 5
-	defaultFetchUserAgent   = "personal-agent/0.1 (M7)"
+	defaultFetchUserAgent   = "shutu-agent/0.1 (M7)"
 )
 
 // httpFetchProviderID 是抓取 provider 的稳定 id。
@@ -46,7 +46,7 @@ type FetchLimits struct {
 	MaxBodyChars     int    // 解码后最大字符（截断；默认 200000）
 	TimeoutMs        int    // 单次抓取超时毫秒（默认 30000）
 	MaxRedirects     int    // 同源重定向最大跳数（默认 5）
-	UserAgent        string // 默认 "personal-agent/0.1 (M7)"
+	UserAgent        string // 默认 "shutu-agent/0.1 (M7)"
 }
 
 // NewHttpFetchProvider 返回 HttpFetchProvider（Available 恒 true，匿名公开抓取）。

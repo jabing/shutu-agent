@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"personal-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/llm"
 )
 
 const (

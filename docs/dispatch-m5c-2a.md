@@ -4,11 +4,11 @@
 
 ---
 
-你的任务是实现 Go 项目 `D:\dev-projects\Agent\personal-agent` 的 **M5c-2a：session `compaction/*` 事件 + config `CompactionConfig` + 单元测试**。这是 M5c-2 的一个**小**子任务（M5c-2b 另一个会话做 /compact 命令 + PreStep 接线，依赖你的事件与 config）。你是实施会话。
+你的任务是实现 Go 项目 `D:\dev-projects\Agent\shutu-agent` 的 **M5c-2a：session `compaction/*` 事件 + config `CompactionConfig` + 单元测试**。这是 M5c-2 的一个**小**子任务（M5c-2b 另一个会话做 /compact 命令 + PreStep 接线，依赖你的事件与 config）。你是实施会话。
 
 **必读（先读这些，不要通读参考源码）**：
-1. `D:\dev-projects\Agent\personal-agent\docs\dispatch-m5c-2.md` —— 背景契约，重点读「实现内容」第 1（事件）、2（config）条。**第 3、4、5 条是 M5c-2b 的事，只读参考。**
-2. `D:\dev-projects\Agent\personal-agent\docs\decisions\2026-08-18-m5-agent-core.md` 的「决策 ③」（事件三连锁语义）。
+1. `D:\dev-projects\Agent\shutu-agent\docs\dispatch-m5c-2.md` —— 背景契约，重点读「实现内容」第 1（事件）、2（config）条。**第 3、4、5 条是 M5c-2b 的事，只读参考。**
+2. `D:\dev-projects\Agent\shutu-agent\docs\decisions\2026-08-18-m5-agent-core.md` 的「决策 ③」（事件三连锁语义）。
 3. 现有代码（按需精读片段）：
    - `internal/session/session.go` —— **job/subagent 事件的 log-only 模式是你要复制的模板**（`EventJobStart/Status/Done`、`EventSubagentStart/End/Report` + `New*` 构造 + 200-rune 有界 head + DeriveHistory 不派生）。
    - `internal/config/config.go` —— **JobsConfig/SubagentConfig 段模式是模板**（Enabled + applyDefaults 校验 + 白名单追加）。
@@ -29,7 +29,7 @@
 
 **纪律**：零新依赖；CGO-free；原有测试全绿。**不要动**：`internal/compaction`（已验收，只读）、loop、cmd/pa、jobs、subagent、kb、store、tools 包（只读参考）。**不要做**：/compact 命令、PreStep 接线、事件落日志接线（M5c-2b）。
 
-**环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`。用 pwsh 执行命令。git 提交用 `git -C D:\dev-projects\Agent\personal-agent -c user.name='Personal Agent' -c user.email='dev@personal-agent.local' commit -m "..."`。不要提交 `pa.exe`、`data/`、缓存目录。
+**环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'`。用 pwsh 执行命令。git 提交用 `git -C D:\dev-projects\Agent\shutu-agent -c user.name='Personal Agent' -c user.email='dev@shutu-agent.local' commit -m "..."`。不要提交 `pa.exe`、`data/`、缓存目录。
 
 **上下文管理（关键）**：这是**小任务**——只复制 session 的 job/subagent 事件模式与 config 的 Jobs/Subagent 段模式，不要通读整个文件或参考库。完成即一次性提交（信息含 "M5c-2a"）。
 

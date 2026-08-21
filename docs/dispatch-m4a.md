@@ -4,7 +4,7 @@
 
 ---
 
-请阅读 `D:\dev-projects\Agent\personal-agent\Agent.md`、`docs/design.md`（§8 已定稿）**和 `docs/research-m4-kb.md`（M4 调研，选型前必读），并通读参考源码 `D:\dev-projects\Agent\dsh-knowledge\`（重点：`src/domain.ts`、`src/local-provider.ts`、`src/retrieval.ts`、`docs/architecture.md`）**，按设计基线实现 **M4a 知识库内核**（M4 第一段；完整 M4 验收标准见 Agent.md 第 4 节，本段验收标准见下）。
+请阅读 `D:\dev-projects\Agent\shutu-agent\Agent.md`、`docs/design.md`（§8 已定稿）**和 `docs/research-m4-kb.md`（M4 调研，选型前必读），并通读参考源码 `D:\dev-projects\Agent\dsh-knowledge\`（重点：`src/domain.ts`、`src/local-provider.ts`、`src/retrieval.ts`、`docs/architecture.md`）**，按设计基线实现 **M4a 知识库内核**（M4 第一段；完整 M4 验收标准见 Agent.md 第 4 节，本段验收标准见下）。
 
 **M4a 范围（只做内核，不碰工具/提取/召回编排）**：
 

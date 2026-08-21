@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"personal-agent/internal/config"
-	"personal-agent/internal/kb"
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/kb"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // failingKB is a KB whose Recall always fails, for the fail-open test.

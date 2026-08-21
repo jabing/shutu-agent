@@ -16,8 +16,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"personal-agent/internal/llm"
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // Trigger says why a compaction was requested (ADR 决策 ③).

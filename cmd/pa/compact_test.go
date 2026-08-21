@@ -10,12 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/compaction"
-	"personal-agent/internal/config"
-	"personal-agent/internal/llm"
-	"personal-agent/internal/prompt"
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/compaction"
+	"github.com/jabing/shutu-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/prompt"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // byteTokens is a deterministic 1-token-per-byte surface estimator for tests

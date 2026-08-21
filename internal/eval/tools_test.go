@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // Compile-time assertions: the three eval_* tools implement the tool method set

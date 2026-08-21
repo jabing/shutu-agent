@@ -19,12 +19,12 @@ import (
 	"os"
 	"time"
 
-	"personal-agent/internal/jobs"
-	"personal-agent/internal/llm"
-	"personal-agent/internal/loop"
-	"personal-agent/internal/schedule"
-	"personal-agent/internal/session"
-	"personal-agent/internal/tools"
+	"github.com/jabing/shutu-agent/internal/jobs"
+	"github.com/jabing/shutu-agent/internal/llm"
+	"github.com/jabing/shutu-agent/internal/loop"
+	"github.com/jabing/shutu-agent/internal/schedule"
+	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/tools"
 )
 
 // registerSchedules creates the in-memory Provider + Engine and registers the

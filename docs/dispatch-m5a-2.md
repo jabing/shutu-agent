@@ -4,18 +4,18 @@
 
 ---
 
-你的任务是实现 Go 项目 `D:\dev-projects\Agent\personal-agent` 的 **M5a-2：jobs 事件类型 + job_* 工具 + config + cmd/pa 组合根接线**。M5a-1 已验收（`internal/jobs` 的 Registry 接口 + Local Provider + 21 个测试全绿，提交 `34bf1e8`+`5f3abd4`），本任务在它之上补齐 Consumer 面。
+你的任务是实现 Go 项目 `D:\dev-projects\Agent\shutu-agent` 的 **M5a-2：jobs 事件类型 + job_* 工具 + config + cmd/pa 组合根接线**。M5a-1 已验收（`internal/jobs` 的 Registry 接口 + Local Provider + 21 个测试全绿，提交 `34bf1e8`+`5f3abd4`），本任务在它之上补齐 Consumer 面。
 
 **必读（先读这些）**：
-1. `D:\dev-projects\Agent\personal-agent\docs\dispatch-m5a.md` 的「M5a 范围」第 3、4、5 条和「自测」段 —— 本任务的契约。
-2. `D:\dev-projects\Agent\personal-agent\docs\decisions\2026-08-18-m5-agent-core.md` 的「决策 ①」（背景与取舍）。
-3. **`D:\dev-projects\Agent\personal-agent\internal\jobs\service.go`（已验收的接口，签名以代码为准）** 和 `internal/jobs/local.go`（Provider 行为）。
+1. `D:\dev-projects\Agent\shutu-agent\docs\dispatch-m5a.md` 的「M5a 范围」第 3、4、5 条和「自测」段 —— 本任务的契约。
+2. `D:\dev-projects\Agent\shutu-agent\docs\decisions\2026-08-18-m5-agent-core.md` 的「决策 ①」（背景与取舍）。
+3. **`D:\dev-projects\Agent\shutu-agent\internal\jobs\service.go`（已验收的接口，签名以代码为准）** 和 `internal/jobs/local.go`（Provider 行为）。
 4. 现有代码形态（照抄模式）：
    - `internal/session/session.go`（事件词汇表：EventKBRecall/NewKBRecall 等 kb 事件的声明与构造模式）
    - `internal/kb/tools.go`（kb_* 工具如何结构化实现 `tools.Tool`：Name/Description/Schema/Execute，不 import tools 包）
    - `internal/config/config.go`（KBConfig 模式：Enabled 门 + 指针字段 + applyDefaults 白名单追加，第 207–240 行）
    - `cmd/pa/kb.go`（组合根如何注册工具 + 回调落事件）+ `cmd/pa/main.go`（app 结构、registerKB 调用点、repl 循环）
-5. `D:\dev-projects\Agent\personal-agent\Agent.md` 第 10 节 D1–D10 纪律。
+5. `D:\dev-projects\Agent\shutu-agent\Agent.md` 第 10 节 D1–D10 纪律。
 
 **实现内容**：
 
@@ -54,7 +54,7 @@
 
 **纪律**：不改 loop 的 turn/step 结构（D4）；主循环保持串行（D5，job 后台 goroutine 不进 turn/step）；不新增任何第三方依赖；CGO-free；原有测试（尤其 M5a-1 的 21 个）保持绿色；`jobs.enabled` 默认关闭（D10）。**本任务不做**：子代理/压缩/技能、job 持久化、spill 落盘（M5a-1 已截断，spill 后续评估）。
 
-**环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\personal-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\personal-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\personal-agent\.gocache'`。用 pwsh 执行命令。git 提交用 `git -C D:\dev-projects\Agent\personal-agent -c user.name='Personal Agent' -c user.email='dev@personal-agent.local' commit -m "..."`。不要提交 `pa.exe`、`data/`、缓存目录。
+**环境（重要）**：Go 在 `C:\Program Files\Go\bin\go.exe`（不在 PATH）；每次 Go 命令设 `$env:GOTELEMETRY='off'; $env:GOFLAGS='-mod=mod'; $env:GOMODCACHE='D:\dev-projects\Agent\shutu-agent\.gomodcache'; $env:GOPATH='D:\dev-projects\Agent\shutu-agent\.gopath'; $env:GOCACHE='D:\dev-projects\Agent\shutu-agent\.gocache'`。用 pwsh 执行命令。git 提交用 `git -C D:\dev-projects\Agent\shutu-agent -c user.name='Personal Agent' -c user.email='dev@shutu-agent.local' commit -m "..."`。不要提交 `pa.exe`、`data/`、缓存目录。
 
 **上下文管理**：不要通读参考源码，按需精读片段；分阶段提交（事件 → 工具 → config → 接线，每阶段 commit 一次，信息含 "M5a-2"）；报告只列文件名 + 一句话。
 

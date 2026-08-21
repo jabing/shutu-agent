@@ -6,7 +6,7 @@ package kb
 import (
 	"fmt"
 
-	"personal-agent/internal/config"
+	"github.com/jabing/shutu-agent/internal/config"
 )
 
 // NewFromConfig initializes the default SQLite KB provider only when kb is

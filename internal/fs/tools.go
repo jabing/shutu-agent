@@ -30,7 +30,7 @@ import (
 	"fmt"
 	"strings"
 
-	"personal-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/session"
 )
 
 // Tool names — the fs_* consumer tools (whitelisted when fs.enabled; see
