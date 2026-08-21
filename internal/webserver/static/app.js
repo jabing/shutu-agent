@@ -1587,8 +1587,8 @@ async function loadConfig() {
 const SETTINGS_SECTIONS = [
   { id: "general", label: "通用设置", icon: "⚙" },
   { id: "model", label: "模型", icon: "◈" },
-  { id: "caps", label: "能力开关", icon: "⚡" },
-  { id: "skills", label: "技能", icon: "📚" },
+  { id: "caps", label: "能力开关", icon: PA_ICONS.caps },
+  { id: "skills", label: "技能", icon: PA_ICONS.skills },
 ];
 const CAPABILITY_NAMES = {
   terminal: "终端", fs: "文件系统", fs_search: "全文检索", ralph: "Ralph 循环",
