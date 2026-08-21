@@ -21,7 +21,9 @@ import (
 	"github.com/jabing/shutu-agent/internal/llm"
 	"github.com/jabing/shutu-agent/internal/llm/anthropic"
 	"github.com/jabing/shutu-agent/internal/llm/deepseek"
+	"github.com/jabing/shutu-agent/internal/llm/google"
 	"github.com/jabing/shutu-agent/internal/llm/openai"
+	"github.com/jabing/shutu-agent/internal/llm/openairesponses"
 )
 
 // registerLLM builds the provider registry and injects the selected provider
@@ -79,6 +81,7 @@ func (a *app) registerLLM() error {
 	// (defaults https://api.anthropic.com/v1 / claude-sonnet-4-5, M8-2b §3).
 	if key := a.providerKey("anthropic"); key != "" {
 		if err := reg.Register(anthropic.New(anthropic.Config{
+			ID:                   "anthropic",
 			APIKey:               key,
 			BaseURL:              a.cfg.LLM.Anthropic.BaseURL,
 			Model:                a.cfg.LLM.Anthropic.Model,
@@ -86,6 +89,24 @@ func (a *app) registerLLM() error {
 			MaxRequestImageBytes: a.cfg.LLM.Multimodal.MaxRequestImageBytes, // 默认 20MiB 由 New 兜底
 		})); err != nil {
 			return fmt.Errorf("pa: register anthropic provider: %w", err)
+		}
+	}
+
+	// M11-pi-ai: every other built-in provider from the directory (openai and
+	// anthropic above are config-driven; the remaining catalog entries are wired
+	// by protocol here). A provider registers only when its key is present
+	// (configured llm.key.<id> > env <ENV>); without one it stays dormant, and
+	// the settings page offers it through 增加提供方.
+	for _, bp := range builtinProviders {
+		if bp.id == "deepseek" || bp.id == "openai" || bp.id == "anthropic" {
+			continue // registered above (config-driven)
+		}
+		key := a.providerKey(bp.id)
+		if key == "" {
+			continue
+		}
+		if err := registerBuiltinByProtocol(reg, bp, key, &a.cfg); err != nil {
+			return err
 		}
 	}
 
@@ -144,6 +165,58 @@ func llmProviderIDs(reg *llm.Registry) string {
 	return strings.Join(ids, ", ")
 }
 
+// registerBuiltinByProtocol wires one directory provider into the registry
+// through the adapter that speaks its protocol (M11-pi-ai 四协议, user 2026-09):
+// openai-completions → the openai adapter (deepseek-compatible SSE),
+// anthropic-messages → the anthropic adapter (its Config.ID carries the route),
+// google-generative-ai → the google adapter, openai-responses → the
+// openairesponses adapter. SupportsImages / image budget come from the global
+// multimodal policy (shared by every provider, dispatch-m8-3).
+func registerBuiltinByProtocol(reg *llm.Registry, bp builtinProvider, key string, cfg *config.Config) error {
+	images := strings.Contains(cfg.LLM.ModelInputModalities, "image")
+	maxBytes := cfg.LLM.Multimodal.MaxRequestImageBytes
+	switch bp.protocol {
+	case protocolCompletions:
+		return reg.Register(openai.New(openai.Config{
+			ID:                   bp.id,
+			APIKey:               key,
+			BaseURL:              bp.baseURL,
+			Model:                bp.model,
+			SupportsImages:       images,
+			MaxRequestImageBytes: maxBytes,
+		}))
+	case protocolMessages:
+		return reg.Register(anthropic.New(anthropic.Config{
+			ID:                   bp.id,
+			APIKey:               key,
+			BaseURL:              bp.baseURL,
+			Model:                bp.model,
+			SupportsImages:       images,
+			MaxRequestImageBytes: maxBytes,
+		}))
+	case protocolGemini:
+		return reg.Register(google.New(google.Config{
+			ID:                   bp.id,
+			APIKey:               key,
+			BaseURL:              bp.baseURL,
+			Model:                bp.model,
+			SupportsImages:       images,
+			MaxRequestImageBytes: maxBytes,
+		}))
+	case protocolResponses:
+		return reg.Register(openairesponses.New(openairesponses.Config{
+			ID:                   bp.id,
+			APIKey:               key,
+			BaseURL:              bp.baseURL,
+			Model:                bp.model,
+			SupportsImages:       images,
+			MaxRequestImageBytes: maxBytes,
+		}))
+	default:
+		return fmt.Errorf("pa: provider %q: unknown protocol %q", bp.id, bp.protocol)
+	}
+}
+
 // customProviderProfile is the persisted M11 custom-provider declaration
 // (settings row llm.custom.<route> = JSON). A custom provider is an
 // OpenAI-compatible endpoint: route id, display name, base URL and default
@@ -157,21 +230,14 @@ type customProviderProfile struct {
 }
 
 // llmKeyEnv returns the environment variable that carries provider id's API
-// key. Built-ins map to their canonical credential variable; a custom provider
-// id derives one by upper-casing the route (my-llm → MY_LLM_API_KEY). This is
-// the env-only default (纪律 6); a key configured through the Model settings
-// page (llm.key.<id>, M11) takes precedence over it (配置后以配置的为准).
+// key. Built-ins map to their canonical credential variable from the directory
+// (providerEnv — DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, HF_TOKEN,
+// KIMI_API_KEY, AI_GATEWAY_API_KEY, ...); a custom provider id derives one by
+// upper-casing the route (my-llm → MY_LLM_API_KEY). This is the env-only
+// default (纪律 6); a key configured through the Model settings page
+// (llm.key.<id>, M11) takes precedence over it (配置后以配置的为准).
 func llmKeyEnv(id string) string {
-	switch id {
-	case "deepseek":
-		return "DEEPSEEK_API_KEY"
-	case "openai":
-		return "OPENAI_API_KEY"
-	case "anthropic":
-		return "ANTHROPIC_API_KEY"
-	default:
-		return strings.ToUpper(strings.ReplaceAll(id, "-", "_")) + "_API_KEY"
-	}
+	return providerEnv(id)
 }
 
 // providerKey returns provider id's effective API key: a key configured through
@@ -190,16 +256,7 @@ func (a *app) providerKey(id string) string {
 // llmCredentialEnv returns the environment variable that carries provider id's
 // API key (env-only, 纪律 6).
 func llmCredentialEnv(id string) string {
-	switch id {
-	case "deepseek":
-		return "DEEPSEEK_API_KEY"
-	case "openai":
-		return "OPENAI_API_KEY"
-	case "anthropic":
-		return "ANTHROPIC_API_KEY"
-	default:
-		return llmKeyEnv(id)
-	}
+	return providerEnv(id)
 }
 
 // llmStatus prints the /llm-status report (dispatch-m8-2 §6, 照 /kb-status
@@ -277,15 +334,56 @@ func llmProviderBaseURL(cfg config.Config, id string) string {
 
 // modelCandidates returns the suggested model names for provider id (P5.1 live
 // model picker). These are honest suggestions — the picker also allows a free
-// model string. Candidates mirror the M8-1/M8-2/M8-2b defaults.
+// model string. Candidates mirror the M8-1/M8-2/M8-2b defaults plus the current
+// mainstream models from the pi-ai catalogs (M11-pi-ai).
 func modelCandidates(id string) []string {
 	switch id {
 	case "deepseek":
 		return []string{"deepseek-chat", "deepseek-reasoner"}
 	case "openai":
 		return []string{"gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"}
+	case "openrouter":
+		return []string{"openai/gpt-4o-mini", "openai/gpt-4o", "anthropic/claude-sonnet-4-5", "deepseek/deepseek-chat"}
+	case "together":
+		return []string{"meta-llama/Llama-3.3-70B-Instruct-Turbo", "meta-llama/Llama-3.1-8B-Instruct-Turbo", "Qwen/Qwen2.5-72B-Instruct-Turbo"}
+	case "groq":
+		return []string{"llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"}
+	case "mistral":
+		return []string{"mistral-large-latest", "mistral-small-latest", "open-mistral-nemo"}
+	case "nvidia":
+		return []string{"meta/llama-3.3-70b-instruct", "meta/llama-3.1-8b-instruct", "deepseek-ai/deepseek-r1"}
+	case "cerebras":
+		return []string{"llama-3.3-70b", "llama-3.1-8b", "llama-3.1-70b"}
+	case "baseten":
+		return nil // deployment platform: model is fully user-defined
+	case "huggingface":
+		return []string{"meta-llama/Llama-3.3-70B-Instruct", "mistralai/Mistral-7B-Instruct-v0.3"}
+	case "zai":
+		return []string{"glm-z1-32b-coding", "glm-4.5-air"}
+	case "zai-coding-cn":
+		return []string{"glm-z1-32b-coding", "glm-4.5-air"}
+	case "moonshotai", "moonshotai-cn":
+		return []string{"kimi-k2", "kimi-latest", "moonshot-v1-8k"}
+	case "qwen-token-plan", "qwen-token-plan-cn":
+		return []string{"qwen3-coder-plus", "qwen3-coder", "qwen-max-latest"}
+	case "xiaomi":
+		return []string{"MiMo-7B-RL", "MiMo-7B"}
+	case "ant-ling":
+		return []string{"antling-3.5", "antling-4.5"}
+	case "fireworks":
+		return []string{"accounts/fireworks/models/llama-v3p3-70b-instruct", "accounts/fireworks/models/qwen3-coder-480b-a35b-instruct"}
 	case "anthropic":
 		return []string{"claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"}
+	case "minimax", "minimax-cn":
+		return []string{"MiniMax-M2", "MiniMax-Text-01"}
+	case "kimi-coding":
+		return []string{"kimi-k2"}
+	case "vercel-ai-gateway":
+		return []string{"anthropic/claude-sonnet-4-5", "openai/gpt-4o", "anthropic/claude-opus-4-1"}
+	case "google":
+		return []string{"gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"}
+	case "xai":
+		return []string{"grok-4", "grok-4-mini", "grok-3"}
 	}
 	return nil
 }

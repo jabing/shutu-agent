@@ -61,6 +61,11 @@ var errRedirectDetected = errors.New("anthropic: redirect not followed")
 // Config configures the Anthropic provider. APIKey must come from the
 // environment (ANTHROPIC_API_KEY only, 纪律 6).
 type Config struct {
+	// ID is the provider's registry id; empty defaults to "anthropic". A
+	// non-empty ID lets the composition root register arbitrary Anthropic
+	// Messages-compatible endpoints (M11-pi-ai: minimax / minimax-cn /
+	// kimi-coding / vercel-ai-gateway) under their own route.
+	ID      string
 	BaseURL string // default https://api.anthropic.com/v1 ("/messages" appended)
 	APIKey  string // ANTHROPIC_API_KEY value; empty means absent
 	Model   string // default claude-sonnet-4-5
@@ -87,6 +92,7 @@ type Config struct {
 // anthropicProvider is the llm.Provider implementing the Anthropic Messages
 // API (dispatch-m8-2b §2.3).
 type anthropicProvider struct {
+	id        string
 	baseURL   string
 	apiKey    string
 	model     string
@@ -100,6 +106,9 @@ type anthropicProvider struct {
 // New returns an anthropicProvider with defaults applied (base URL, model,
 // max_tokens).
 func New(cfg Config) *anthropicProvider {
+	if cfg.ID == "" {
+		cfg.ID = providerID
+	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = defaultBaseURL
 	}
@@ -116,6 +125,7 @@ func New(cfg Config) *anthropicProvider {
 		cfg.MaxRequestImageBytes = defaultMaxRequestImageBytes
 	}
 	return &anthropicProvider{
+		id:                   cfg.ID,
 		baseURL:              strings.TrimRight(cfg.BaseURL, "/"),
 		apiKey:               cfg.APIKey,
 		model:                cfg.Model,
@@ -126,8 +136,9 @@ func New(cfg Config) *anthropicProvider {
 	}
 }
 
-// ID returns the stable provider id "anthropic" (dispatch-m8-2b §2.3).
-func (p *anthropicProvider) ID() string { return providerID }
+// ID returns the stable provider id ("anthropic" for the built-in adapter, or
+// the custom route configured via Config.ID).
+func (p *anthropicProvider) ID() string { return p.id }
 
 // Available reports whether the provider can be used: a cheap local check that
 // never performs a network call — apiKey present and base URL parseable (same

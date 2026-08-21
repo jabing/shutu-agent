@@ -1630,7 +1630,10 @@ function renderModel(c) {
   // configured-first (dsh sorts usable providers up), then registered; the
   // active one keeps its place among the configured rows.
   const sorted = providers.sort((a, b) => (Number(b.configured) - Number(a.configured)) || (Number(b.registered) - Number(a.registered)));
-  const envName = (id) => PROVIDER_ENV[id] || (id.toUpperCase().replace(/-/g, "_") + "_API_KEY");
+  // Canonical credential env var comes from the backend directory (M11-pi-ai:
+  // HF_TOKEN, KIMI_API_KEY, AI_GATEWAY_API_KEY, ...); fall back to the derived
+  // <UPPER_ROUTE>_API_KEY for custom providers.
+  const envName = (p) => p.env_var || PROVIDER_ENV[p.id] || (p.id.toUpperCase().replace(/-/g, "_") + "_API_KEY");
   // Dormant built-in providers = known but not yet registered (no key): these
   // are the dsh "addable" providers offered by the 增加提供方 add card.
   const dormant = sorted.filter((p) => !p.custom && !p.registered);
@@ -1652,8 +1655,8 @@ function renderModel(c) {
       </div>
       <div class="m-field">
         <span class="m-fieldlabel">API Key</span>
-        <input id="m-provider-key" class="m-input" type="password" autocomplete="off" placeholder="留空使用环境变量 ${esc(envName(p.id))}" value="">
-        <span class="m-fieldhint">Key 默认读取环境变量 ${esc(envName(p.id))}；填入后以配置值为准（留空并保存即清除自定义 Key，回到环境变量）。</span>
+        <input id="m-provider-key" class="m-input" type="password" autocomplete="off" placeholder="留空使用环境变量 ${esc(envName(p))}" value="">
+        <span class="m-fieldhint">Key 默认读取环境变量 ${esc(envName(p))}；填入后以配置值为准（留空并保存即清除自定义 Key，回到环境变量）。</span>
       </div>
       <details class="m-customized">
         <summary class="m-customizedsummary">自定义设置</summary>
@@ -1723,7 +1726,7 @@ function renderModel(c) {
           ? `<div class="m-field">
               <span class="m-fieldlabel">提供方</span>
               <select id="m-add-provider-select" class="m-input m-select">
-                ${dormant.map((p) => `<option value="${esc(p.id)}" ${p.id === (target && target.id) ? "selected" : ""}>${esc(PROVIDER_DISPLAY[p.id] || p.name || p.id)}</option>`).join("")}
+                ${dormant.map((p) => `<option value="${esc(p.id)}" ${p.id === (target && target.id) ? "selected" : ""}>${esc(PROVIDER_DISPLAY[p.id] || p.name || p.id)}${p.protocol_label ? "（" + esc(p.protocol_label) + "）" : ""}</option>`).join("")}
               </select>
             </div>
             ${target ? editorHTML(target, "add") : ""}`

@@ -288,39 +288,38 @@ func (a *app) webProviders() []map[string]any {
 	if reg == nil {
 		return nil
 	}
-	out := make([]map[string]any, 0, 8)
-	// Built-in provider definitions (deepseek always, openai/anthropic even when
-	// unregistered) so the settings page can add their key.
-	type builtin struct {
-		id       string
-		custom   bool
-		model    string
-		baseURL  string
-		env      string
-		envKnown bool
-	}
-	builtins := []builtin{
-		{id: "deepseek", model: llmProviderModel(a.cfg, "deepseek"), baseURL: llmProviderBaseURL(a.cfg, "deepseek"), env: "DEEPSEEK_API_KEY"},
-		{id: "openai", model: llmProviderModel(a.cfg, "openai"), baseURL: llmProviderBaseURL(a.cfg, "openai"), env: "OPENAI_API_KEY"},
-		{id: "anthropic", model: llmProviderModel(a.cfg, "anthropic"), baseURL: llmProviderBaseURL(a.cfg, "anthropic"), env: "ANTHROPIC_API_KEY"},
-	}
-	for _, b := range builtins {
+	out := make([]map[string]any, 0, len(builtinProviders)+len(a.customProviders))
+	// Built-in provider directory (M11-pi-ai): every provider pi-ai can
+	// authenticate with an API key is listed, registered or not, so the settings
+	// page can add their key. deepseek/openai/anthropic keep their
+	// config-driven model/base_url (config.yaml llm.* sections); the rest carry
+	// the directory default.
+	for _, bp := range builtinProviders {
+		model := bp.model
+		baseURL := bp.baseURL
+		if bp.id == "deepseek" || bp.id == "openai" || bp.id == "anthropic" {
+			model = llmProviderModel(a.cfg, bp.id)
+			baseURL = llmProviderBaseURL(a.cfg, bp.id)
+		}
 		registered := false
 		available := false
-		if p, err := reg.Get(b.id); err == nil {
+		if p, err := reg.Get(bp.id); err == nil {
 			registered = true
 			available = p.Available()
 		}
 		out = append(out, map[string]any{
-			"id":         b.id,
+			"id":         bp.id,
+			"name":       bp.name,
+			"protocol":   string(bp.protocol),
+			"protocol_label": protocolLabel(bp.protocol),
 			"custom":     false,
 			"registered": registered,
 			"available":  available,
-			"configured": a.providerKey(b.id) != "",
-			"model":      b.model,
-			"base_url":   b.baseURL,
-			"candidates": modelCandidates(b.id),
-			"env_var":    b.env,
+			"configured": a.providerKey(bp.id) != "",
+			"model":      model,
+			"base_url":   baseURL,
+			"candidates": modelCandidates(bp.id),
+			"env_var":    providerEnv(bp.id),
 		})
 	}
 	// M11 custom providers from settings.
@@ -404,7 +403,7 @@ func (a *app) webSaveCustomProvider(ctx context.Context, id, name, baseURL, mode
 	if id == "" || name == "" || baseURL == "" || model == "" {
 		return errors.New("id, name, base_url and model are required")
 	}
-	if id == "deepseek" || id == "openai" || id == "anthropic" {
+	if _, ok := builtinProviderByID(id); ok {
 		return errors.New("custom provider id conflicts with a built-in provider")
 	}
 	if !validProviderRoute(id) {
@@ -456,7 +455,7 @@ func (a *app) webDeleteCustomProvider(ctx context.Context, id string) error {
 		return fmt.Errorf("llm not registered")
 	}
 	id = strings.TrimSpace(id)
-	if id == "deepseek" || id == "openai" || id == "anthropic" {
+	if _, ok := builtinProviderByID(id); ok {
 		return errors.New("built-in providers cannot be removed")
 	}
 	found := false

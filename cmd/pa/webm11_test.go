@@ -167,11 +167,13 @@ func TestWebCustomProviderValidation(t *testing.T) {
 	}
 }
 
-// TestWebProvidersListsDormantBuiltins verifies M11 webProviders lists openai /
-// anthropic even when their env key is absent (dormant, so 增加提供方 can add them),
-// and the active deepseek stays configured.
+// TestWebProvidersListsDormantBuiltins verifies M11 webProviders lists every
+// directory built-in even when its env key is absent (dormant, so 增加提供方 can
+// add them), the active deepseek stays configured, each entry carries its
+// protocol and canonical env var, and a provider becomes registered as soon as
+// its key is configured (by protocol).
 func TestWebProvidersListsDormantBuiltins(t *testing.T) {
-	t.Setenv("DEEPSEEK_API_KEY", "env-key") // openai/anthropic keys absent
+	t.Setenv("DEEPSEEK_API_KEY", "env-key") // every other key absent
 	a, _ := m11App(t)
 	providers := a.webConfig()["providers"].([]map[string]any)
 
@@ -179,16 +181,120 @@ func TestWebProvidersListsDormantBuiltins(t *testing.T) {
 	for _, p := range providers {
 		seen[p["id"].(string)] = p
 	}
-	for _, id := range []string{"deepseek", "openai", "anthropic"} {
-		if _, ok := seen[id]; !ok {
-			t.Errorf("built-in provider %q missing from webProviders", id)
+	// The full directory is listed, dormant (not registered/configured) except
+	// deepseek, and every entry carries its protocol + env var.
+	if len(seen) != len(builtinProviders) {
+		t.Errorf("webProviders lists %d providers, want %d (full directory)", len(seen), len(builtinProviders))
+	}
+	for _, bp := range builtinProviders {
+		p, ok := seen[bp.id]
+		if !ok {
+			t.Errorf("built-in provider %q missing from webProviders", bp.id)
+			continue
+		}
+		if p["protocol"] != string(bp.protocol) {
+			t.Errorf("%s protocol = %v, want %s", bp.id, p["protocol"], bp.protocol)
+		}
+		if p["env_var"] != bp.env {
+			t.Errorf("%s env_var = %v, want %s", bp.id, p["env_var"], bp.env)
 		}
 	}
 	if seen["deepseek"]["registered"] != true || seen["deepseek"]["configured"] != true {
 		t.Fatalf("deepseek should be registered+configured, got %#v", seen["deepseek"])
 	}
-	if seen["openai"]["registered"] != false || seen["openai"]["configured"] != false {
-		t.Fatalf("openai should be dormant (not registered, not configured), got %#v", seen["openai"])
+	for _, id := range []string{"openai", "anthropic", "google", "xai", "groq"} {
+		if seen[id]["registered"] != false || seen[id]["configured"] != false {
+			t.Fatalf("%s should be dormant (not registered, not configured), got %#v", id, seen[id])
+		}
+	}
+	// openai/anthropic stay dormant: their keys were never set.
+	if seen["openai"]["model"] != "gpt-4o" || seen["openai"]["base_url"] != "https://api.openai.com/v1" {
+		t.Fatalf("openai should keep its config-driven model/base_url, got %#v", seen["openai"])
+	}
+}
+
+// TestWebProvidersRegisterByProtocol verifies a directory provider becomes
+// registered through the adapter that speaks its protocol once a key is
+// configured (M11-pi-ai 四协议): a completions provider (groq), a messages
+// provider (minimax), the Gemini provider (google) and a Responses provider
+// (xai) all register; the env-var form and the settings-override form both work.
+func TestWebProvidersRegisterByProtocol(t *testing.T) {
+	a, st := m11App(t)
+
+	// Env-var key only → provider registers, stays configured.
+	t.Setenv("GROQ_API_KEY", "groq-key")
+	if err := a.registerLLM(); err != nil {
+		t.Fatalf("registerLLM after GROQ_API_KEY: %v", err)
+	}
+	if p, err := a.llmReg.Get("groq"); err != nil {
+		t.Fatalf("groq not registered: %v", err)
+	} else if !p.Available() {
+		t.Fatal("groq should be available with its env key")
+	}
+	if op := findProvider(a.webConfig()["providers"].([]map[string]any), "groq"); op == nil || op["registered"] != true || op["configured"] != true {
+		t.Fatalf("groq should be registered+configured, got %#v", op)
+	}
+
+	// Settings override key (llm.key.<id>) for a messages-protocol provider.
+	if err := a.webSaveProvider(context.Background(), "minimax", "minimax-ui-key"); err != nil {
+		t.Fatalf("webSaveProvider(minimax): %v", err)
+	}
+	if p, err := a.llmReg.Get("minimax"); err != nil {
+		t.Fatalf("minimax not registered: %v", err)
+	} else if p.ID() != "minimax" || !p.Available() {
+		t.Fatalf("minimax registered under wrong id or unavailable: %v", p.ID())
+	}
+	if got, _ := st.GetSettings(context.Background()); got["llm.key.minimax"] != "minimax-ui-key" {
+		t.Fatalf("llm.key.minimax = %q, want minimax-ui-key", got["llm.key.minimax"])
+	}
+
+	// Gemini protocol provider registers via its env var.
+	t.Setenv("GEMINI_API_KEY", "gemini-key")
+	if err := a.registerLLM(); err != nil {
+		t.Fatalf("registerLLM after GEMINI_API_KEY: %v", err)
+	}
+	if p, err := a.llmReg.Get("google"); err != nil {
+		t.Fatalf("google not registered: %v", err)
+	} else if !p.Available() {
+		t.Fatal("google should be available with its env key")
+	}
+
+	// Responses protocol provider registers via its env var.
+	t.Setenv("XAI_API_KEY", "xai-key")
+	if err := a.registerLLM(); err != nil {
+		t.Fatalf("registerLLM after XAI_API_KEY: %v", err)
+	}
+	if p, err := a.llmReg.Get("xai"); err != nil {
+		t.Fatalf("xai not registered: %v", err)
+	} else if !p.Available() {
+		t.Fatal("xai should be available with its env key")
+	}
+
+	// Removing the override returns the provider to dormant.
+	if err := a.webSaveProvider(context.Background(), "minimax", ""); err != nil {
+		t.Fatalf("webSaveProvider(minimax clear): %v", err)
+	}
+	if p, err := a.llmReg.Get("minimax"); err == nil || p != nil {
+		t.Fatalf("minimax should be back to dormant after clearing, got %v", err)
+	}
+}
+
+// TestProviderEnvSpecialCases verifies the directory's canonical env vars are
+// honored (HF_TOKEN, KIMI_API_KEY, AI_GATEWAY_API_KEY — not the derived
+// <UPPER>_API_KEY form).
+func TestProviderEnvSpecialCases(t *testing.T) {
+	cases := map[string]string{
+		"huggingface":      "HF_TOKEN",
+		"kimi-coding":      "KIMI_API_KEY",
+		"vercel-ai-gateway": "AI_GATEWAY_API_KEY",
+		"deepseek":         "DEEPSEEK_API_KEY",
+		"groq":             "GROQ_API_KEY",
+		"custom-route":     "CUSTOM_ROUTE_API_KEY",
+	}
+	for id, want := range cases {
+		if got := providerEnv(id); got != want {
+			t.Errorf("providerEnv(%s) = %q, want %q", id, got, want)
+		}
 	}
 }
 
