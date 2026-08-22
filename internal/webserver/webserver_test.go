@@ -418,6 +418,75 @@ func TestSessionNewResume(t *testing.T) {
 	}
 }
 
+// TestSessionConfigAPI exercises the per-session override endpoints (Phase 2):
+// POST /api/sessions stores agent_preset/model/permission; GET and PATCH
+// {id}/config read and rewrite model/permission (mode stays locked). Invalid
+// mode/permission are rejected; an unknown id answers 404.
+func TestSessionConfigAPI(t *testing.T) {
+	srv, st := newTestServer(t, "tok")
+	srv.SetSessionManager(func(ctx context.Context, action, id string) (string, error) {
+		if err := st.CreateSession(ctx, "s-cfg", time.Now().UTC()); err != nil {
+			return "", err
+		}
+		return "s-cfg", nil
+	})
+
+	// Create with per-session overrides.
+	rec := doReqBody(t, srv.Handler(), "POST", "/api/sessions", "tok",
+		`{"agent_preset":"minimal","model":"deepseek-chat","permission":"readonly"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create with config → %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["agent_preset"] != "minimal" || out["model"] != "deepseek-chat" || out["permission"] != "readonly" {
+		t.Fatalf("create body = %v, want minimal/deepseek-chat/readonly", out)
+	}
+
+	// GET config returns the stored overrides.
+	rec = doReq(t, srv.Handler(), "GET", "/api/sessions/s-cfg/config", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get config → %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["agent_preset"] != "minimal" || out["model"] != "deepseek-chat" || out["permission"] != "readonly" {
+		t.Fatalf("get config body = %v, want minimal/deepseek-chat/readonly", out)
+	}
+
+	// PATCH rewrites model + permission; mode stays locked.
+	rec = doReqBody(t, srv.Handler(), "PATCH", "/api/sessions/s-cfg/config", "tok",
+		`{"model":"deepseek-reasoner","permission":"full"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch config → %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["agent_preset"] != "minimal" || out["model"] != "deepseek-reasoner" || out["permission"] != "full" {
+		t.Fatalf("patch config body = %v, want minimal/deepseek-reasoner/full", out)
+	}
+
+	// Unknown id → 404.
+	if rec := doReq(t, srv.Handler(), "GET", "/api/sessions/s-nope/config", "tok"); rec.Code != http.StatusNotFound {
+		t.Fatalf("get config missing → %d, want 404", rec.Code)
+	}
+	if rec := doReqBody(t, srv.Handler(), "PATCH", "/api/sessions/s-nope/config", "tok", `{}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("patch config missing → %d, want 404", rec.Code)
+	}
+
+	// Invalid mode / permission → 400.
+	if rec := doReqBody(t, srv.Handler(), "POST", "/api/sessions", "tok", `{"agent_preset":"nope"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("create invalid mode → %d, want 400", rec.Code)
+	}
+	if rec := doReqBody(t, srv.Handler(), "PATCH", "/api/sessions/s-cfg/config", "tok", `{"permission":"nope"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("patch invalid permission → %d, want 400", rec.Code)
+	}
+}
+
 // TestEventsStreamSSE verifies the SSE stream: with a seeded session and an
 // injected fake event source the response is text/event-stream and the body
 // carries the snapshot frames plus a synchronously pushed live frame and the

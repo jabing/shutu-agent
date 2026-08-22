@@ -272,6 +272,8 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	// delete (DELETE). PATCH body is {"title": "..."}; an empty title clears the
 	// override back to first-user-message inference.
 	mux.Handle("PATCH /api/sessions/{id}/title", s.requireAuth(http.HandlerFunc(s.handleSessionTitle)))
+	mux.Handle("GET /api/sessions/{id}/config", s.requireAuth(http.HandlerFunc(s.handleSessionConfigGet)))
+	mux.Handle("PATCH /api/sessions/{id}/config", s.requireAuth(http.HandlerFunc(s.handleSessionConfigPatch)))
 	mux.Handle("DELETE /api/sessions/{id}", s.requireAuth(http.HandlerFunc(s.handleSessionDelete)))
 	// M10 P5 (ADR D-WEB2-I): image attachments — multipart upload (POST) and
 	// byte echo (GET). Both stay behind the same bearer middleware.
@@ -937,7 +939,9 @@ func collectToolArgsInto(args map[string]string, ev session.Event) {
 // handleSessionCreate implements POST /api/sessions (M10 W1, ADR D-WEB2-C):
 // it asks the injected session manager to start a fresh session and returns
 // its id. An unwired manager answers 501. P6 adds an optional {"workspace_id"}
-// so a session can be created directly into a sidebar group.
+// so a session can be created directly into a sidebar group. Phase 2 adds the
+// optional per-session {"agent_preset","model","permission"} overrides, which
+// are stored on the session (mode is locked from then on).
 func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	if s.sessFn == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "session manager not wired"})
@@ -945,8 +949,19 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		WorkspaceID string `json:"workspace_id"`
+		AgentPreset string `json:"agent_preset"`
+		Model       string `json:"model"`
+		Permission  string `json:"permission"`
 	}
 	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body) // optional
+	if body.AgentPreset != "" && !validMode(body.AgentPreset) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unknown agent_preset: " + body.AgentPreset})
+		return
+	}
+	if body.Permission != "" && !validPermission(body.Permission) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unknown permission: " + body.Permission})
+		return
+	}
 	id, err := s.sessFn(r.Context(), "new", "")
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -958,8 +973,91 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "workspace_id": body.WorkspaceID})
+	cfg := store.SessionConfig{AgentPreset: body.AgentPreset, Model: body.Model, Permission: body.Permission}
+	if cfg.AgentPreset != "" || cfg.Model != "" || cfg.Permission != "" {
+		if scs, ok := s.store.(store.SessionConfigStore); ok {
+			if err := scs.SetSessionConfig(r.Context(), id, cfg); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				return
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": id, "workspace_id": body.WorkspaceID,
+		"agent_preset": body.AgentPreset, "model": body.Model, "permission": body.Permission,
+	})
 }
+
+// handleSessionConfigGet implements GET /api/sessions/{id}/config: the raw
+// per-session overrides (empty values mean "fall back to the global config").
+func (s *Server) handleSessionConfigGet(w http.ResponseWriter, r *http.Request) {
+	scs, ok := s.store.(store.SessionConfigStore)
+	if !ok {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "per-session config not supported"})
+		return
+	}
+	cfg, err := scs.GetSessionConfig(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, configView(cfg))
+}
+
+// handleSessionConfigPatch implements PATCH /api/sessions/{id}/config: it
+// rewrites model and permission only (the mode is locked at creation). It
+// returns the updated overrides.
+func (s *Server) handleSessionConfigPatch(w http.ResponseWriter, r *http.Request) {
+	scs, ok := s.store.(store.SessionConfigStore)
+	if !ok {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "per-session config not supported"})
+		return
+	}
+	var body struct {
+		Model      string `json:"model"`
+		Permission string `json:"permission"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid body"})
+		return
+	}
+	if body.Permission != "" && !validPermission(body.Permission) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unknown permission: " + body.Permission})
+		return
+	}
+	if err := scs.UpdateSessionConfig(r.Context(), r.PathValue("id"), body.Model, body.Permission); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	cfg, err := scs.GetSessionConfig(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, configView(cfg))
+}
+
+// configView is the JSON shape of per-session overrides.
+func configView(cfg store.SessionConfig) map[string]any {
+	return map[string]any{
+		"agent_preset": cfg.AgentPreset,
+		"model":        cfg.Model,
+		"permission":   cfg.Permission,
+	}
+}
+
+// validMode reports whether m is a known mode preset id.
+func validMode(m string) bool { return m == "minimal" || m == "standard" || m == "code" }
+// validPermission reports whether p is a known permission tier id.
+func validPermission(p string) bool { return p == "readonly" || p == "standard" || p == "full" }
 
 // handleSessionResume implements POST /api/sessions/{id}/resume: it asks the
 // injected session manager to resume the session and returns its id.

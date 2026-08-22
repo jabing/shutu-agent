@@ -544,3 +544,80 @@ func TestMarkSessionViewedAndLastViewedAt(t *testing.T) {
 		t.Fatalf("MarkSessionViewed(missing) err = %v, want ErrNotFound", err)
 	}
 }
+
+// TestSessionConfig verifies the per-session override read/write surface
+// (Phase 2 按会话切换): default zeros, SetSessionConfig stores the triple,
+// UpdateSessionConfig rewrites only model/permission (mode stays locked), and a
+// missing id returns ErrNotFound.
+func TestSessionConfig(t *testing.T) {
+	ctx := context.Background()
+	st := openSQLite(t)
+	if err := st.CreateSession(ctx, "s-cfg", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default: all empty (fall back to the globals).
+	got, err := st.GetSessionConfig(ctx, "s-cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (SessionConfig{}) {
+		t.Fatalf("default session config = %+v, want zero", got)
+	}
+
+	// Set the override triple.
+	if err := st.SetSessionConfig(ctx, "s-cfg", SessionConfig{AgentPreset: "minimal", Model: "deepseek-chat", Permission: "readonly"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetSessionConfig(ctx, "s-cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AgentPreset != "minimal" || got.Model != "deepseek-chat" || got.Permission != "readonly" {
+		t.Fatalf("session config = %+v, want minimal/deepseek-chat/readonly", got)
+	}
+
+	// UpdateSessionConfig rewrites model+permission only; the mode is untouched.
+	if err := st.UpdateSessionConfig(ctx, "s-cfg", "deepseek-reasoner", "full"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetSessionConfig(ctx, "s-cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AgentPreset != "minimal" || got.Model != "deepseek-reasoner" || got.Permission != "full" {
+		t.Fatalf("session config after update = %+v, want minimal/deepseek-reasoner/full", got)
+	}
+
+	// Clearing model/permission returns to global fallback, mode still locked.
+	if err := st.UpdateSessionConfig(ctx, "s-cfg", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetSessionConfig(ctx, "s-cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Model != "" || got.Permission != "" || got.AgentPreset != "minimal" {
+		t.Fatalf("session config after clear = %+v, want ''/''/minimal", got)
+	}
+
+	// Empty mode clears the lock too (SetSessionConfig with empty triple).
+	if err := st.SetSessionConfig(ctx, "s-cfg", SessionConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetSessionConfig(ctx, "s-cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (SessionConfig{}) {
+		t.Fatalf("session config after full clear = %+v, want zero", got)
+	}
+
+	// Unknown id → ErrNotFound.
+	if _, err := st.GetSessionConfig(ctx, "s-missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetSessionConfig(missing) err = %v, want ErrNotFound", err)
+	}
+	if err := st.UpdateSessionConfig(ctx, "s-missing", "m", "full"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("UpdateSessionConfig(missing) err = %v, want ErrNotFound", err)
+	}
+}

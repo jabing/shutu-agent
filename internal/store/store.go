@@ -47,6 +47,33 @@ type SessionMeta struct {
 	LastViewedAt time.Time
 }
 
+// SessionConfig is the per-session override for the mode preset, LLM model and
+// permission tier (Phase 2: 按会话切换). Empty fields fall back to the global
+// config. Mode is locked at session creation (agent_preset); model and
+// permission stay editable per session.
+type SessionConfig struct {
+	AgentPreset string // "" | minimal | standard | code (locked at creation)
+	Model       string // "" → fall back to the global model
+	Permission  string // "" | readonly | standard | full
+}
+
+// SessionConfigStore is the per-session-config read/write surface. It is NOT on
+// the Store interface (so existing stubs and callers stay untouched); consumers
+// that need it (the web portal's per-session endpoints, the agent loop) assert
+// this interface against their Store value. Databases created before these
+// columns exist return empty configs (all fields fall back to the globals).
+type SessionConfigStore interface {
+	// GetSessionConfig reads a session's overrides; a missing or legacy
+	// session returns zero values (ErrNotFound only when the id has no row).
+	GetSessionConfig(ctx context.Context, sessionID string) (SessionConfig, error)
+	// SetSessionConfig writes the full override triple (used at creation and
+	// by the loop's mode lock). ErrNotFound when the id has no row.
+	SetSessionConfig(ctx context.Context, sessionID string, cfg SessionConfig) error
+	// UpdateSessionConfig rewrites only model and permission (mode stays
+	// locked). ErrNotFound when the id has no row.
+	UpdateSessionConfig(ctx context.Context, sessionID, model, permission string) error
+}
+
 // SearchHit is one session that matched a body-text query, with the first
 // matching line snippet (P6.3 remote search, dsh searchAcrossSessions).
 type SearchHit struct {

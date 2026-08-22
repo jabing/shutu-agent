@@ -160,6 +160,7 @@ func main() {
 		store:  st,
 		reg:    reg,
 		prompt: promptBuilder,
+		basePolicy: pol,
 		// M10 W1: the real-time event hub (ADR D-WEB2-B) exists for the whole
 		// process lifetime so attachSink can broadcast every persisted event to
 		// the web's SSE subscribers whenever the webserver is enabled.
@@ -490,6 +491,13 @@ type app struct {
 	store  store.Store
 	reg    *tools.Registry
 	prompt *prompt.Builder
+	// basePolicy is the startup Execute policy (global mode + permission
+	// preset). Per-session permission tiers swap a derived policy around a turn
+	// (turnMu serializes turns) and restore basePolicy afterwards.
+	basePolicy tools.Policy
+	// promptByMode caches a per-mode system-prompt builder (Phase 2: 按会话
+	// mode 锁定). Populated lazily on first use for a non-global session mode.
+	promptByMode map[string]*prompt.Builder
 	llm    llm.LLM
 	// llmMu guards the llm/llmReg pointer swap during the live model switch
 	// (POST /api/config/model, P5.1): the switch holds turnMu (D5 serial, so no
@@ -713,6 +721,7 @@ func (a *app) newLoop() *loop.Loop {
 	return a.buildLoop(
 		func(delta string) { fmt.Print(delta) },
 		func(err error) { fmt.Fprintln(os.Stderr, "\n[stream error]", err) },
+		a.cfg.Model, a.prompt,
 	)
 }
 
@@ -721,18 +730,39 @@ func (a *app) newLoop() *loop.Loop {
 // the SSE event flow (each chunk is already persisted by the loop), so nothing
 // may be printed to the REPL's stdout/stderr during a web turn.
 func (a *app) newLoopWeb() *loop.Loop {
-	return a.buildLoop(func(string) {}, func(error) {})
+	return a.buildLoop(func(string) {}, func(error) {}, a.cfg.Model, a.prompt)
+}
+
+// newLoopFor builds a Loop bound to the current session log using the resolved
+// per-session runtime (Phase 2: 按会话 model/mode). interactive selects the
+// REPL or silent stream hooks.
+func (a *app) newLoopFor(rt sessionRuntime, interactive bool) *loop.Loop {
+	if interactive {
+		return a.buildLoop(
+			func(delta string) { fmt.Print(delta) },
+			func(err error) { fmt.Fprintln(os.Stderr, "\n[stream error]", err) },
+			rt.model, rt.prompt,
+		)
+	}
+	return a.buildLoop(func(string) {}, func(error) {}, rt.model, rt.prompt)
 }
 
 // buildLoop assembles a Loop bound to the current session log. onText/onError
 // are the streaming hooks: the REPL prints them, the web path is silent.
-func (a *app) buildLoop(onText func(string), onError func(error)) *loop.Loop {
+// model/prompt override the globals when a per-session mode/model is active.
+func (a *app) buildLoop(onText func(string), onError func(error), model string, pb *prompt.Builder) *loop.Loop {
+	if model == "" {
+		model = a.cfg.Model
+	}
+	if pb == nil {
+		pb = a.prompt
+	}
 	return loop.New(loop.Config{
 		LLM:    a.currentLLM(),
 		Log:    a.log,
 		Tools:  a.reg,
-		Prompt: a.prompt,
-		Model:  a.cfg.Model,
+		Prompt: pb,
+		Model:  model,
 		Recall: a.recall,
 		// M5c-2b: the "compaction" pre-step injector (auto token-pressure
 		// compaction) is appended when compaction is enabled; it runs after the
@@ -742,6 +772,92 @@ func (a *app) buildLoop(onText func(string), onError func(error)) *loop.Loop {
 		OnText:  onText,
 		OnError: onError,
 	})
+}
+
+// sessionRuntime is the resolved per-turn runtime for one session: the
+// effective LLM model and the system-prompt builder (by mode).
+type sessionRuntime struct {
+	model  string
+	prompt *prompt.Builder
+}
+
+// applySessionRuntime resolves one session's per-turn model / mode-prompt /
+// permission tier (session override ?? global) and swaps the registry policy
+// for the session's permission tier. runTurn holds turnMu while it runs, so the
+// policy swap is serialized with the turn; the returned restore func reinstates
+// the base policy. Fail-open: any store or builder error falls back to the
+// globals.
+func (a *app) applySessionRuntime(id string) (sessionRuntime, func()) {
+	rt := sessionRuntime{model: a.cfg.Model, prompt: a.prompt}
+	perm := ""
+	if scs, ok := a.store.(store.SessionConfigStore); ok {
+		if id != "" {
+			if cfg, err := scs.GetSessionConfig(context.Background(), id); err == nil {
+				if cfg.Model != "" {
+					rt.model = cfg.Model
+				}
+				if cfg.AgentPreset != "" && cfg.AgentPreset != a.cfg.Mode {
+					rt.prompt = a.promptFor(cfg.AgentPreset)
+				}
+				perm = cfg.Permission
+			}
+		}
+	}
+	if pol, changed := a.sessionPolicy(perm); changed {
+		a.reg.SetPolicy(pol)
+		return rt, func() { a.reg.SetPolicy(a.basePolicy) }
+	}
+	return rt, func() {}
+}
+
+// sessionPolicy returns the Execute policy for a session's permission tier.
+// readonly narrows the whitelist to the read-only tools; full opens it to every
+// registered tool; standard (or empty) keeps the base policy. The second return
+// reports whether a swap is needed (false = leave the base policy in place).
+func (a *app) sessionPolicy(perm string) (tools.Policy, bool) {
+	switch perm {
+	case "readonly":
+		p := a.basePolicy
+		p.Enabled = config.ReadOnlyTools()
+		return p, true
+	case "full":
+		p := a.basePolicy
+		p.Enabled = a.allRegisteredToolNames()
+		return p, true
+	default:
+		return a.basePolicy, false
+	}
+}
+
+// allRegisteredToolNames returns the names of every tool currently registered
+// in the registry (the "full" permission tier's whitelist).
+func (a *app) allRegisteredToolNames() []string {
+	specs := a.reg.Specs()
+	names := make([]string, 0, len(specs))
+	for _, s := range specs {
+		names = append(names, s.Name)
+	}
+	return names
+}
+
+// promptFor returns the system-prompt builder for a non-global mode, building
+// and caching it on first use. Called under turnMu.
+func (a *app) promptFor(mode string) *prompt.Builder {
+	if mode == "" || mode == a.cfg.Mode {
+		return a.prompt
+	}
+	if a.promptByMode == nil {
+		a.promptByMode = map[string]*prompt.Builder{}
+	}
+	if b, ok := a.promptByMode[mode]; ok {
+		return b
+	}
+	if b, err := buildPrompt(mode, a.cfg.PromptsDir); err == nil {
+		b.SetTools(func() []llm.ToolSchema { return a.reg.Specs() })
+		a.promptByMode[mode] = b
+		return b
+	}
+	return a.prompt
 }
 
 // runTurn executes one turn under the global serial lock (D5: REPL and web
@@ -756,10 +872,14 @@ func (a *app) runTurn(ctx context.Context, text string, interactive bool) error 
 	// unlock, so a concurrent list read sees the fully-settled session).
 	defer a.runningSession.Store("")
 	a.runningSession.Store(a.currentID)
+	// Phase 2: resolve the session's per-turn model / mode prompt / permission
+	// tier and swap the registry policy for the duration of the turn.
+	rt, restore := a.applySessionRuntime(a.currentID)
+	defer restore()
 	if interactive {
-		return a.newLoop().Run(ctx, text)
+		return a.newLoopFor(rt, true).Run(ctx, text)
 	}
-	return a.newLoopWeb().Run(ctx, text)
+	return a.newLoopFor(rt, false).Run(ctx, text)
 }
 
 // repl drives turns from stdin, handling the session commands.

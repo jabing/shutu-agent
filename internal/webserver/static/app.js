@@ -57,6 +57,7 @@ let heroModeOpen = false;           // hero mode (agent preset) popover state
 let cmdMenuOpen = false;            // composer +(command) menu popover state
 let mode = "";                      // current mode preset: standard | code | minimal
 let permissionPreset = "";          // current permission preset: readonly | standard | full
+let sessionCfg = { model: "", permission: "" }; // active session's per-session overrides ("" → fall back global)
 let wsList = [];                    // [{id,title}] for the hero picker (from /api/workspaces)
 let toolMeta = {};                  // callId -> {name, args} captured from assistant tool_call
 let selectedTool = null;            // {callId,name,args,output,error} shown in the details panel
@@ -1336,6 +1337,7 @@ function newSession() {
   streamActive = false;
   messagesEl.querySelector(".messages-inner")?.remove();
   curSessionEl.textContent = "";
+  sessionCfg = { model: "", permission: "" };
   heroEl.classList.remove("hidden");
   // Hero composer is inert until a workspace is picked (dsh: choose-workspace
   // placeholder), unless a hero workspace was already chosen previously.
@@ -1434,12 +1436,14 @@ async function pickHeroWorkspace(wsId, label) {
 }
 async function createSessionInWorkspace(wsId) {
   try {
-    const res = await api("/api/sessions", { method: "POST", body: JSON.stringify({ workspace_id: wsId }) });
-    const body = await res.json();
-    if (!body.id) throw new Error("no id");
-    currentID = body.id;
-    localStorage.setItem(KEY_CURRENT, body.id);
-    await openSession(body.id);
+    const body = { workspace_id: wsId };
+    if (mode) body.agent_preset = mode;   // Phase 2: lock the staged mode on the new session
+    const res = await api("/api/sessions", { method: "POST", body: JSON.stringify(body) });
+    const b = await res.json();
+    if (!b.id) throw new Error("no id");
+    currentID = b.id;
+    localStorage.setItem(KEY_CURRENT, b.id);
+    await openSession(b.id);
     loadSessions();
     return true;
   } catch (e) {
@@ -1574,12 +1578,41 @@ function populateModelSelect() {
 }
 function syncPermSelect() {
   if (!permSelect) return;
-  const v = permissionPreset || localStorage.getItem("pa_permission_preset") || "standard";
+  const v = sessionCfg.permission || permissionPreset || localStorage.getItem("pa_permission_preset") || "standard";
   permSelect.value = v;
+}
+// Sync the model picker's displayed value to the active session's model override
+// ("" → the live global model), matching across providers when possible.
+function syncSessionModel() {
+  if (!modelSelect) return;
+  const eff = sessionCfg.model || config.model || "";
+  const effProvider = sessionCfg.model ? "" : (config.llm_provider || "");
+  const opts = modelOptions();
+  if (effProvider && opts.some((o) => o.val === effProvider + "\u0000" + eff)) {
+    modelSelect.value = effProvider + "\u0000" + eff;
+  } else if (eff) {
+    const mOpt = opts.find((o) => o.model === eff);
+    modelSelect.value = mOpt ? mOpt.val : "\u0000" + eff;
+  }
 }
 async function savePermissionPreset(v) {
   permissionPreset = v;
   localStorage.setItem("pa_permission_preset", v);
+  if (currentID) {
+    // Per-session tier: update the active session's override (mode is locked).
+    try {
+      const res = await api(`/api/sessions/${encodeURIComponent(currentID)}/config`, {
+        method: "PATCH", body: JSON.stringify({ model: sessionCfg.model, permission: v }),
+      });
+      if (res.status === 401) return;
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      sessionCfg.permission = v;
+    } catch (e) {
+      if (e.message !== "unauthorized") { console.error("session permission", e); toast("权限保存失败"); }
+    }
+    return;
+  }
+  // No active session: persist the global default tier (applied at next launch).
   try {
     const res = await api("/api/settings", { method: "PATCH", body: JSON.stringify({ permission_preset: v }) });
     if (res.status === 401) return;
@@ -1590,6 +1623,21 @@ async function savePermissionPreset(v) {
 }
 async function setModel(provider, model) {
   if (!provider) { modelSelect.value = (config.llm_provider || "") + "\u0000" + (config.model || ""); return; }
+  if (currentID) {
+    // Per-session model: update the active session's override.
+    try {
+      const res = await api(`/api/sessions/${encodeURIComponent(currentID)}/config`, {
+        method: "PATCH", body: JSON.stringify({ model, permission: sessionCfg.permission }),
+      });
+      if (res.status === 401) return;
+      if (!res.ok) { toast("模型切换失败"); return; }
+      sessionCfg.model = model;
+    } catch (e) {
+      if (e.message !== "unauthorized") { console.error("session model", e); toast("模型切换失败"); }
+    }
+    return;
+  }
+  // No active session: live global model switch.
   try {
     const res = await api("/api/config/model", { method: "POST", body: JSON.stringify({ provider, model }) });
     if (res.status === 401) return;
@@ -1598,6 +1646,22 @@ async function setModel(provider, model) {
   } catch (e) {
     if (e.message !== "unauthorized") { console.error("switch model", e); toast("模型切换失败"); }
   }
+}
+// Load the active session's per-session overrides (Phase 2) and bind the
+// composer permission + model pickers. An empty id (hero) resets to globals.
+async function loadSessionConfig(id) {
+  sessionCfg = { model: "", permission: "" };
+  if (!id) { syncPermSelect(); syncSessionModel(); return; }
+  try {
+    const res = await api(`/api/sessions/${encodeURIComponent(id)}/config`);
+    if (res.status === 401) return;
+    const d = await res.json();
+    sessionCfg = { model: d.model || "", permission: d.permission || "" };
+  } catch (e) {
+    if (e.message !== "unauthorized") { console.error("session config", e); sessionCfg = { model: "", permission: "" }; }
+  }
+  syncPermSelect();
+  syncSessionModel();
 }
 // Composer pref loading: the mode comes from the config view (loadConfigLabels);
 // the permission preset is a persisted setting (fallback localStorage).
@@ -1686,7 +1750,8 @@ function openSession(id) {
   // picked workspace. (dsh: session → composer active, hero → choose-workspace.)
   setComposerDisabled(!id);
   updatePlaceholder();
-  if (!id) return;
+  if (!id) { sessionCfg = { model: "", permission: "" }; return; }
+  loadSessionConfig(id);
   return Promise.all([loadEvents(id), connectStream(id)]);
 }
 
