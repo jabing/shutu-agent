@@ -2589,11 +2589,13 @@ function wireModelList(sec, probeCtx) {
 
 // probeModels asks the endpoint (POST /api/config/provider/discover) which
 // models it advertises and opens the picker. probeCtx reads the live form:
-// base URL, protocol, and a key typed but not yet saved.
+// base URL, protocol, and a key typed but not yet saved. A built-in provider
+// (directory route) answers from its own catalog without any endpoint — the
+// base_url requirement applies only to hand-declared custom endpoints.
 async function probeModels(sec, ctx) {
   if (probeOpen) return;
   const base = (ctx.baseEl ? ctx.baseEl.value : "").trim();
-  if (!base) { alert("请先填写 API 地址再获取可用模型"); return; }
+  if (!base && !ctx.directory) { alert("请先填写 API 地址再获取可用模型"); return; }
   const protocol = ctx.protocolEl ? ctx.protocolEl.value : (ctx.protocol || "openai-completions");
   const key = ctx.keyEl ? ctx.keyEl.value : "";
   const provider = ctx.provider || "";
@@ -3021,6 +3023,9 @@ function renderModel(c) {
       baseEl: baseInput,
       keyEl: keyInput,
       provider: target.id,
+      // A built-in provider is a directory route: probing answers from its
+      // catalog without an endpoint, so no base URL is required.
+      directory: !target.custom,
       ...target.custom ? { protocol: target.protocol || "openai-completions" } : {},
     });
   }
