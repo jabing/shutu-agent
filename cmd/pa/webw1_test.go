@@ -370,7 +370,7 @@ func TestWebSwitchModel(t *testing.T) {
 	a := &app{cfg: config.Config{
 		Model: "deepseek-chat",
 		LLM: config.LLMConfig{
-			Provider:   "deepseek",
+			Provider:   "deepseek-official",
 			OpenAI:     config.OpenAIProviderConfig{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o"},
 			Multimodal: config.MultimodalConfig{Enabled: &mm, MaxImageBytes: 1 << 20},
 		},

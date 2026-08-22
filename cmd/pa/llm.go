@@ -47,9 +47,9 @@ func (a *app) registerLLM() error {
 	// The deepseek provider is always registered; its parameters come from the
 	// legacy top-level model/base_url (the deepseek default configuration,
 	// dispatch-m8-2 §5) and DEEPSEEK_API_KEY from the environment (a configured
-	// llm.key.deepseek setting wins, M11).
+	// llm.key.deepseek-official setting wins, M11).
 	if err := reg.Register(deepseek.New(deepseek.Config{
-		APIKey:               a.providerKey("deepseek"),
+		APIKey:               a.providerKey("deepseek-official"),
 		BaseURL:              a.cfg.BaseURL,
 		Model:                a.cfg.Model,
 		MaxRetries:           2,
@@ -98,7 +98,7 @@ func (a *app) registerLLM() error {
 	// (configured llm.key.<id> > env <ENV>); without one it stays dormant, and
 	// the settings page offers it through 增加提供方.
 	for _, bp := range builtinProviders {
-		if bp.id == "deepseek" || bp.id == "openai" || bp.id == "anthropic" {
+		if bp.id == "deepseek-official" || bp.id == "openai" || bp.id == "anthropic" {
 			continue // registered above (config-driven)
 		}
 		key := a.providerKey(bp.id)
@@ -369,7 +369,7 @@ func llmProviderBaseURL(cfg config.Config, id string) string {
 // mainstream models from the pi-ai catalogs (M11-pi-ai).
 func modelCandidates(id string) []string {
 	switch id {
-	case "deepseek":
+	case "deepseek-official":
 		return []string{"deepseek-chat", "deepseek-reasoner"}
 	case "openai":
 		return []string{"gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"}

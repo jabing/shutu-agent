@@ -32,7 +32,7 @@ func m11App(t *testing.T) (*app, *store.SQLiteStore) {
 		cfg: config.Config{
 			Model: "deepseek-chat",
 			LLM: config.LLMConfig{
-				Provider:   "deepseek",
+				Provider:   "deepseek-official",
 				OpenAI:     config.OpenAIProviderConfig{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o"},
 				Anthropic:  config.AnthropicProviderConfig{BaseURL: "https://api.anthropic.com/v1", Model: "claude-sonnet-4-5"},
 				Multimodal: config.MultimodalConfig{Enabled: &mm, MaxImageBytes: 1 << 20},
@@ -55,34 +55,34 @@ func TestWebProviderKeyOverride(t *testing.T) {
 
 	// Before any override: configured via env, key from env.
 	cfg := a.webConfig()
-	if p := findProvider(cfg["providers"].([]map[string]any), "deepseek"); p == nil || p["configured"] != true {
+	if p := findProvider(cfg["providers"].([]map[string]any), "deepseek-official"); p == nil || p["configured"] != true {
 		t.Fatalf("deepseek should be configured via env before override")
 	}
 
 	// Save an override key — it wins over the env var.
-	if err := a.webSaveProvider(context.Background(), "deepseek", "ui-key"); err != nil {
+	if err := a.webSaveProvider(context.Background(), "deepseek-official", "ui-key"); err != nil {
 		t.Fatalf("webSaveProvider: %v", err)
 	}
 	got, err := st.GetSettings(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got["llm.key.deepseek"] != "ui-key" {
-		t.Fatalf("llm.key.deepseek = %q, want ui-key (persisted)", got["llm.key.deepseek"])
+	if got["llm.key.deepseek-official"] != "ui-key" {
+		t.Fatalf("llm.key.deepseek-official = %q, want ui-key (persisted)", got["llm.key.deepseek-official"])
 	}
-	if k := a.providerKey("deepseek"); k != "ui-key" {
-		t.Fatalf("providerKey(deepseek) = %q, want ui-key (override wins)", k)
+	if k := a.providerKey("deepseek-official"); k != "ui-key" {
+		t.Fatalf("providerKey(deepseek-official) = %q, want ui-key (override wins)", k)
 	}
 
 	// Clearing the override falls back to the env var.
-	if err := a.webSaveProvider(context.Background(), "deepseek", ""); err != nil {
+	if err := a.webSaveProvider(context.Background(), "deepseek-official", ""); err != nil {
 		t.Fatalf("webSaveProvider(clear): %v", err)
 	}
-	if k := a.providerKey("deepseek"); k != "env-key" {
-		t.Fatalf("providerKey(deepseek) after clear = %q, want env-key (fallback)", k)
+	if k := a.providerKey("deepseek-official"); k != "env-key" {
+		t.Fatalf("providerKey(deepseek-official) after clear = %q, want env-key (fallback)", k)
 	}
-	if got, _ := st.GetSettings(context.Background()); got["llm.key.deepseek"] != "" {
-		t.Fatalf("llm.key.deepseek should be deleted after clear, got %q", got["llm.key.deepseek"])
+	if got, _ := st.GetSettings(context.Background()); got["llm.key.deepseek-official"] != "" {
+		t.Fatalf("llm.key.deepseek-official should be deleted after clear, got %q", got["llm.key.deepseek-official"])
 	}
 }
 
@@ -157,7 +157,7 @@ func TestWebCustomProviderValidation(t *testing.T) {
 		{"doubled dash", func() error { return a.webSaveCustomProvider(context.Background(), "bad--route", "X", "http://x/v1", "m", "", "", nil) }},
 		{"digit leading", func() error { return a.webSaveCustomProvider(context.Background(), "1st-route", "X", "http://x/v1", "m", "", "", nil) }},
 		{"unknown protocol", func() error { return a.webSaveCustomProvider(context.Background(), "my-llm", "X", "http://x/v1", "m", "", "bogus-protocol", nil) }},
-		{"delete builtin", func() error { return a.webDeleteCustomProvider(context.Background(), "deepseek") }},
+		{"delete builtin", func() error { return a.webDeleteCustomProvider(context.Background(), "deepseek-official") }},
 		{"delete unknown", func() error { return a.webDeleteCustomProvider(context.Background(), "nope") }},
 	}
 	for _, tc := range cases {
@@ -203,8 +203,8 @@ func TestWebProvidersListsDormantBuiltins(t *testing.T) {
 			t.Errorf("%s env_var = %v, want %s", bp.id, p["env_var"], bp.env)
 		}
 	}
-	if seen["deepseek"]["registered"] != true || seen["deepseek"]["configured"] != true {
-		t.Fatalf("deepseek should be registered+configured, got %#v", seen["deepseek"])
+	if seen["deepseek-official"]["registered"] != true || seen["deepseek-official"]["configured"] != true {
+		t.Fatalf("deepseek should be registered+configured, got %#v", seen["deepseek-official"])
 	}
 	for _, id := range []string{"openai", "anthropic", "google", "xai", "groq"} {
 		if seen[id]["registered"] != false || seen[id]["configured"] != false {
@@ -291,7 +291,7 @@ func TestProviderEnvSpecialCases(t *testing.T) {
 		"huggingface":      "HF_TOKEN",
 		"kimi-coding":      "KIMI_API_KEY",
 		"vercel-ai-gateway": "AI_GATEWAY_API_KEY",
-		"deepseek":         "DEEPSEEK_API_KEY",
+		"deepseek-official":         "DEEPSEEK_API_KEY",
 		"groq":             "GROQ_API_KEY",
 		"custom-route":     "CUSTOM_ROUTE_API_KEY",
 	}

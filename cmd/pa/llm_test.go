@@ -30,7 +30,7 @@ func TestRegisterLLMDefaultDeepseekRegression(t *testing.T) {
 	a := &app{
 		cfg: config.Config{
 			Model: "deepseek-chat",
-			LLM:   config.LLMConfig{Provider: "deepseek"},
+			LLM:   config.LLMConfig{Provider: "deepseek-official"},
 		},
 	}
 	if err := a.registerLLM(); err != nil {
@@ -45,7 +45,7 @@ func TestRegisterLLMDefaultDeepseekRegression(t *testing.T) {
 	for _, p := range a.llmReg.List() {
 		ids = append(ids, p.ID())
 	}
-	if len(ids) != 1 || ids[0] != "deepseek" {
+	if len(ids) != 1 || ids[0] != "deepseek-official" {
 		t.Fatalf("registered providers = %v, want [deepseek]", ids)
 	}
 
@@ -85,7 +85,7 @@ func TestRegisterLLMRegistersOpenaiWhenKeyPresent(t *testing.T) {
 	for _, p := range a.llmReg.List() {
 		ids = append(ids, p.ID())
 	}
-	if len(ids) != 2 || ids[0] != "deepseek" || ids[1] != "openai" {
+	if len(ids) != 2 || ids[0] != "deepseek-official" || ids[1] != "openai" {
 		t.Fatalf("registered providers = %v, want [deepseek openai]", ids)
 	}
 	sel, err := a.llmReg.Get("openai")
@@ -125,7 +125,7 @@ func TestRegisterLLMSelectedProviderUnavailableFailsClosed(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
-	a := &app{cfg: config.Config{LLM: config.LLMConfig{Provider: "deepseek"}}}
+	a := &app{cfg: config.Config{LLM: config.LLMConfig{Provider: "deepseek-official"}}}
 	if err := a.registerLLM(); err == nil {
 		t.Fatal("selected deepseek with no DEEPSEEK_API_KEY must fail closed at startup")
 	} else if !strings.Contains(err.Error(), "not available") {
@@ -162,8 +162,8 @@ func TestLLMStatusOutput(t *testing.T) {
 	if !strings.Contains(out, "* openai: available (model=gpt-4o-mini)") {
 		t.Errorf("output missing selected openai line: %q", out)
 	}
-	if !strings.Contains(out, "deepseek: available (model=deepseek-chat)") {
-		t.Errorf("output missing deepseek line: %q", out)
+	if !strings.Contains(out, "deepseek-official: available (model=deepseek-chat)") {
+		t.Errorf("output missing deepseek-official line: %q", out)
 	}
 	if !strings.Contains(out, "modalities: text") {
 		t.Errorf("output missing modalities line: %q", out)
@@ -202,8 +202,8 @@ func TestLLMStatusShowsUnavailableProvider(t *testing.T) {
 	if !strings.Contains(out, "* openai: available (model=gpt-4o-mini)") {
 		t.Errorf("output missing selected openai line: %q", out)
 	}
-	if !strings.Contains(out, "deepseek: unavailable") {
-		t.Errorf("output must show deepseek as unavailable: %q", out)
+	if !strings.Contains(out, "deepseek-official: unavailable") {
+		t.Errorf("output must show deepseek-official as unavailable: %q", out)
 	}
 }
 
@@ -244,7 +244,7 @@ func TestRegisterLLMRegistersAnthropicWhenKeyPresent(t *testing.T) {
 	for _, p := range a.llmReg.List() {
 		ids = append(ids, p.ID())
 	}
-	if len(ids) != 2 || ids[0] != "deepseek" || ids[1] != "anthropic" {
+	if len(ids) != 2 || ids[0] != "deepseek-official" || ids[1] != "anthropic" {
 		t.Fatalf("registered providers = %v, want [deepseek anthropic]", ids)
 	}
 	sel, err := a.llmReg.Get("anthropic")
@@ -304,8 +304,8 @@ func TestLLMStatusShowsAnthropic(t *testing.T) {
 	if !strings.Contains(out, "* anthropic: available (model=claude-sonnet-4-5)") {
 		t.Errorf("output missing selected anthropic line: %q", out)
 	}
-	if !strings.Contains(out, "deepseek: available (model=deepseek-chat)") {
-		t.Errorf("output missing deepseek line: %q", out)
+	if !strings.Contains(out, "deepseek-official: available (model=deepseek-chat)") {
+		t.Errorf("output missing deepseek-official line: %q", out)
 	}
 	if !strings.Contains(out, "modalities: text") {
 		t.Errorf("output missing modalities line: %q", out)
@@ -323,7 +323,7 @@ func TestLLMStatusMultimodalEnabled(t *testing.T) {
 		cfg: config.Config{
 			Model: "deepseek-chat",
 			LLM: config.LLMConfig{
-				Provider:             "deepseek",
+				Provider:             "deepseek-official",
 				ModelInputModalities: "text,image",
 				Multimodal:           config.MultimodalConfig{Enabled: &mm, MaxImageBytes: 1 << 20},
 			},
@@ -352,7 +352,7 @@ func TestLLMStatusMultimodalDisabledDefault(t *testing.T) {
 	a := &app{
 		cfg: config.Config{
 			Model: "deepseek-chat",
-			LLM:   config.LLMConfig{Provider: "deepseek"},
+			LLM:   config.LLMConfig{Provider: "deepseek-official"},
 		},
 	}
 	if err := a.registerLLM(); err != nil {
@@ -383,13 +383,13 @@ func TestRegisterLLMDefaultDeepseekSupportsImagesFalse(t *testing.T) {
 	a := &app{
 		cfg: config.Config{
 			Model: "deepseek-chat",
-			LLM:   config.LLMConfig{Provider: "deepseek"},
+			LLM:   config.LLMConfig{Provider: "deepseek-official"},
 		},
 	}
 	if err := a.registerLLM(); err != nil {
 		t.Fatalf("registerLLM: %v", err)
 	}
-	p, err := a.llmReg.Get("deepseek")
+	p, err := a.llmReg.Get("deepseek-official")
 	if err != nil {
 		t.Fatalf("Get deepseek: %v", err)
 	}
@@ -414,13 +414,13 @@ func TestRegisterLLMSupportsImagesTrueWhenModalitiesImage(t *testing.T) {
 	a := &app{
 		cfg: config.Config{
 			Model: "deepseek-chat",
-			LLM:   config.LLMConfig{Provider: "deepseek", ModelInputModalities: "text,image"},
+			LLM:   config.LLMConfig{Provider: "deepseek-official", ModelInputModalities: "text,image"},
 		},
 	}
 	if err := a.registerLLM(); err != nil {
 		t.Fatalf("registerLLM: %v", err)
 	}
-	p, err := a.llmReg.Get("deepseek")
+	p, err := a.llmReg.Get("deepseek-official")
 	if err != nil {
 		t.Fatalf("Get deepseek: %v", err)
 	}
@@ -453,7 +453,7 @@ func TestRegisterLLMWiresMaxRequestImageBytes(t *testing.T) {
 			Model:   "deepseek-chat",
 			BaseURL: srv.URL,
 			LLM: config.LLMConfig{
-				Provider:             "deepseek",
+				Provider:             "deepseek-official",
 				ModelInputModalities: "text,image",
 				Multimodal: config.MultimodalConfig{
 					Enabled:              boolPtr(true),
@@ -466,7 +466,7 @@ func TestRegisterLLMWiresMaxRequestImageBytes(t *testing.T) {
 	if err := a.registerLLM(); err != nil {
 		t.Fatalf("registerLLM: %v", err)
 	}
-	p, err := a.llmReg.Get("deepseek")
+	p, err := a.llmReg.Get("deepseek-official")
 	if err != nil {
 		t.Fatalf("Get deepseek: %v", err)
 	}

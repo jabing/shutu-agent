@@ -37,7 +37,7 @@ const (
 
 	// providerID is the stable provider id of the deepseek adapter (M8-2,
 	// dispatch-m8-2 §3).
-	providerID = "deepseek"
+	providerID = "deepseek-official"
 )
 
 // Config configures the DeepSeek adapter. APIKey must come from the
@@ -113,7 +113,7 @@ func New(cfg Config) *Client {
 	}
 }
 
-// ID returns the stable provider id "deepseek" (M8-2, dispatch-m8-2 §3).
+// ID returns the stable provider id "deepseek-official" (M8-2, dispatch-m8-2 §3).
 func (c *Client) ID() string { return providerID }
 
 // Available reports whether the client is usable: a cheap local check that

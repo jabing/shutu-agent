@@ -314,7 +314,7 @@ func TestStreamRetryAbortsOnCancellation(t *testing.T) {
 
 // TestID returns the stable provider id (M8-2, dispatch-m8-2 §3).
 func TestID(t *testing.T) {
-	if got := New(Config{}).ID(); got != "deepseek" {
+	if got := New(Config{}).ID(); got != "deepseek-official" {
 		t.Fatalf("ID = %q, want deepseek", got)
 	}
 }

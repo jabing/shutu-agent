@@ -16,7 +16,7 @@ import (
 // Provider is an LLM backend (D2). Consumers (loop/composition root) depend
 // only on this interface, never on a concrete provider.
 type Provider interface {
-	// ID returns the stable provider id ("deepseek" / "openai" / "anthropic").
+	// ID returns the stable provider id ("deepseek-official" / "openai" / "anthropic").
 	ID() string
 	// Available reports whether the provider can be used: a cheap local check
 	// (key/endpoint resolvable) that never performs a network call

@@ -128,7 +128,7 @@ func TestStreamImageFailsClosedWhenNotSupported(t *testing.T) {
 	if err == nil {
 		t.Fatal("image with SupportsImages=false must fail closed")
 	}
-	if !strings.Contains(err.Error(), "deepseek: model does not support image input (model_input_modalities=text)") {
+	if !strings.Contains(err.Error(), "deepseek-official: model does not support image input (model_input_modalities=text)") {
 		t.Fatalf("err = %q, want the fail-closed image error", err)
 	}
 }

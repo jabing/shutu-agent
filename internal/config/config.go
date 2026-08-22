@@ -108,13 +108,13 @@ const (
 	DefaultWebDeepSeekMaxUses       = 5
 
 	// M8-2 LLM-provider defaults (dispatch-m8-2 §5 / M8-2b §3): the default
-	// provider is "deepseek" (regression: behavior identical to before M8-2);
+	// provider is "deepseek-official" (regression: behavior identical to before M8-2);
 	// openai defaults to base_url https://api.openai.com/v1 and model
 	// gpt-4o-mini (both configurable); anthropic defaults to base_url
 	// https://api.anthropic.com/v1 and model claude-sonnet-4-5 (both
 	// configurable, consumed by M8-2b — these must stay in sync with the
 	// internal/llm/anthropic package defaults).
-	DefaultLLMProvider      = "deepseek"
+	DefaultLLMProvider      = "deepseek-official"
 	DefaultOpenAIBaseURL    = "https://api.openai.com/v1"
 	DefaultOpenAIModel      = "gpt-4o-mini"
 	DefaultAnthropicBaseURL = "https://api.anthropic.com/v1"
@@ -243,7 +243,7 @@ type Config struct {
 // providers; credentials only ever come from the environment (纪律 6), never
 // from this file.
 type LLMConfig struct {
-	// Provider is the selection route; empty defaults to "deepseek".
+	// Provider is the selection route; empty defaults to "deepseek-official".
 	Provider string `yaml:"provider"`
 	// OpenAI carries the OpenAI-compatible provider parameters (base_url /
 	// model); the API key is OPENAI_API_KEY from the environment.
