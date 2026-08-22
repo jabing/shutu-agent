@@ -37,6 +37,7 @@ const workspaceEl = $("workspace"), frameEl = $("frame");
 const sessionList = $("session-list"), newSessionBtn = $("new-session");
 const curSessionEl = $("cur-session"), modeBadgeEl = $("mode-badge"), modelLabelEl = $("model-label");
 const messagesEl = $("messages"), heroEl = $("hero");
+const colCenterEl = document.querySelector(".col-center");
 const composerText = $("composer-text"), composerBox = $("composer"), sendBtn = $("composer-send");
 const growWrapEl = document.querySelector(".grow-wrap");
 const scrollBottomBtn = $("scroll-bottom");
@@ -49,6 +50,8 @@ const detailsPanel = $("details-panel"), detailsTitle = $("details-title"),
 
 // ---- state ---------------------------------------------------------------
 let currentID = localStorage.getItem(KEY_CURRENT) || "";
+let sessionEmpty = !currentID;        // the current session has no events yet (blank hero)
+let heroActive = true;                // hero phase (centered composer) vs active phase (docked)
 let layout = { sidebar: SIDEBAR_DEFAULT, manual: false, narrowViewport: false, dragging: false };
 let details = { open: false, width: DETAILS_DEFAULT }; // right details column (dsh layout details)
 let heroWorkspace = "";             // selected hero workspace id ("" = pick a workspace)
@@ -1310,12 +1313,14 @@ async function deleteSession(id) {
     clearDrafts();
     localStorage.removeItem(KEY_CURRENT);
     currentID = "";
+    sessionEmpty = true;
     messagesEl.querySelector(".messages-inner")?.remove();
     curSessionEl.textContent = "";
     heroEl.classList.remove("hidden");
     heroWorkspace = "";
     syncHeroChip();
     syncHeroPickState();
+    setHeroPhase();
     syncGrow();
   }
   loadSessions();
@@ -1329,6 +1334,7 @@ async function deleteSession(id) {
 function newSession() {
   closeDetails();
   currentID = "";
+  sessionEmpty = true;
   localStorage.removeItem(KEY_CURRENT);
   if (sseAbort) { sseAbort.abort(); sseAbort = null; }
   if (sseReconnect) { clearTimeout(sseReconnect); sseReconnect = null; }
@@ -1343,6 +1349,7 @@ function newSession() {
   // placeholder), unless a hero workspace was already chosen previously.
   loadWorkspaces().then(() => { syncHeroChip(); syncHeroPickState(); });
   syncHeroPickState();
+  setHeroPhase();
   updatePlaceholder();
   syncGrow();
 }
@@ -1736,6 +1743,18 @@ function syncHeroMenuPosition() {
 }
 
 // ---- session view: messages + SSE ------------------------------------------
+// setHeroPhase drives the center column's phase (dsh ConversationRoot
+// data-phase): hero → the composer centers under the headline/workspace/mode
+// row; active → the transcript scrolls and the composer docks at the bottom.
+// The hero phase holds for a BLANK session too (create → first message), not
+// only when there is no session, so the composer moves down only after the
+// first submit.
+function setHeroPhase() {
+  heroActive = !currentID || sessionEmpty;
+  if (colCenterEl) colCenterEl.dataset.phase = heroActive ? "hero" : "active";
+  heroEl.classList.toggle("hidden", !heroActive);
+}
+
 function openSession(id) {
   if (sseAbort) { sseAbort.abort(); sseAbort = null; }
   if (sseReconnect) { clearTimeout(sseReconnect); sseReconnect = null; }
@@ -1745,12 +1764,13 @@ function openSession(id) {
   messagesEl.querySelector(".messages-inner")?.remove();
   curSessionEl.textContent = id || "";
   toolMeta = {};
+  sessionEmpty = !id;
   heroEl.classList.toggle("hidden", !!id);
   // A real session re-enables the composer; the hero phase keeps it gated on a
   // picked workspace. (dsh: session → composer active, hero → choose-workspace.)
   setComposerDisabled(!id);
   updatePlaceholder();
-  if (!id) { sessionCfg = { model: "", permission: "" }; return; }
+  if (!id) { sessionCfg = { model: "", permission: "" }; setHeroPhase(); return; }
   loadSessionConfig(id);
   return Promise.all([loadEvents(id), connectStream(id)]);
 }
@@ -1766,12 +1786,19 @@ async function loadEvents(id) {
       lastTime = ev.time || lastTime;
       renderEvent(ev, true);
     }
-    heroEl.classList.add("hidden");
+    // A session with no events stays on the hero (centered composer); once it
+    // has history the phase flips to active and the composer docks.
+    sessionEmpty = evs.length === 0;
+    setHeroPhase();
+    if (!sessionEmpty) heroEl.classList.add("hidden");
     scrollToBottom(true);
   } catch (e) { if (e.message !== "unauthorized") console.error(e); }
 }
 
 function renderEvent(ev, replay) {
+  // First event of an empty session: the turn has begun, so leave the centered
+  // hero and dock the composer (dsh: 第一次输入提交后输入条下移).
+  if (sessionEmpty) { sessionEmpty = false; setHeroPhase(); }
   switch (ev.type) {
     case "user/message": {
       const imgs = (ev.images || []).map((iv) => ({
@@ -1882,6 +1909,9 @@ async function sendMessage() {
   setComposerDisabled(true);
   try {
     addUserMsg(text, new Date().toISOString(), drafts.length ? drafts.map((d) => ({ src: d.url })) : null);
+    // Submitting the first message moves the composer from the centered hero
+    // down to the docked slot (dsh: 第一次输入提交后输入条下移).
+    if (sessionEmpty) { sessionEmpty = false; setHeroPhase(); }
     addRunning();
     streamActive = true;
     loadSessions(); // blue running dot on the current row
@@ -3392,6 +3422,7 @@ function boot() {
   if (currentID) openSession(currentID);
   else {
     heroEl.classList.remove("hidden");
+    setHeroPhase();
     loadWorkspaces().then(() => { syncHeroChip(); syncHeroPickState(); });
     syncHeroPickState();
   }

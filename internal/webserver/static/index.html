@@ -132,7 +132,7 @@
       </section>
 
       <!-- Center column: topbar + message stream + composer. -->
-      <main class="col-center" aria-label="对话">
+      <main class="col-center" aria-label="对话" data-phase="">
         <header class="topbar">
           <span id="cur-session" class="cur-session" title="当前会话"></span>
           <span id="mode-badge" class="mode-badge hidden" title="会话模式：改 config.yaml 重启生效"></span>
@@ -141,61 +141,69 @@
           <a id="settings-link" class="btn-icon" href="#/settings" title="设置">⚙</a>
           <button id="theme-toggle" class="btn-icon" title="切换主题">☀️</button>
         </header>
-        <div id="messages" class="messages" aria-live="polite"></div>
-        <!-- Empty-state hero (探索未至之境) shown when there is no current
-             session or the current session has no events. -->
-        <!-- Empty-state hero (dsh ConversationRoot HeroShell: fish logo →
-             headline → preview badge → workspace chip row → composer below). -->
-        <div id="hero" class="hero hidden">
-          <div class="hero-inner">
-            <div class="hero-headline">
-              <span class="hero-fish" data-icon="fishlogo" aria-hidden="true"></span>
-              <h1 class="hero-title">探索未至之境</h1>
-              <span class="hero-preview">预览版</span>
+        <!-- The milieu is the centered/docked stage: in the hero phase it centers
+             the headline + workspace/mode row + composer together (dsh
+             ConversationRoot composerHero); in the active phase the transcript
+             [#messages] scrolls and the composer docks at the bottom. One
+             phase attribute on the column drives both postures. -->
+        <div class="milieu">
+          <div id="messages" class="messages" aria-live="polite"></div>
+          <!-- Empty-state hero (dsh ConversationRoot HeroShell: fish logo →
+               headline → preview badge → workspace chip row). -->
+          <div id="hero" class="hero hidden">
+            <div class="hero-inner">
+              <div class="hero-headline">
+                <span class="hero-fish" data-icon="fishlogo" aria-hidden="true"></span>
+                <h1 class="hero-title">探索未至之境</h1>
+                <span class="hero-preview">预览版</span>
+              </div>
+              <div class="hero-ws-row">
+                <button id="hero-ws-chip" class="ws-chip" type="button" aria-haspopup="menu" aria-expanded="false"
+                        title="选择工作区">
+                  <span class="ws-chip-ico" data-icon="folderclose16" aria-hidden="true"></span>
+                  <span id="hero-ws-label" class="ws-chip-label">选择工作区</span>
+                  <span class="ws-chip-caret" data-icon="caretdown" aria-hidden="true"></span>
+                </button>
+                <div id="hero-ws-menu" class="ws-menu hidden" role="menu"></div>
+                <button id="hero-mode-chip" class="ws-chip" type="button" aria-haspopup="menu" aria-expanded="false"
+                        title="选择模式">
+                  <span class="ws-chip-ico" data-icon="caps" aria-hidden="true"></span>
+                  <span id="hero-mode-label" class="ws-chip-label">标准模式</span>
+                  <span class="ws-chip-caret" data-icon="caretdown" aria-hidden="true"></span>
+                </button>
+                <div id="hero-mode-menu" class="ws-menu hidden" role="menu"></div>
+              </div>
             </div>
-            <div class="hero-ws-row">
-              <button id="hero-ws-chip" class="ws-chip" type="button" aria-haspopup="menu" aria-expanded="false"
-                      title="选择工作区">
-                <span class="ws-chip-ico" data-icon="folderclose16" aria-hidden="true"></span>
-                <span id="hero-ws-label" class="ws-chip-label">选择工作区</span>
-                <span class="ws-chip-caret" data-icon="caretdown" aria-hidden="true"></span>
-              </button>
-              <div id="hero-ws-menu" class="ws-menu hidden" role="menu"></div>
-              <button id="hero-mode-chip" class="ws-chip" type="button" aria-haspopup="menu" aria-expanded="false"
-                      title="选择模式">
-                <span class="ws-chip-ico" data-icon="caps" aria-hidden="true"></span>
-                <span id="hero-mode-label" class="ws-chip-label">标准模式</span>
-                <span class="ws-chip-caret" data-icon="caretdown" aria-hidden="true"></span>
-              </button>
-              <div id="hero-mode-menu" class="ws-menu hidden" role="menu"></div>
-            </div>
+            <div class="hero-glow" aria-hidden="true"></div>
           </div>
-          <div class="hero-glow" aria-hidden="true"></div>
-        </div>
-        <!-- Composer card (dsh InputBar): input box + a toolbar row below with
-             command(＋) / permission / model / submit. -->
-        <div class="composer-card">
-          <div class="composer">
-            <div class="grow-wrap">
-              <textarea id="composer-text" rows="1" placeholder="给智能体发消息…"></textarea>
-              <div class="mirror" aria-hidden="true"></div>
+          <!-- Composer card (dsh InputBar): input box + a toolbar row below with
+               command(＋) / permission / model / submit. A direct child of the
+               milieu so a single element is centered in the hero phase (below the
+               headlline/workspace row) and docked at the bottom in the active
+               phase — the column's data-phase drives both postures. -->
+          <div class="composer-card">
+            <div class="composer">
+              <div class="grow-wrap">
+                <textarea id="composer-text" rows="1" placeholder="给智能体发消息…"></textarea>
+                <div class="mirror" aria-hidden="true"></div>
+              </div>
             </div>
-          </div>
-          <div class="composer-tools">
-            <div class="ct-left">
-              <button id="cmd-btn" class="tool-btn" type="button" title="命令" aria-haspopup="menu" aria-expanded="false">
-                <span class="tool-ico" data-icon="plus" aria-hidden="true"></span>
-              </button>
-              <div id="cmd-menu" class="ws-menu hidden" role="menu"></div>
-              <select id="perm-select" class="tool-select" title="权限" aria-label="权限">
-                <option value="readonly">只读</option>
-                <option value="standard">标准</option>
-                <option value="full">全部</option>
-              </select>
-            </div>
-            <div class="ct-right">
-              <select id="model-select" class="tool-select model-select" title="模型" aria-label="模型"></select>
-              <button id="composer-send" class="send-btn" title="发送" aria-label="发送">➤</button>
+            <div class="composer-tools">
+              <div class="ct-left">
+                <button id="cmd-btn" class="tool-btn" type="button" title="命令" aria-haspopup="menu" aria-expanded="false">
+                  <span class="tool-ico" data-icon="plus" aria-hidden="true"></span>
+                </button>
+                <div id="cmd-menu" class="ws-menu hidden" role="menu"></div>
+                <select id="perm-select" class="tool-select" title="权限" aria-label="权限">
+                  <option value="readonly">只读</option>
+                  <option value="standard">标准</option>
+                  <option value="full">全部</option>
+                </select>
+              </div>
+              <div class="ct-right">
+                <select id="model-select" class="tool-select model-select" title="模型" aria-label="模型"></select>
+                <button id="composer-send" class="send-btn" title="发送" aria-label="发送">➤</button>
+              </div>
             </div>
           </div>
         </div>

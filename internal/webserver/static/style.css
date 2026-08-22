@@ -713,6 +713,24 @@ mark {
 #model-label { font-size: 12px; }
 
 /* ---- message stream ---- */
+/* The milieu is the column's centered/docked stage (dsh ConversationRoot
+   scrollBody/composerSeat): one flex column holding the transcript, the hero
+   and the composer card. The column's data-phase drives the posture — the hero
+   phase centers the headline + workspace/mode row + composer together; the
+   active phase lets the transcript scroll and docks the composer at the bottom. */
+.milieu {
+  flex: 1; min-height: 0; position: relative;
+  display: flex; flex-direction: column; align-items: stretch; overflow: hidden;
+}
+/* Hero phase: collapse the (empty) transcript, then flex-center the hero +
+   composer stack in the column (dsh composerHero). */
+.col-center[data-phase="hero"] .milieu { justify-content: center; }
+.col-center[data-phase="hero"] .messages { display: none; }
+.col-center[data-phase="hero"] .composer-card::before { display: none; }
+.col-center[data-phase="hero"] .composer-card { margin-top: 14px; }
+/* Active phase: transcript scrolls and the composer docks at the bottom. */
+.col-center[data-phase="active"] .milieu { justify-content: flex-start; }
+.col-center[data-phase="active"] .hero { display: none; }
 .messages {
   flex: 1; overflow-y: auto; padding: 16px 28px 24px;
   scrollbar-width: thin; scrollbar-color: var(--dsw-alias-scrollbar-bg-l1) transparent;
@@ -826,8 +844,11 @@ mark {
 .msg:hover .copy-btn { opacity: 1; }
 
 /* ---- empty-state hero (dsh ConversationRoot HeroShell) ---- */
+/* In the hero phase the hero is a normal-flow child of the milieu so it rides
+   the centered stack with the composer below it; the active phase hides it. */
 .hero {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  width: 100%;
+  display: flex; align-items: center; justify-content: center;
   pointer-events: none;
 }
 .hero-inner { text-align: center; position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; }
@@ -878,7 +899,6 @@ mark {
   width: 1051px; height: 468px; border-radius: 50%;
   background: rgba(97, 135, 216, 0.08); filter: blur(50px); pointer-events: none;
 }
-
 /* ---- right details panel (dsh ui-conversation DetailsPanel) ---- */
 .details-panel {
   height: 100%; display: flex; flex-direction: column; min-width: 0;
