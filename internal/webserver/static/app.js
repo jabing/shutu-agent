@@ -21,6 +21,15 @@ const DETAILS_DEFAULT = 360;
 const DETAILS_MIN = 300;
 const DETAILS_MAX = 520;
 
+// --- mode presets (== shutu-agent config mode, dsh agent preset) -------------
+const HERO_MODES = [
+  { id: "standard", name: "标准模式", desc: "完整的编码 agent。" },
+  { id: "code", name: "PTC 模式", desc: "标准模式全部能力 + 程序化操作（Code Mode）。" },
+  { id: "minimal", name: "极简模式", desc: "只保留持久终端 + 文件编辑。" },
+];
+const MODE_DISPLAY = { minimal: "极简模式", standard: "标准模式", code: "PTC 模式" };
+const PERMISSION_NAMES = { readonly: "只读", standard: "标准", full: "全部" };
+
 // ---- element refs --------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const loginEl = $("login"), loginForm = $("login-form"), loginMsg = $("login-msg");
@@ -33,6 +42,8 @@ const growWrapEl = document.querySelector(".grow-wrap");
 const scrollBottomBtn = $("scroll-bottom");
 const settingsEl = $("settings"), placeholderEl = $("placeholder");
 const heroWsChip = $("hero-ws-chip"), heroWsLabel = $("hero-ws-label"), heroWsMenu = $("hero-ws-menu");
+const heroModeChip = $("hero-mode-chip"), heroModeLabel = $("hero-mode-label"), heroModeMenu = $("hero-mode-menu");
+const cmdBtn = $("cmd-btn"), cmdMenu = $("cmd-menu"), permSelect = $("perm-select"), modelSelect = $("model-select");
 const detailsPanel = $("details-panel"), detailsTitle = $("details-title"),
   detailsCloseBtn = $("details-close"), detailsEmptyEl = $("details-empty"), detailsSelEl = $("details-selection");
 
@@ -42,6 +53,10 @@ let layout = { sidebar: SIDEBAR_DEFAULT, manual: false, narrowViewport: false, d
 let details = { open: false, width: DETAILS_DEFAULT }; // right details column (dsh layout details)
 let heroWorkspace = "";             // selected hero workspace id ("" = pick a workspace)
 let heroMenuOpen = false;           // hero workspace picker popover state
+let heroModeOpen = false;           // hero mode (agent preset) popover state
+let cmdMenuOpen = false;            // composer +(command) menu popover state
+let mode = "";                      // current mode preset: standard | code | minimal
+let permissionPreset = "";          // current permission preset: readonly | standard | full
 let wsList = [];                    // [{id,title}] for the hero picker (from /api/workspaces)
 let toolMeta = {};                  // callId -> {name, args} captured from assistant tool_call
 let selectedTool = null;            // {callId,name,args,output,error} shown in the details panel
@@ -1297,10 +1312,10 @@ async function deleteSession(id) {
     messagesEl.querySelector(".messages-inner")?.remove();
     curSessionEl.textContent = "";
     heroEl.classList.remove("hidden");
-    composerText.disabled = false;
-    composerBox.classList.remove("disabled");
-    sendBtn.disabled = false;
-    updatePlaceholder();
+    heroWorkspace = "";
+    syncHeroChip();
+    syncHeroPickState();
+    syncGrow();
   }
   loadSessions();
 }
@@ -1431,6 +1446,170 @@ async function createSessionInWorkspace(wsId) {
     if (e.message !== "unauthorized") { console.error(e); toast("创建会话失败"); }
     return false;
   }
+}
+
+// ---- hero mode (agent preset) chip + composer toolbar (dsh InputBar) --------
+// The mode selector is shutu-agent's mode preset (standard|code|minimal),
+// persisted through the settings table (PATCH /api/settings {agent_preset}) and
+// re-applied by ApplyModePreset at next launch (the existing semantics: 重启后
+// 生效 — no runtime hot-reload of the tool registry). The chip sits beside the
+// workspace chip on the hero; the composer toolbar carries command(＋) /
+// permission / model / submit below the input box.
+function syncModeMenuPosition() {
+  if (heroModeMenu && heroModeChip) {
+    const r = heroModeChip.getBoundingClientRect();
+    heroModeMenu.style.left = r.left + "px";
+    heroModeMenu.style.top = (r.bottom + 6) + "px";
+    heroModeMenu.style.minWidth = Math.max(r.width, 240) + "px";
+  }
+}
+function renderModeMenu() {
+  if (!heroModeMenu) return;
+  heroModeMenu.innerHTML = HERO_MODES.map((m) => {
+    const sel = mode === m.id ? " hm-active" : "";
+    return `<button class="hm-item${sel}" role="menuitem" data-mode="${m.id}">
+      <span class="hm-item-text"><span class="hm-item-name">${esc(m.name)}</span><span class="hm-item-desc">${esc(m.desc)}</span></span>
+    </button>`;
+  }).join("");
+  heroModeMenu.querySelectorAll(".hm-item").forEach((btn) => {
+    btn.addEventListener("click", () => pickMode(btn.dataset.mode));
+  });
+}
+function toggleModeMenu(force) {
+  const open = force === undefined ? !heroModeOpen : force;
+  heroModeOpen = open;
+  if (heroModeMenu) heroModeMenu.classList.toggle("hidden", !open);
+  if (heroModeChip) heroModeChip.setAttribute("aria-expanded", String(open));
+}
+function syncModeChip() {
+  // Hero chip reflects the persisted agent_preset default (stage for new
+  // sessions); the topbar mode badge reflects the runtime config.mode.
+  const name = MODE_DISPLAY[mode] || (mode ? mode : "");
+  if (heroModeLabel) heroModeLabel.textContent = name || "标准模式";
+  if (heroModeChip) {
+    heroModeChip.setAttribute("aria-expanded", String(heroModeOpen));
+    heroModeChip.title = (name || "选择模式") + "（重启后生效）";
+  }
+}
+function syncModeBadge() {
+  const rt = config.mode || "";
+  modeBadgeEl.textContent = MODE_DISPLAY[rt] || rt;
+  modeBadgeEl.classList.toggle("hidden", !modeBadgeEl.textContent);
+  modeBadgeEl.classList.remove("mode-minimal", "mode-code");
+  if (rt === "minimal") modeBadgeEl.classList.add("mode-minimal");
+  if (rt === "code") modeBadgeEl.classList.add("mode-code");
+}
+async function pickMode(id) {
+  mode = id;
+  toggleModeMenu(false);
+  syncModeChip();
+  try {
+    const res = await api("/api/settings", { method: "PATCH", body: JSON.stringify({ agent_preset: id }) });
+    if (res.status === 401) return;
+    if (!res.ok) throw new Error("HTTP " + res.status);
+  } catch (e) {
+    if (e.message !== "unauthorized") { console.error("save agent_preset", e); toast("模式保存失败"); }
+  }
+}
+
+// ---- composer toolbar: command(＋) / permission / model ---------------------
+function syncCmdMenuPosition() {
+  if (cmdMenu && cmdBtn) {
+    const r = cmdBtn.getBoundingClientRect();
+    cmdMenu.style.left = r.left + "px";
+    cmdMenu.style.top = (r.bottom + 6) + "px";
+    cmdMenu.style.minWidth = Math.max(r.width, 200) + "px";
+  }
+}
+function renderCmdMenu() {
+  if (!cmdMenu) return;
+  const items = [
+    { id: "new", label: "新建会话", hint: "回到空白 hero 开始" },
+    { id: "archive", label: "归档当前会话", hint: !currentID ? "无会话" : "收起当前会话", disabled: !currentID },
+    { id: "delete", label: "删除当前会话", hint: !currentID ? "无会话" : "删除并回到 hero", disabled: !currentID },
+  ];
+  cmdMenu.innerHTML = items.map((it) =>
+    `<button class="hm-item" role="menuitem" data-cmd="${it.id}"${it.disabled ? " disabled" : ""}>
+      <span class="hm-item-text"><span class="hm-item-name">${esc(it.label)}</span><span class="hm-item-desc">${esc(it.hint)}</span></span>
+    </button>`).join("");
+  cmdMenu.querySelectorAll(".hm-item").forEach((btn) => {
+    btn.addEventListener("click", () => runCmd(btn.dataset.cmd));
+  });
+}
+function toggleCmdMenu(force) {
+  const open = force === undefined ? !cmdMenuOpen : force;
+  cmdMenuOpen = open;
+  if (cmdMenu) cmdMenu.classList.toggle("hidden", !open);
+  if (cmdBtn) cmdBtn.setAttribute("aria-expanded", String(open));
+}
+function runCmd(cmd) {
+  toggleCmdMenu(false);
+  if (cmd === "new") { newSession(); return; }
+  if (!currentID) return;
+  if (cmd === "archive") { archiveSession(currentID); }
+  else if (cmd === "delete") { deleteSession(currentID); }
+}
+// Populate the model picker from the live provider directory (/api/config). Each
+// option is provider::model; the change handler switches via POST /api/config/model.
+function modelOptions() {
+  const provs = (config.providers || []).filter((p) => p.available || p.id === config.llm_provider);
+  const out = [];
+  for (const p of provs) {
+    const models = [];
+    if (p.model) models.push(p.model);
+    for (const c of (p.candidates || [])) if (!models.includes(c)) models.push(c);
+    for (const m of models) {
+      out.push({ val: p.id + "\u0000" + m, label: (provs.length > 1 ? p.name + " · " : "") + m, provider: p.id, model: m });
+    }
+  }
+  return out;
+}
+function populateModelSelect() {
+  if (!modelSelect) return;
+  const opts = modelOptions();
+  modelSelect.innerHTML = opts.map((o) => `<option value="${esc(o.val)}">${esc(o.label)}</option>`).join("");
+  const cur = (config.llm_provider || "") + "\u0000" + (config.model || "");
+  if (opts.some((o) => o.val === cur)) modelSelect.value = cur;
+  else if (config.model) modelSelect.value = "\u0000" + config.model;
+}
+function syncPermSelect() {
+  if (!permSelect) return;
+  const v = permissionPreset || localStorage.getItem("pa_permission_preset") || "standard";
+  permSelect.value = v;
+}
+async function savePermissionPreset(v) {
+  permissionPreset = v;
+  localStorage.setItem("pa_permission_preset", v);
+  try {
+    const res = await api("/api/settings", { method: "PATCH", body: JSON.stringify({ permission_preset: v }) });
+    if (res.status === 401) return;
+    if (!res.ok) throw new Error("HTTP " + res.status);
+  } catch (e) {
+    if (e.message !== "unauthorized") { console.error("save permission_preset", e); toast("权限保存失败"); }
+  }
+}
+async function setModel(provider, model) {
+  if (!provider) { modelSelect.value = (config.llm_provider || "") + "\u0000" + (config.model || ""); return; }
+  try {
+    const res = await api("/api/config/model", { method: "POST", body: JSON.stringify({ provider, model }) });
+    if (res.status === 401) return;
+    if (!res.ok) { toast("模型切换失败"); await loadConfig(); return; }
+    await loadConfig();
+  } catch (e) {
+    if (e.message !== "unauthorized") { console.error("switch model", e); toast("模型切换失败"); }
+  }
+}
+// Composer pref loading: the mode comes from the config view (loadConfigLabels);
+// the permission preset is a persisted setting (fallback localStorage).
+async function loadComposerPrefs() {
+  try {
+    const res = await api("/api/settings");
+    if (res.status === 401) return;
+    const d = await res.json();
+    if (d.permission_preset) { permissionPreset = d.permission_preset; syncPermSelect(); }
+    else { permissionPreset = localStorage.getItem("pa_permission_preset") || "standard"; syncPermSelect(); }
+    if (d.agent_preset) { mode = d.agent_preset; syncModeChip(); }
+  } catch (e) { if (e.message !== "unauthorized") console.error(e); }
 }
 
 // ---- right details panel (dsh ui-conversation DetailsPanel) ----------------
@@ -1615,6 +1794,9 @@ function setComposerDisabled(disabled) {
   composerBox.classList.toggle("disabled", disabled);
   sendBtn.disabled = disabled;
   composerText.disabled = disabled;
+  // The toolbar controls follow the same lock (dsh: the model seat stays live
+  // only while a session exists; here the whole toolbar locks while inert).
+  [permSelect, modelSelect, cmdBtn].forEach((el) => { if (el) el.disabled = disabled; });
 }
 function placeholderFor() {
   if (currentID) return "给智能体发消息…";
@@ -1798,11 +1980,11 @@ sendBtn.addEventListener("click", sendMessage);
 // loadConfigLabels fills the topbar model/mode badges from the cached config.
 function loadConfigLabels() {
   modelLabelEl.textContent = (config.model || "") + (config.llm_provider ? " · " + config.llm_provider : "");
-  modeBadgeEl.textContent = config.mode || "";
-  modeBadgeEl.classList.toggle("hidden", !config.mode);
-  modeBadgeEl.classList.remove("mode-minimal", "mode-code");
-  if (config.mode === "minimal") modeBadgeEl.classList.add("mode-minimal");
-  if (config.mode === "code") modeBadgeEl.classList.add("mode-code");
+  syncModeBadge();
+  populateModelSelect();
+  // The hero chip defaults to the runtime mode until the persisted agent_preset
+  // arrives (loadComposerPrefs overrides it with the staged default).
+  if (!mode) { mode = config.mode || ""; syncModeChip(); }
 }
 async function loadConfig() {
   try {
@@ -3138,7 +3320,9 @@ function boot() {
   applyTheme();
   syncGrow();
   updatePlaceholder();
+  syncPermSelect();
   loadConfig();
+  loadComposerPrefs();
   loadSessions();
   if (currentID) openSession(currentID);
   else {
@@ -3183,6 +3367,29 @@ if (heroWsChip) heroWsChip.addEventListener("click", (e) => {
 // Hero picker popover: a click anywhere outside closes it.
 document.addEventListener("click", (e) => {
   if (heroMenuOpen && !e.target.closest("#hero-ws-chip, #hero-ws-menu")) toggleHeroMenu(false);
+  if (heroModeOpen && !e.target.closest("#hero-mode-chip, #hero-mode-menu")) toggleModeMenu(false);
+  if (cmdMenuOpen && !e.target.closest("#cmd-btn, #cmd-menu")) toggleCmdMenu(false);
+});
+// Hero mode (agent preset) chip: opens the mode menu (dsh AgentPresetSeat).
+if (heroModeChip) heroModeChip.addEventListener("click", (e) => {
+  e.stopPropagation();
+  renderModeMenu();
+  syncModeMenuPosition();
+  toggleModeMenu();
+});
+// Composer command(＋) button: opens the minimal session-action menu.
+if (cmdBtn) cmdBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  renderCmdMenu();
+  syncCmdMenuPosition();
+  toggleCmdMenu();
+});
+// Permission preset selector → persisted global default (dsh PermissionRow).
+if (permSelect) permSelect.addEventListener("change", () => savePermissionPreset(permSelect.value));
+// Model picker → live global model switch (dsh ModelSeat, P5.1 real-time).
+if (modelSelect) modelSelect.addEventListener("change", () => {
+  const [provider, model] = (modelSelect.value || "").split("\u0000");
+  setModel(provider || "", model || "");
 });
 // Right details panel close button (dsh DetailsPanel close).
 if (detailsCloseBtn) detailsCloseBtn.addEventListener("click", closeDetails);

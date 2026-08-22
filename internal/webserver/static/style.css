@@ -958,6 +958,37 @@ mark {
 .send-btn:hover { background: var(--dsw-alias-button-info-hover); }
 .send-btn:disabled { background: var(--dsw-alias-label-dimmed); cursor: not-allowed; }
 
+/* composer toolbar row (dsh InputBar tools / trailing) */
+.composer-tools {
+  max-width: 780px; margin: 8px auto 0;
+  display: flex; align-items: center; gap: 8px;
+}
+.ct-left, .ct-right { display: flex; align-items: center; gap: 6px; }
+.ct-left { flex: 1; min-width: 0; }
+.ct-right { flex: none; }
+.tool-btn {
+  width: 30px; height: 30px; border: none; border-radius: var(--dsw-radius-s);
+  background: transparent; color: var(--dsw-alias-label-primary); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 16px; flex: none;
+}
+.tool-btn:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.tool-btn:disabled { color: var(--dsw-alias-label-dimmed); cursor: not-allowed; }
+.tool-ico svg { display: block; width: 14px; height: 14px; }
+.tool-select {
+  height: 28px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-s); background: var(--dsw-specific-input-major);
+  color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 20px; cursor: pointer;
+  max-width: 220px; min-width: 96px;
+}
+.tool-select:disabled { opacity: 0.5; cursor: not-allowed; }
+.model-select { min-width: 140px; }
+.composer-tools .send-btn { width: 30px; height: 30px; border-radius: var(--dsw-radius-s); }
+/* command / mode menu items: name + short description (dsh AgentPresetSeat item) */
+.ws-menu .hm-item .hm-item-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ws-menu .hm-item .hm-item-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-menu .hm-item .hm-item-desc { font-size: 11px; color: var(--dsw-alias-label-caption); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-menu .hm-item[disabled] { opacity: 0.5; cursor: not-allowed; }
+
 /* scroll-to-bottom floating button */
 .scroll-bottom {
   position: absolute; right: 32px; bottom: 96px;
