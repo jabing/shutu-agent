@@ -577,13 +577,48 @@ let orderBy = localStorage.getItem("pa_orderby") || "manual";
 let wsGroups = [];      // [{id,title,session_ids}]
 let wsUngrouped = [];   // ungrouped session ids
 let wsGroupOpen = {};
+// wsOpenState reads a group's expansion. Default COLLAPSED (dsh
+// groupExpansion: {} — the current session's group auto-expands instead,
+// see autoExpandCurrentGroup); "1" stored = expanded.
 function wsOpenState(key) {
-  if (!(key in wsGroupOpen)) wsGroupOpen[key] = localStorage.getItem("pa_ws_g:" + key) !== "0";
+  if (!(key in wsGroupOpen)) wsGroupOpen[key] = localStorage.getItem("pa_ws_g:" + key) === "1";
   return wsGroupOpen[key];
 }
 function setWsOpen(key, open) {
   wsGroupOpen[key] = open;
   localStorage.setItem("pa_ws_g:" + key, open ? "1" : "0");
+}
+// dateBucketOf returns the date-view bucket label for an ISO timestamp
+// (renderDateGroups' 今天/昨天/最近 7 天/最近 30 天/更早 boundaries).
+function dateBucketOf(iso) {
+  const day = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const today = day(new Date());
+  const DAY = 86400000;
+  const t = new Date(iso).getTime();
+  if (t >= today) return "今天";
+  if (t >= today - DAY) return "昨天";
+  if (t >= today - 6 * DAY) return "最近 7 天";
+  if (t >= today - 29 * DAY) return "最近 30 天";
+  return "更早";
+}
+// autoExpandCurrentGroup starts the current session's group expanded when the
+// user has no stored preference for it (dsh: the group holding the current
+// session expands on mount while unset).
+function autoExpandCurrentGroup(list, view) {
+  if (!currentID || !Array.isArray(list)) return;
+  const cur = list.find((x) => x.id === currentID);
+  if (!cur) return;
+  let ckey = "";
+  if (view === "workspace") {
+    const w = wsGroups.find((g) => g.session_ids.includes(currentID));
+    ckey = w ? w.id : (wsUngrouped.includes(currentID) ? "__u" : "");
+  } else {
+    ckey = "d:" + dateBucketOf(cur.updated_at);
+  }
+  if (ckey && localStorage.getItem("pa_ws_g:" + ckey) === null) {
+    wsGroupOpen[ckey] = true;
+    localStorage.setItem("pa_ws_g:" + ckey, "1");
+  }
 }
 
 async function loadSessions() {
@@ -612,13 +647,18 @@ async function loadSessions() {
   // searchAcrossSessions); nothing else is drawn while searching.
   if (searchQuery) { doSearch(searchQuery); return; }
   if (groupBy === "flat") { renderFlat(list, ""); return; }
-  if (groupBy === "date") { renderDateGroups(list); return; }
+  if (groupBy === "date") {
+    autoExpandCurrentGroup(list, "date");
+    renderDateGroups(list);
+    return;
+  }
   try {
     const wr = await api("/api/workspaces");
     const data = await wr.json();
     wsGroups = data.workspaces || [];
     wsUngrouped = data.ungrouped_ids || [];
   } catch (e) { if (e.message !== "unauthorized") console.error(e); }
+  autoExpandCurrentGroup(list, "workspace");
   renderGrouped(list);
 }
 
@@ -912,23 +952,24 @@ function renderGrouped(list) {
       head.addEventListener("mouseleave", hideWorkspaceHover);
     }
     wrap.appendChild(head);
-    if (wsOpenState(g.key)) {
-      const ul = document.createElement("ul");
-      ul.className = "group-sessions";
-      const shown = g.ids.slice(0, GROUP_SESSION_LIMIT);
-      for (const id of shown) appendSessionItem(ul, byId.get(id));
-      if (g.ids.length > GROUP_SESSION_LIMIT) {
-        const ob = document.createElement("button");
-        ob.className = "session-overflow";
-        ob.textContent = `展开全部会话（${g.ids.length}）`;
-        ob.addEventListener("click", () => {
-          for (const id of g.ids.slice(GROUP_SESSION_LIMIT)) appendSessionItem(ul, byId.get(id));
-          ob.remove();
-        });
-        ul.appendChild(ob);
-      }
-      wrap.appendChild(ul);
+    // Rows are ALWAYS in the DOM; the .closed class hides them (dsh: clicking
+    // the header toggles the group — a group rendered collapsed must still be
+    // able to expand without a re-render).
+    const ul = document.createElement("ul");
+    ul.className = "group-sessions";
+    const shown = g.ids.slice(0, GROUP_SESSION_LIMIT);
+    for (const id of shown) appendSessionItem(ul, byId.get(id));
+    if (g.ids.length > GROUP_SESSION_LIMIT) {
+      const ob = document.createElement("button");
+      ob.className = "session-overflow";
+      ob.textContent = `展开全部会话（${g.ids.length}）`;
+      ob.addEventListener("click", () => {
+        for (const id of g.ids.slice(GROUP_SESSION_LIMIT)) appendSessionItem(ul, byId.get(id));
+        ob.remove();
+      });
+      ul.appendChild(ob);
     }
+    wrap.appendChild(ul);
     sessionList.appendChild(wrap);
   }
   if (!any) {
@@ -944,23 +985,10 @@ function renderGrouped(list) {
 // no workspace actions — they are pure view grouping, collapsible like the
 // workspace headers.
 function renderDateGroups(list) {
-  const now = new Date();
-  const day = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const today = day(now);
-  const DAY = 86400000;
-  const buckets = [
-    { key: "今天", from: today, next: Infinity },
-    { key: "昨天", from: today - DAY, next: today },
-    { key: "最近 7 天", from: today - 6 * DAY, next: today - DAY },
-    { key: "最近 30 天", from: today - 29 * DAY, next: today - 6 * DAY },
-    { key: "更早", from: -Infinity, next: today - 29 * DAY },
-  ];
-  const byBucket = buckets.map((b) => ({ ...b, ids: [] }));
+  const byBucket = ["今天", "昨天", "最近 7 天", "最近 30 天", "更早"].map((key) => ({ key, ids: [] }));
   for (const s of list) {
-    const t = new Date(s.updated_at).getTime();
-    for (const b of byBucket) {
-      if (t >= b.from && t < b.next) { b.ids.push(s.id); break; }
-    }
+    const b = byBucket.find((x) => x.key === dateBucketOf(s.updated_at));
+    if (b) b.ids.push(s.id);
   }
   let any = false;
   for (const b of byBucket) {
@@ -981,13 +1009,13 @@ function renderDateGroups(list) {
       wrap.classList.toggle("closed", !wsOpenState("d:" + b.key));
     });
     wrap.appendChild(head);
-    if (wsOpenState("d:" + b.key)) {
-      const ul = document.createElement("ul");
-      ul.className = "group-sessions";
-      const byId = new Map(list.map((s) => [s.id, s]));
-      for (const id of b.ids) appendSessionItem(ul, byId.get(id));
-      wrap.appendChild(ul);
-    }
+    // Rows are always in the DOM; the .closed class hides them (same contract
+    // as the workspace groups: a collapsed bucket can expand by clicking).
+    const ul = document.createElement("ul");
+    ul.className = "group-sessions";
+    const byId = new Map(list.map((s) => [s.id, s]));
+    for (const id of b.ids) appendSessionItem(ul, byId.get(id));
+    wrap.appendChild(ul);
     sessionList.appendChild(wrap);
   }
   if (!any) {
