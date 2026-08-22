@@ -1826,7 +1826,10 @@ func (s *Server) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-const defaultContextWindow = 128000
+// defaultContextWindow is the fallback token budget when the wired
+// contextWindowFn cannot resolve the model (dsh llm-deepseek
+// DEFAULT_CONTEXT_WINDOW: 1,000,000).
+const defaultContextWindow = 1000000
 
 // handleTurnStop implements POST /api/sessions/{id}/stop (dsh 停止按钮): it asks
 // the composition root to cancel the session's running turn (if any).

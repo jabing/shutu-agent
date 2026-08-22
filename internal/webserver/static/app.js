@@ -1894,8 +1894,13 @@ function refreshContextMeter() {
     });
   }).catch(() => {});
 }
+// fmtTokens renders a compact token count (dsh formatTokens): 517 / 12.2K /
+// 517K / 1.2M — one decimal only under three digits.
 function fmtTokens(n) {
-  return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n);
+  const scaled = (v) => v >= 100 ? String(Math.round(v)) : String(Math.round(v * 10) / 10);
+  if (n < 1000) return String(n);
+  if (n < 1000000) return scaled(n / 1000) + "K";
+  return scaled(n / 1000000) + "M";
 }
 // The send button doubles as the run stop (dsh InputBar primaryStops): while a
 // turn is in flight it shows ■ and aborts; otherwise it is the send arrow.

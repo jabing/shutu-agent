@@ -363,22 +363,34 @@ func (a *app) webSessionManager(ctx context.Context, action, id string) (string,
 // settings page cannot leak credentials. Field names are snake_case. P5.1 adds
 // the live model panel: the currently active provider's model plus the
 // registered providers (id/available/model/candidates) for the pickers.
-// builtinContextWindows are the known DeepSeek defaults; unknown models fall
-// back to the webserver's defaultContextWindow (128k).
+// builtinContextWindows are the known DeepSeek catalog defaults (dsh
+// llm-deepseek DEFAULT_CONTEXT_WINDOW: 1,000,000 for both V4 models); unknown
+// models fall back to the webserver's defaultContextWindow (1M, dsh default).
 var builtinContextWindows = map[string]int{
-	"deepseek-v4-flash": 128000,
-	"deepseek-v4-pro":   128000,
+	"deepseek-v4-flash": 1000000,
+	"deepseek-v4-pro":   1000000,
 }
 
 // contextWindowOf resolves the effective model's context window for the
-// ContextMeter. It honors the per-session model override (store assertion,
-// same as the webserver's config handlers) and falls back to the global model.
+// ContextMeter (dsh resolveModelInfo: the configured model-directory entry's
+// capacity wins, then the catalog default). It honors the per-session
+// provider+model selection (store assertion, same as the webserver's config
+// handlers) and falls back to the global selection. An unknown model returns
+// 0 and the webserver applies its own defaultContextWindow.
 func (a *app) contextWindowOf(sessionID string) int {
-	model := ""
+	provider, model := "", ""
 	if scs, ok := a.store.(store.SessionConfigStore); ok && sessionID != "" {
-		if cfg, err := scs.GetSessionConfig(context.Background(), sessionID); err == nil && cfg.Model != "" {
-			model = cfg.Model
+		if cfg, err := scs.GetSessionConfig(context.Background(), sessionID); err == nil {
+			if cfg.Provider != "" {
+				provider = cfg.Provider
+			}
+			if cfg.Model != "" {
+				model = cfg.Model
+			}
 		}
+	}
+	if provider == "" {
+		provider = a.cfg.LLM.Provider
 	}
 	if model == "" {
 		model = a.cfg.Model
@@ -386,8 +398,40 @@ func (a *app) contextWindowOf(sessionID string) int {
 	if model == "" {
 		return 0
 	}
+	// The configured directory is authoritative for its provider (dsh
+	// resolveModelInfo: configured?.contextWindow first).
+	if w := a.directoryContextWindow(provider, model); w > 0 {
+		return w
+	}
 	if w, ok := builtinContextWindows[model]; ok {
 		return w
+	}
+	return 0
+}
+
+// directoryContextWindow looks up the configured model-directory entry's
+// context window for (provider, model): the persisted built-in profile models
+// (llm.profile.<id>.models) or the custom provider's model list. 0 means the
+// entry is absent or carries no capacity.
+func (a *app) directoryContextWindow(provider, model string) int {
+	if provider == "" {
+		return 0
+	}
+	if bp, ok := a.builtinProfiles[provider]; ok {
+		for _, m := range bp.Models {
+			if m.ID == model {
+				return m.ContextWindow
+			}
+		}
+	}
+	for _, cp := range a.customProviders {
+		if cp.ID == provider {
+			for _, m := range cp.Models {
+				if m.ID == model {
+					return m.ContextWindow
+				}
+			}
+		}
 	}
 	return 0
 }

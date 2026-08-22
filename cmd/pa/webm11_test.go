@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/store"
@@ -503,4 +504,68 @@ func findProvider(list []map[string]any, id string) map[string]any {
 		}
 	}
 	return nil
+}
+
+// TestContextWindowOf verifies the ContextMeter budget resolution (dsh
+// resolveModelInfo): the configured model-directory entry's capacity wins over
+// the DeepSeek catalog default (1,000,000, dsh DEFAULT_CONTEXT_WINDOW), the
+// per-session selection beats the globals, and an unknown model resolves to 0
+// (the webserver then applies its own defaultContextWindow).
+func TestContextWindowOf(t *testing.T) {
+	a, st := m11App(t)
+	ctx := context.Background()
+
+	// Global model: the DeepSeek V4 catalog default (1M).
+	a.cfg.Model = "deepseek-v4-flash"
+	if w := a.contextWindowOf(""); w != 1000000 {
+		t.Fatalf("global v4 window = %d, want 1000000", w)
+	}
+	// A model outside the catalog → 0 (webserver default applies).
+	a.cfg.Model = "deepseek-chat"
+	if w := a.contextWindowOf(""); w != 0 {
+		t.Fatalf("unknown model window = %d, want 0", w)
+	}
+
+	// Per-session provider+model selection is honored.
+	if err := st.CreateSession(ctx, "s1", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSessionConfig(ctx, "s1", store.SessionConfig{Provider: "deepseek-official", Model: "deepseek-v4-pro"}); err != nil {
+		t.Fatal(err)
+	}
+	if w := a.contextWindowOf("s1"); w != 1000000 {
+		t.Fatalf("session v4 window = %d, want 1000000", w)
+	}
+
+	// A built-in profile model-directory entry wins over the catalog for its
+	// own models only.
+	a.builtinProfiles = map[string]builtinProviderProfile{
+		"deepseek-official": {Models: []customModel{{ID: "my-custom-1", ContextWindow: 64000}}},
+	}
+	if w := a.contextWindowOf("s1"); w != 1000000 {
+		t.Fatalf("v4-pro with profile = %d, want 1000000 (no directory entry)", w)
+	}
+	if err := st.SetSessionConfig(ctx, "s1", store.SessionConfig{Provider: "deepseek-official", Model: "my-custom-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if w := a.contextWindowOf("s1"); w != 64000 {
+		t.Fatalf("profile directory window = %d, want 64000", w)
+	}
+
+	// A custom provider's model list is the directory for its models.
+	a.customProviders = []customProviderProfile{
+		{ID: "my-gw", Name: "My Gateway", Models: []customModel{{ID: "gw-a"}, {ID: "gw-b", ContextWindow: 32000}}},
+	}
+	if err := st.SetSessionConfig(ctx, "s1", store.SessionConfig{Provider: "my-gw", Model: "gw-b"}); err != nil {
+		t.Fatal(err)
+	}
+	if w := a.contextWindowOf("s1"); w != 32000 {
+		t.Fatalf("custom directory window = %d, want 32000", w)
+	}
+	if err := st.SetSessionConfig(ctx, "s1", store.SessionConfig{Provider: "my-gw", Model: "gw-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if w := a.contextWindowOf("s1"); w != 0 {
+		t.Fatalf("capacity-less custom model window = %d, want 0", w)
+	}
 }
