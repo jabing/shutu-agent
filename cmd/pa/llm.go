@@ -169,6 +169,25 @@ func (a *app) currentLLM() llm.LLM {
 	return a.llm
 }
 
+// llmFor resolves the adapter a turn should talk to (dsh ModelSelection 对齐:
+// a session pinned to a provider routes its turns through that provider).
+// An empty id or an unknown provider falls back to the global LLM (fail-open,
+// same spirit as the session-runtime fallbacks).
+func (a *app) llmFor(provider string) llm.LLM {
+	if provider == "" {
+		return a.currentLLM()
+	}
+	a.llmMu.RLock()
+	reg := a.llmReg
+	a.llmMu.RUnlock()
+	if reg != nil {
+		if p, err := reg.Get(provider); err == nil {
+			return p
+		}
+	}
+	return a.currentLLM()
+}
+
 // llmProviderIDs returns the registered provider ids as a comma-joined list
 // (for the fail-closed error message).
 func llmProviderIDs(reg *llm.Registry) string {

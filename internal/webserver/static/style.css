@@ -1064,6 +1064,21 @@ mark {
 }
 .model-menu .ms-search input:focus { border-color: var(--dsw-alias-state-business-primary); }
 .model-menu .ms-group { padding: 6px 10px 2px; font-size: 12px; color: var(--dsw-alias-label-caption); font-weight: 600; }
+/* dsh ModelSelect sub-features: the loading strip, the failed-refresh error
+   strip with 重新加载, and the empty state (dsh status/error/empty) */
+.model-menu .ms-status,
+.model-menu .ms-empty { padding: 10px; color: var(--dsw-alias-label-tertiary); font-size: 13px; line-height: 20px; }
+.model-menu .ms-error {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+  margin: 4px; padding: 7px 8px; border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px; line-height: 18px;
+}
+.model-menu .ms-error .ms-retry {
+  flex: 0 0 auto; padding: 0; border: none; background: transparent;
+  color: inherit; font: inherit; font-weight: 600; cursor: pointer;
+}
 /* permission seat button (dsh PermissionSelect Access chip): shield glyph +
    label + chevron, matching the sibling model trigger */
 .perm-seat {

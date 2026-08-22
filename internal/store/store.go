@@ -47,14 +47,18 @@ type SessionMeta struct {
 	LastViewedAt time.Time
 }
 
-// SessionConfig is the per-session override for the mode preset, LLM model and
-// permission tier (Phase 2: 按会话切换). Empty fields fall back to the global
-// config. Mode is locked at session creation (agent_preset); model and
-// permission stay editable per session.
+// SessionConfig is the per-session override for the mode preset, LLM provider /
+// model / reasoning effort and permission tier (Phase 2: 按会话切换; dsh
+// ModelSelection 对齐: the session owns its full provider+model+effort
+// selection). Empty fields fall back to the global config. Mode is locked at
+// session creation (agent_preset); provider, model, effort and permission stay
+// editable per session.
 type SessionConfig struct {
-	AgentPreset string // "" | minimal | standard | code (locked at creation)
-	Model       string // "" → fall back to the global model
-	Permission  string // "" | readonly | standard | full
+	AgentPreset     string // "" | minimal | standard | code (locked at creation)
+	Provider        string // "" → fall back to the global provider (dsh selection.provider)
+	Model           string // "" → fall back to the global model
+	ReasoningEffort string // "" | off | low | high | max ("" → provider default)
+	Permission      string // "" | readonly | standard | full
 }
 
 // SessionConfigStore is the per-session-config read/write surface. It is NOT on
@@ -66,12 +70,12 @@ type SessionConfigStore interface {
 	// GetSessionConfig reads a session's overrides; a missing or legacy
 	// session returns zero values (ErrNotFound only when the id has no row).
 	GetSessionConfig(ctx context.Context, sessionID string) (SessionConfig, error)
-	// SetSessionConfig writes the full override triple (used at creation and
-	// by the loop's mode lock). ErrNotFound when the id has no row.
+	// SetSessionConfig writes the full override set (used at creation and by
+	// the loop's mode lock). ErrNotFound when the id has no row.
 	SetSessionConfig(ctx context.Context, sessionID string, cfg SessionConfig) error
-	// UpdateSessionConfig rewrites only model and permission (mode stays
-	// locked). ErrNotFound when the id has no row.
-	UpdateSessionConfig(ctx context.Context, sessionID, model, permission string) error
+	// UpdateSessionConfig rewrites provider, model, reasoning effort and
+	// permission (mode stays locked). ErrNotFound when the id has no row.
+	UpdateSessionConfig(ctx context.Context, sessionID, provider, model, reasoningEffort, permission string) error
 }
 
 // SearchHit is one session that matched a body-text query, with the first

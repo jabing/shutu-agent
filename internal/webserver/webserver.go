@@ -1040,8 +1040,10 @@ func (s *Server) handleSessionConfigGet(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleSessionConfigPatch implements PATCH /api/sessions/{id}/config: it
-// rewrites model and permission only (the mode is locked at creation). It
-// returns the updated overrides.
+// rewrites provider, model, reasoning effort and permission only (the mode is
+// locked at creation). The provider+model pair is the dsh ModelSelection of
+// the session — the runtime routes the session's turns through that provider.
+// It returns the updated overrides.
 func (s *Server) handleSessionConfigPatch(w http.ResponseWriter, r *http.Request) {
 	scs, ok := s.store.(store.SessionConfigStore)
 	if !ok {
@@ -1049,8 +1051,10 @@ func (s *Server) handleSessionConfigPatch(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var body struct {
-		Model      string `json:"model"`
-		Permission string `json:"permission"`
+		Provider        string `json:"provider"`
+		Model           string `json:"model"`
+		ReasoningEffort string `json:"reasoning_effort"`
+		Permission      string `json:"permission"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid body"})
@@ -1060,7 +1064,13 @@ func (s *Server) handleSessionConfigPatch(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unknown permission: " + body.Permission})
 		return
 	}
-	if err := scs.UpdateSessionConfig(r.Context(), r.PathValue("id"), body.Model, body.Permission); err != nil {
+	// dsh ModelSelect 思考强度: "" clears back to the provider default; the
+	// levels mirror the deepseek wire (off|low|high|max).
+	if !validEffort(body.ReasoningEffort) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unknown reasoning_effort: " + body.ReasoningEffort})
+		return
+	}
+	if err := scs.UpdateSessionConfig(r.Context(), r.PathValue("id"), body.Provider, body.Model, body.ReasoningEffort, body.Permission); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 			return
@@ -1079,16 +1089,25 @@ func (s *Server) handleSessionConfigPatch(w http.ResponseWriter, r *http.Request
 // configView is the JSON shape of per-session overrides.
 func configView(cfg store.SessionConfig) map[string]any {
 	return map[string]any{
-		"agent_preset": cfg.AgentPreset,
-		"model":        cfg.Model,
-		"permission":   cfg.Permission,
+		"agent_preset":     cfg.AgentPreset,
+		"provider":         cfg.Provider,
+		"model":            cfg.Model,
+		"reasoning_effort": cfg.ReasoningEffort,
+		"permission":       cfg.Permission,
 	}
 }
 
 // validMode reports whether m is a known mode preset id.
 func validMode(m string) bool { return m == "minimal" || m == "standard" || m == "code" }
+
 // validPermission reports whether p is a known permission tier id.
 func validPermission(p string) bool { return p == "readonly" || p == "standard" || p == "full" }
+
+// validEffort reports whether e is a known reasoning-effort level ("" clears
+// the selection back to the provider default; dsh ModelSelect 思考强度).
+func validEffort(e string) bool {
+	return e == "" || e == "off" || e == "low" || e == "high" || e == "max"
+}
 
 // handleSessionResume implements POST /api/sessions/{id}/resume: it asks the
 // injected session manager to resume the session and returns its id.

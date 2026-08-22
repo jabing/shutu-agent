@@ -65,10 +65,14 @@ let modelMenuOpen = false;          // composer model seat popover state
 let modelPane = "root";             // model seat menu pane: root | model | effort (dsh ModelSelect)
 let effortTarget = "";              // model id whose effort pane is open ("" = current model)
 let effortTargetProv = "";          // provider id of effortTarget
+let modelSearch = "";               // live search term in the model pane (kept across re-renders)
+let catalogLoading = false;         // /api/config refresh in flight (dsh status.loading)
+let catalogError = null;            // last /api/config refresh error (dsh error strip + 重新加载)
+let modelBusy = false;              // a selection is being applied (dsh busy disables the items)
 let mode = "";                      // current mode preset: standard | code | minimal
 let permissionPreset = "";          // current permission preset: readonly | standard | full
 let permMenuOpen = false;           // composer permission seat popover state
-let sessionCfg = { model: "", permission: "" }; // active session's per-session overrides ("" → fall back global)
+let sessionCfg = { provider: "", model: "", effort: "", permission: "" }; // active session's per-session selection (dsh ModelSelection: provider+model+effort; "" → fall back global)
 let wsList = [];                    // [{id,title}] for the hero picker (from /api/workspaces)
 let toolMeta = {};                  // callId -> {name, args} captured from assistant tool_call
 let selectedTool = null;            // {callId,name,args,output,error} shown in the details panel
@@ -1400,7 +1404,7 @@ function newSession() {
   syncSendButton();
   messagesEl.querySelector(".messages-inner")?.remove();
   curSessionEl.textContent = "";
-  sessionCfg = { model: "", permission: "" };
+  sessionCfg = { provider: "", model: "", effort: "", permission: "" };
   heroEl.classList.remove("hidden");
   // Hero composer is inert until a workspace is picked (dsh: choose-workspace
   // placeholder), unless a hero workspace was already chosen previously.
@@ -1644,42 +1648,69 @@ function syncModelSeatPosition() {
   }
 }
 // renderModelMenu renders the composer model seat's two-level menu (dsh
-// ModelSelect 对齐): the root pane shows the 模型 / 思考强度 rows, each
+// ModelSelect 对齐): the root pane shows the 模型 / 推理等级 rows, each
 // drilling into its own list — the provider-grouped model list over the live
-// provider directory, and the effort levels for the target model.
+// provider directory (the persisted model directory is authoritative for its
+// provider: every model the user configured appears, dsh catalog), and the
+// effort levels for the target model. Sub-features mirror dsh: the catalog
+// refreshes on every open with a loading strip (正在刷新模型列表…), a failed
+// refresh shows an error strip with 重新加载, the model list carries the empty
+// state 没有可用的模型。, and a selection keeps the menu open (items disabled
+// while busy) until the host accepts it.
 function renderModelMenu(term) {
   if (!modelMenu) return;
-  const q = (term || "").toLowerCase();
-  const provs = (config.providers || []).filter((p) => p.available || p.id === config.llm_provider);
+  modelSearch = term || "";
+  const q = modelSearch.toLowerCase();
+  const activeProv = sessionCfg.provider || config.llm_provider || "";
+  const provs = (config.providers || []).filter((p) => p.available || p.id === activeProv);
   const multiple = provs.length > 1;
   const active = sessionCfg.model || config.model || "";
-  const activeProv = config.llm_provider || (provs[0] && provs[0].id) || "";
-  const currentEffort = config.reasoning_effort || "";
+  // The session's own selection wins over the global runtime one (dsh
+  // ModelSelection: provider+model+effort are per-session).
+  const currentEffort = sessionCfg.effort || config.reasoning_effort || "";
   const reasoningForModel = (prov, model) => {
     const p = provs.find((x) => x.id === prov);
     return (p && p.reasoning && p.reasoning[model]) || null;
   };
-  // One provider's selectable models: its current model plus every candidate
-  // (dsh ModelDirectory: the directory is authoritative for its providers).
+  // One provider's selectable models (dsh ModelDirectory: the directory is
+  // authoritative for its providers): the current model plus every configured
+  // directory entry (llm.profile.<id>.models / custom provider models), else
+  // the suggested candidates. Each entry carries its display name and an
+  // optional description line (context window for configured models).
   const providerModels = (p) => {
     const out = [];
-    if (p.model) out.push(p.model);
-    for (const c of (p.candidates || [])) if (!out.includes(c)) out.push(c);
+    const push = (id, name, desc) => { if (!out.some((x) => x.id === id)) out.push({ id, name: name || id, desc: desc || "" }); };
+    if (p.model) push(p.model, MODEL_DISPLAY[p.model] || p.model, "");
+    const dir = (p.models && p.models.length) ? p.models : null;
+    if (dir) {
+      for (const m of dir) {
+        const id = (m && (m.id || m)) || "";
+        if (!id) continue;
+        push(id, MODEL_DISPLAY[id] || m.name || id, (m.context_window > 0) ? fmtTokens(m.context_window) + " 上下文" : "");
+      }
+    } else {
+      for (const c of (p.candidates || [])) push(c, MODEL_DISPLAY[c] || c, "");
+    }
     return out;
   };
+  // Display name of the current model inside a provider (dsh model.name).
+  const nameFor = (prov, model) => modelDisplayName(prov, model);
   const effLabel = (eff) => {
-    if (eff === "") return "提供方默认";
+    if (eff === "") return "Default"; // dsh effort.providerDefault
     return eff.charAt(0).toUpperCase() + eff.slice(1);
   };
   const effortLabelFor = (prov, model) => {
     const r = reasoningForModel(prov, model);
     if (!r) return undefined;
+    // dsh: the effective effort is the explicit selection ?? the model's
+    // default effort (deepseek defines high → the trigger shows High, not
+    // Default).
     const eff = currentEffort || r.default_effort || "";
-    return eff === "" ? "提供方默认" : effLabel(eff);
+    return eff === "" ? "Default" : effLabel(eff);
   };
 
   const item = (label, sub, opts) =>
-    `<button class="hm-item${opts && (opts.active || opts.checked) ? " hm-active" : ""}" role="menuitem" data-action="${opts && opts.action || ""}" data-prov="${opts && opts.prov || ""}" data-model="${opts && opts.model || ""}" data-effort="${opts && opts.effort || ""}">
+    `<button class="hm-item${opts && (opts.active || opts.checked) ? " hm-active" : ""}" role="menuitem" data-action="${opts && opts.action || ""}" data-prov="${opts && opts.prov || ""}" data-model="${opts && opts.model || ""}" data-effort="${opts && opts.effort || ""}"${opts && opts.disabled ? " disabled" : ""}>
       <span class="hm-item-text"><span class="hm-item-name">${esc(label)}</span>${sub ? `<span class="hm-item-desc">${esc(sub)}</span>` : ""}</span>
       ${opts && opts.checked ? `<span class="hm-check">✓</span>` : ""}
       ${opts && opts.chevron ? `<span class="hm-caret">›</span>` : ""}
@@ -1687,47 +1718,60 @@ function renderModelMenu(term) {
 
   let body = "";
   if (modelPane === "model") {
-    body = provs.map((g) => {
-      const models = providerModels(g).filter((m) => !q || m.toLowerCase().includes(q));
+    // dsh ModelSelect sub-features: loading strip while the catalog refreshes,
+    // an error strip with 重新加载 after a failed refresh, provider groups
+    // (name + description per model), and the empty state.
+    if (catalogLoading) body += `<div class="ms-status">正在刷新模型列表…</div>`;
+    if (catalogError) body += `<div class="ms-error"><span>模型操作失败：${esc(catalogError)}</span><button type="button" class="ms-retry">重新加载</button></div>`;
+    let shown = 0;
+    body += provs.map((g) => {
+      const models = providerModels(g).filter((x) => !q || x.id.toLowerCase().includes(q));
+      shown += models.length;
       return (multiple && models.length ? `<div class="ms-group">${esc(g.name)}</div>` : "") +
         models.map((m) => {
-          const sel = m === active && g.id === activeProv;
-          const r = reasoningForModel(g.id, m);
-          return item(m, sel ? "当前" : "", {
-            action: "pick-model", prov: g.id, model: m, checked: sel,
-            chevron: !!r,
+          const sel = m.id === active && g.id === activeProv;
+          const r = reasoningForModel(g.id, m.id);
+          return item(m.name, m.desc, {
+            action: "pick-model", prov: g.id, model: m.id, checked: sel,
+            chevron: !!r, disabled: modelBusy,
           });
         }).join("");
     }).join("");
-    if (!provs.length) body = `<button class="hm-item" disabled><span class="hm-item-name">无可用模型</span></button>`;
+    if (!shown && !catalogLoading) {
+      body += `<div class="ms-empty">没有可用的模型。</div>`;
+    }
   } else if (modelPane === "effort") {
     const prov = effortTargetProv;
     const model = effortTarget;
     const r = reasoningForModel(prov, model);
     if (r) {
-      const effs = r.default_effort ? [{ id: "", name: "提供方默认" }, ...r.efforts] : r.efforts;
+      // dsh: the provider-default option exists only when the model declares
+      // no default effort (deepseek declares high → the listed levels only).
+      const effs = r.default_effort ? r.efforts : [{ id: "", name: "Default" }, ...r.efforts];
+      const cur = currentEffort || (r.default_effort || "");
       body = effs.map((e) => {
-        const cur = currentEffort || (r.default_effort || "");
         return item(e.name, "", {
           action: "pick-effort", prov, model, effort: e.id, checked: (e.id || "") === cur,
+          disabled: modelBusy,
         });
       }).join("");
     } else {
-      body = `<button class="hm-item" disabled><span class="hm-item-name">该模型不支持思考强度</span></button>`;
+      body = `<div class="ms-empty">当前模型未提供推理等级。</div>`;
     }
   } else {
-    // root pane (dsh ModelSelect root): 模型 / 思考强度 rows.
-    const effortSub = effortLabelFor(activeProv, active) || "不支持";
-    body = item("模型", active || "未选择", { action: "open-model", chevron: true }) +
-      item("思考强度", effortSub, { action: "open-effort", chevron: true });
+    // root pane (dsh ModelSelect root): 模型 / 推理等级 rows. The effort row
+    // exists only when the current model offers reasoning (dsh condition).
+    const reasoning = reasoningForModel(activeProv, active);
+    body = item("模型", nameFor(activeProv, active) || "选择模型", { action: "open-model", chevron: true });
+    if (reasoning) body += item("推理等级", effortLabelFor(activeProv, active) || "Default", { action: "open-effort", chevron: true });
   }
   const search = modelPane === "model"
-    ? `<div class="ms-search"><input id="model-search" type="text" placeholder="搜索模型…" autocomplete="off" value="${esc(term || "")}"></div>`
+    ? `<div class="ms-search"><input id="model-search" type="text" placeholder="搜索模型…" autocomplete="off" value="${esc(modelSearch)}"></div>`
     : "";
   modelMenu.innerHTML = search + body;
   modelMenu.querySelectorAll(".hm-item").forEach((btn) => {
     if (btn.disabled) return;
-    btn.addEventListener("click", (ev) => {
+    btn.addEventListener("click", async (ev) => {
       ev.stopPropagation();
       const act = btn.dataset.action;
       if (act === "open-model") { modelPane = "model"; renderModelMenu(""); syncModelSeatPosition(); return; }
@@ -1737,23 +1781,58 @@ function renderModelMenu(term) {
       }
       if (act === "pick-model") {
         const m = btn.dataset.model, prov = btn.dataset.prov;
-        setModel(prov, m);
-        if (btn.querySelector(".hm-caret")) { effortTarget = m; effortTargetProv = prov; modelPane = "effort"; renderModelMenu(""); syncModelSeatPosition(); }
-        else { modelPane = "root"; toggleModelMenu(false); }
+        // dsh choose(): selecting the current model just closes.
+        if (m === active && prov === activeProv) { modelPane = "root"; toggleModelMenu(false); return; }
+        const ok = await setModel(prov, m);
+        // dsh settleSelection: close only when the host accepted the selection.
+        if (ok) { modelPane = "root"; toggleModelMenu(false); }
         return;
       }
       if (act === "pick-effort") {
-        setEffort(btn.dataset.effort);
-        modelPane = "root"; toggleModelMenu(false);
+        const ok = await setEffort(btn.dataset.effort);
+        if (ok) { modelPane = "root"; toggleModelMenu(false); }
         return;
       }
     });
   });
+  const retry = modelMenu.querySelector(".ms-retry");
+  if (retry) retry.addEventListener("click", () => { catalogError = null; void refreshModelCatalog(); });
   const si = $("model-search");
   if (si) {
     si.focus();
     si.addEventListener("input", () => renderModelMenu(si.value));
-    si.addEventListener("keydown", (e) => { if (e.key === "Escape") toggleModelMenu(false); e.stopPropagation(); });
+    // dsh Escape: a drilled pane backs out to the root first, then closes.
+    si.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); if (modelPane !== "root") { modelPane = "root"; renderModelMenu(""); syncModelSeatPosition(); } else { toggleModelMenu(false); } return; }
+      e.stopPropagation();
+    });
+  } else if (modelMenuOpen) {
+    // A pane switch replaced the focused element (drill-in or Escape back to
+    // root): move focus to the first item so the resulting focusout (removed
+    // element, relatedTarget null) cannot close the menu (dsh keyboard
+    // discipline keeps focus inside the menu across panes).
+    const first = modelMenu.querySelector(".hm-item:not([disabled])");
+    if (first && !modelMenu.contains(document.activeElement)) first.focus();
+  }
+}
+// refreshModelCatalog re-fetches /api/config while the model menu is open
+// (dsh: every menu open reloads the directory). Failure keeps the last good
+// list and surfaces the error strip with 重新加载.
+async function refreshModelCatalog() {
+  catalogLoading = true;
+  catalogError = null;
+  if (modelMenuOpen) renderModelMenu(modelSearch);
+  try {
+    const res = await api("/api/config");
+    if (res.status === 401) return;
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    config = await res.json();
+    loadConfigLabels();
+  } catch (e) {
+    if (e.message !== "unauthorized") catalogError = e.message || "网络错误";
+  } finally {
+    catalogLoading = false;
+    if (modelMenuOpen) renderModelMenu(modelSearch);
   }
 }
 function toggleModelMenu(force) {
@@ -1769,37 +1848,37 @@ function runCmd(cmd) {
   if (cmd === "archive") { archiveSession(currentID); }
   else if (cmd === "delete") { deleteSession(currentID); }
 }
-// Populate the model picker from the live provider directory (/api/config). Each
-// option is provider::model; the change handler switches via POST /api/config/model.
-function modelOptions() {
-  const provs = (config.providers || []).filter((p) => p.available || p.id === config.llm_provider);
-  const out = [];
-  for (const p of provs) {
-    const models = [];
-    if (p.model) models.push(p.model);
-    for (const c of (p.candidates || [])) if (!models.includes(c)) models.push(c);
-    for (const m of models) {
-      out.push({ val: p.id + "\u0000" + m, label: (provs.length > 1 ? p.name + " · " : "") + m, provider: p.id, model: m });
-    }
+// modelDisplayName resolves a provider model's display name (dsh model.name):
+// the directory entry's name when configured, else the known-display map,
+// else the raw id.
+function modelDisplayName(prov, model) {
+  if (!model) return "";
+  const p = (config.providers || []).find((x) => x.id === prov);
+  if (p && p.models && p.models.length) {
+    const m = p.models.find((x) => (x && (x.id || x)) === model);
+    if (m && m.name) return m.name;
   }
-  return out;
+  return MODEL_DISPLAY[model] || model;
 }
 // Current effective model shown on the model seat label (dsh ModelSeat): the
-// session override, else the live global model.
+// session override, else the live global model; the effort caption follows the
+// same precedence (dsh trigger: "model · effort", effort = selection ?? the
+// model's default, "Default" when none). The label shows the model NAME, not
+// the raw id (dsh trigger renders model.name).
 function syncModelSeat() {
   if (!modelSeatLabel) return;
   const eff = sessionCfg.model || config.model || "";
-  // dsh ModelSelect trigger: "model · effort" when the model offers one.
-  let label = eff || "模型";
-  const prov = config.llm_provider || "";
+  const prov = sessionCfg.provider || config.llm_provider || "";
+  const name = modelDisplayName(prov, eff) || "模型";
   const r = ((config.providers || []).find((p) => p.id === prov) || {}).reasoning || {};
   const modelEffort = r[eff];
   if (modelEffort) {
-    const cur = config.reasoning_effort || modelEffort.default_effort || "";
-    const name = cur === "" ? "提供方默认" : (cur.charAt(0).toUpperCase() + cur.slice(1));
-    label = eff + " · " + name;
+    const cur = sessionCfg.effort || config.reasoning_effort || modelEffort.default_effort || "";
+    const effortName = cur === "" ? "Default" : (cur.charAt(0).toUpperCase() + cur.slice(1));
+    modelSeatLabel.textContent = name + " · " + effortName;
+    return;
   }
-  modelSeatLabel.textContent = label;
+  modelSeatLabel.textContent = name;
 }
 // ContextMeter (dsh): fetch the session's estimated token use + window and show
 // a compact "used / window" caption in the composer trailing row.
@@ -1934,9 +2013,16 @@ async function savePermissionPreset(v) {
   localStorage.setItem("pa_permission_preset", v);
   if (currentID) {
     // Per-session tier: update the active session's override (mode is locked).
+    // The PATCH rewrites the whole selection, so the current provider/model/
+    // effort ride along (dsh ModelSelection).
     try {
       const res = await api(`/api/sessions/${encodeURIComponent(currentID)}/config`, {
-        method: "PATCH", body: JSON.stringify({ model: sessionCfg.model, permission: v }),
+        method: "PATCH", body: JSON.stringify({
+          provider: sessionCfg.provider || "",
+          model: sessionCfg.model || "",
+          reasoning_effort: sessionCfg.effort || "",
+          permission: v,
+        }),
       });
       if (res.status === 401) return;
       if (!res.ok) throw new Error("HTTP " + res.status);
@@ -1958,61 +2044,98 @@ async function savePermissionPreset(v) {
   syncPermSelect();
 }
 async function setModel(provider, model) {
-  if (!provider) { syncModelSeat(); return; }
-  if (currentID) {
-    // Per-session model: update the active session's override.
-    try {
+  if (!provider) { syncModelSeat(); return true; }
+  modelBusy = true;
+  if (modelMenuOpen) renderModelMenu(modelSearch);
+  try {
+    if (currentID) {
+      // Per-session selection (dsh ModelSelection): provider+model+effort are
+      // one selection; PATCH rewrites all of them, so the full current
+      // selection is sent every time.
       const res = await api(`/api/sessions/${encodeURIComponent(currentID)}/config`, {
-        method: "PATCH", body: JSON.stringify({ model, permission: sessionCfg.permission }),
+        method: "PATCH", body: JSON.stringify({
+          provider, model,
+          reasoning_effort: sessionCfg.effort || "",
+          permission: sessionCfg.permission,
+        }),
       });
-      if (res.status === 401) return;
-      if (!res.ok) { toast("模型切换失败"); return; }
+      if (res.status === 401) return false;
+      if (!res.ok) { toast("模型切换失败"); return false; }
+      sessionCfg.provider = provider;
       sessionCfg.model = model;
       syncModelSeat();
-    } catch (e) {
-      if (e.message !== "unauthorized") { console.error("session model", e); toast("模型切换失败"); }
+      return true;
     }
-    return;
-  }
-  // No active session: live global model switch.
-  try {
+    // No active session: live global model switch.
     const res = await api("/api/config/model", { method: "POST", body: JSON.stringify({ provider, model }) });
-    if (res.status === 401) return;
-    if (!res.ok) { toast("模型切换失败"); await loadConfig(); return; }
+    if (res.status === 401) return false;
+    if (!res.ok) { toast("模型切换失败"); await loadConfig(); return false; }
     await loadConfig();
+    return true;
   } catch (e) {
-    if (e.message !== "unauthorized") { console.error("switch model", e); toast("模型切换失败"); }
+    if (e.message !== "unauthorized") { console.error("session model", e); toast("模型切换失败"); }
+    return false;
+  } finally {
+    modelBusy = false;
+    if (modelMenuOpen) renderModelMenu(modelSearch);
   }
 }
 
-// setEffort applies a thinking-effort selection (dsh ModelSelect 思考强度):
+// setEffort applies a thinking-effort selection (dsh ModelSelect 推理等级):
 // "" restores the provider default; "off"|"low"|"high"|"max" select a level.
-// Runtime-only, like the live model switch (POST /api/config/model).
+// With an active session the effort rides the per-session selection (PATCH);
+// on the hero it is runtime-only, like the live model switch (POST
+// /api/config/model).
 async function setEffort(effort) {
+  modelBusy = true;
+  if (modelMenuOpen) renderModelMenu(modelSearch);
   try {
+    if (currentID) {
+      const res = await api(`/api/sessions/${encodeURIComponent(currentID)}/config`, {
+        method: "PATCH", body: JSON.stringify({
+          provider: sessionCfg.provider || "",
+          model: sessionCfg.model || "",
+          reasoning_effort: effort || "",
+          permission: sessionCfg.permission,
+        }),
+      });
+      if (res.status === 401) return false;
+      if (!res.ok) { toast("推理等级切换失败"); return false; }
+      sessionCfg.effort = effort || "";
+      syncModelSeat();
+      return true;
+    }
     const res = await api("/api/config/model", {
       method: "POST", body: JSON.stringify({ reasoning_effort: effort || "" }),
     });
-    if (res.status === 401) return;
-    if (!res.ok) { toast("思考强度切换失败"); await loadConfig(); return; }
+    if (res.status === 401) return false;
+    if (!res.ok) { toast("推理等级切换失败"); await loadConfig(); return false; }
     await loadConfig();
     syncModelSeat();
+    return true;
   } catch (e) {
-    if (e.message !== "unauthorized") { console.error("switch effort", e); toast("思考强度切换失败"); }
+    if (e.message !== "unauthorized") { console.error("switch effort", e); toast("推理等级切换失败"); }
+    return false;
+  } finally {
+    modelBusy = false;
+    if (modelMenuOpen) renderModelMenu(modelSearch);
   }
 }
 // Load the active session's per-session overrides (Phase 2) and bind the
 // composer permission + model pickers. An empty id (hero) resets to globals.
 async function loadSessionConfig(id) {
-  sessionCfg = { model: "", permission: "" };
+  sessionCfg = { provider: "", model: "", effort: "", permission: "" };
   if (!id) { syncPermSelect(); syncModelSeat(); return; }
   try {
     const res = await api(`/api/sessions/${encodeURIComponent(id)}/config`);
     if (res.status === 401) return;
     const d = await res.json();
-    sessionCfg = { model: d.model || "", permission: d.permission || "" };
+    sessionCfg = {
+      provider: d.provider || "", model: d.model || "",
+      effort: d.reasoning_effort || "", permission: d.permission || "",
+    };
   } catch (e) {
-    if (e.message !== "unauthorized") { console.error("session config", e); sessionCfg = { model: "", permission: "" }; }
+    if (e.message !== "unauthorized") { console.error("session config", e); sessionCfg = { provider: "", model: "", effort: "", permission: "" }; }
   }
   syncPermSelect();
   syncModelSeat();
@@ -3964,7 +4087,9 @@ if (permSeat) permSeat.addEventListener("click", (e) => {
   }
   togglePermMenu(false);
 });
-// Model seat button → two-level model/effort picker (dsh ModelSelect).
+// Model seat button → two-level model/effort picker (dsh ModelSelect). Every
+// open refreshes the catalog (dsh show() reloads the directory), so models
+// saved in settings appear without a page reload.
 if (modelSeat) modelSeat.addEventListener("click", (e) => {
   e.stopPropagation();
   const open = !modelMenuOpen;
@@ -3975,10 +4100,50 @@ if (modelSeat) modelSeat.addEventListener("click", (e) => {
     // the bottom-edge seat (dsh ModelSelect opens upward).
     toggleModelMenu(true);
     syncModelSeatPosition();
+    void refreshModelCatalog();
     return;
   }
   toggleModelMenu(false);
 });
+// dsh ModelSelect keyboard + blur: Escape backs a drilled pane out to the root
+// first, ArrowDown/Up move focus among the items, and leaving the menu closes
+// it (focus returning to the seat keeps it open).
+if (modelMenu) {
+  modelMenu.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      if (modelPane !== "root") { modelPane = "root"; renderModelMenu(""); syncModelSeatPosition(); }
+      else toggleModelMenu(false);
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (e.target && e.target.id === "model-search") return; // the input handles its own keys
+      const items = Array.from(modelMenu.querySelectorAll(".hm-item:not([disabled])"));
+      if (!items.length) return;
+      const cur = items.indexOf(document.activeElement);
+      const next = items[(Math.max(cur, 0) + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length];
+      next.focus();
+      e.preventDefault();
+    }
+  });
+  modelMenu.addEventListener("focusout", (e) => {
+    if (modelBusy) return; // a selection in flight re-renders the items; keep the menu
+    const t = e.relatedTarget;
+    if (t) {
+      if (modelMenu.contains(t) || t === modelSeat) return;
+      toggleModelMenu(false);
+      return;
+    }
+    // relatedTarget null: the focused element was removed (pane-switch
+    // re-render) or the user clicked a non-focusable spot. Defer and re-check
+    // whether focus re-entered the menu (a pane switch re-focuses an item).
+    setTimeout(() => {
+      if (!modelMenuOpen) return;
+      if (document.activeElement && modelMenu.contains(document.activeElement)) return;
+      toggleModelMenu(false);
+    }, 0);
+  });
+}
 // Cmd/Ctrl+K focuses the composer draft; Escape closes any open composer popover.
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {

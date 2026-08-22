@@ -66,6 +66,8 @@ func migrateSchema(db *sql.DB) error {
 		{"sessions", "agent_preset", `ALTER TABLE sessions ADD COLUMN agent_preset TEXT`},
 		{"sessions", "model", `ALTER TABLE sessions ADD COLUMN model TEXT`},
 		{"sessions", "permission", `ALTER TABLE sessions ADD COLUMN permission TEXT`},
+		{"sessions", "provider", `ALTER TABLE sessions ADD COLUMN provider TEXT`},
+		{"sessions", "reasoning_effort", `ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT`},
 		{"workspaces", "created_at", `ALTER TABLE workspaces ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, st := range steps {
@@ -145,8 +147,8 @@ func (s *SQLiteStore) CreateSession(ctx context.Context, id string, createdAt ti
 func (s *SQLiteStore) GetSessionConfig(ctx context.Context, sessionID string) (SessionConfig, error) {
 	var cfg SessionConfig
 	err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(agent_preset,''), COALESCE(model,''), COALESCE(permission,'') FROM sessions WHERE id = ?`,
-		sessionID).Scan(&cfg.AgentPreset, &cfg.Model, &cfg.Permission)
+		`SELECT COALESCE(agent_preset,''), COALESCE(provider,''), COALESCE(model,''), COALESCE(reasoning_effort,''), COALESCE(permission,'') FROM sessions WHERE id = ?`,
+		sessionID).Scan(&cfg.AgentPreset, &cfg.Provider, &cfg.Model, &cfg.ReasoningEffort, &cfg.Permission)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return SessionConfig{}, fmt.Errorf("%w: %q", ErrNotFound, sessionID)
@@ -156,12 +158,12 @@ func (s *SQLiteStore) GetSessionConfig(ctx context.Context, sessionID string) (S
 	return cfg, nil
 }
 
-// SetSessionConfig writes the full override triple (used at session creation
-// and to lock the mode). An empty field clears the override back to global.
+// SetSessionConfig writes the full override set (used at session creation and
+// to lock the mode). An empty field clears the override back to global.
 func (s *SQLiteStore) SetSessionConfig(ctx context.Context, sessionID string, cfg SessionConfig) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE sessions SET agent_preset = ?, model = ?, permission = ? WHERE id = ?`,
-		cfg.AgentPreset, cfg.Model, cfg.Permission, sessionID)
+		`UPDATE sessions SET agent_preset = ?, provider = ?, model = ?, reasoning_effort = ?, permission = ? WHERE id = ?`,
+		cfg.AgentPreset, cfg.Provider, cfg.Model, cfg.ReasoningEffort, cfg.Permission, sessionID)
 	if err != nil {
 		return fmt.Errorf("store: set session config %q: %w", sessionID, err)
 	}
@@ -171,11 +173,12 @@ func (s *SQLiteStore) SetSessionConfig(ctx context.Context, sessionID string, cf
 	return nil
 }
 
-// UpdateSessionConfig rewrites only model and permission (mode stays locked).
-func (s *SQLiteStore) UpdateSessionConfig(ctx context.Context, sessionID, model, permission string) error {
+// UpdateSessionConfig rewrites provider, model, reasoning effort and permission
+// (mode stays locked).
+func (s *SQLiteStore) UpdateSessionConfig(ctx context.Context, sessionID, provider, model, reasoningEffort, permission string) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE sessions SET model = ?, permission = ? WHERE id = ?`,
-		model, permission, sessionID)
+		`UPDATE sessions SET provider = ?, model = ?, reasoning_effort = ?, permission = ? WHERE id = ?`,
+		provider, model, reasoningEffort, permission, sessionID)
 	if err != nil {
 		return fmt.Errorf("store: update session config %q: %w", sessionID, err)
 	}

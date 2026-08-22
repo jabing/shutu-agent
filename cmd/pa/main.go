@@ -763,7 +763,7 @@ func (a *app) newLoop() *loop.Loop {
 	return a.buildLoop(
 		func(delta string) { fmt.Print(delta) },
 		func(err error) { fmt.Fprintln(os.Stderr, "\n[stream error]", err) },
-		a.cfg.Model, a.cfg.ReasoningEffort, a.prompt,
+		"", a.cfg.Model, a.cfg.ReasoningEffort, a.prompt,
 	)
 }
 
@@ -772,36 +772,41 @@ func (a *app) newLoop() *loop.Loop {
 // the SSE event flow (each chunk is already persisted by the loop), so nothing
 // may be printed to the REPL's stdout/stderr during a web turn.
 func (a *app) newLoopWeb() *loop.Loop {
-	return a.buildLoop(func(string) {}, func(error) {}, a.cfg.Model, a.cfg.ReasoningEffort, a.prompt)
+	return a.buildLoop(func(string) {}, func(error) {}, "", a.cfg.Model, a.cfg.ReasoningEffort, a.prompt)
 }
 
 // newLoopFor builds a Loop bound to the current session log using the resolved
-// per-session runtime (Phase 2: 按会话 model/mode). interactive selects the
+// per-session runtime (Phase 2: 按会话 model/mode; dsh ModelSelection 对齐:
+// the session's provider override routes its turns). interactive selects the
 // REPL or silent stream hooks.
 func (a *app) newLoopFor(rt sessionRuntime, interactive bool) *loop.Loop {
 	if interactive {
 		return a.buildLoop(
 			func(delta string) { fmt.Print(delta) },
 			func(err error) { fmt.Fprintln(os.Stderr, "\n[stream error]", err) },
-			rt.model, rt.effort, rt.prompt,
+			rt.provider, rt.model, rt.effort, rt.prompt,
 		)
 	}
-	return a.buildLoop(func(string) {}, func(error) {}, rt.model, rt.effort, rt.prompt)
+	return a.buildLoop(func(string) {}, func(error) {}, rt.provider, rt.model, rt.effort, rt.prompt)
 }
 
 // buildLoop assembles a Loop bound to the current session log. onText/onError
 // are the streaming hooks: the REPL prints them, the web path is silent.
-// model/prompt override the globals when a per-session mode/model is active.
+// provider/model/effort override the globals when a per-session selection is
+// active (dsh ModelSelection: the session owns provider+model+effort); an
+// unknown provider id falls back to the global LLM (fail-open). pb overrides
+// the system prompt when a per-session mode is active.
 // effort is the thinking-effort selection ("" keeps the provider default).
-func (a *app) buildLoop(onText func(string), onError func(error), model, effort string, pb *prompt.Builder) *loop.Loop {
+func (a *app) buildLoop(onText func(string), onError func(error), provider, model, effort string, pb *prompt.Builder) *loop.Loop {
 	if model == "" {
 		model = a.cfg.Model
 	}
 	if pb == nil {
 		pb = a.prompt
 	}
+	ll := a.llmFor(provider)
 	return loop.New(loop.Config{
-		LLM:             a.currentLLM(),
+		LLM:             ll,
 		Log:             a.log,
 		Tools:           a.reg,
 		Prompt:          pb,
@@ -819,28 +824,36 @@ func (a *app) buildLoop(onText func(string), onError func(error), model, effort 
 }
 
 // sessionRuntime is the resolved per-turn runtime for one session: the
-// effective LLM model, the thinking effort and the system-prompt builder
-// (by mode).
+// effective LLM provider, model, thinking effort and the system-prompt builder
+// (by mode). All fields are "" / nil when the session falls back to the
+// globals (dsh ModelSelection: provider+model+effort are one selection).
 type sessionRuntime struct {
-	model  string
-	effort string
-	prompt *prompt.Builder
+	provider string
+	model    string
+	effort   string
+	prompt   *prompt.Builder
 }
 
-// applySessionRuntime resolves one session's per-turn model / mode-prompt /
-// permission tier (session override ?? global) and swaps the registry policy
-// for the session's permission tier. runTurn holds turnMu while it runs, so the
-// policy swap is serialized with the turn; the returned restore func reinstates
-// the base policy. Fail-open: any store or builder error falls back to the
-// globals.
+// applySessionRuntime resolves one session's per-turn provider/model/effort /
+// mode-prompt / permission tier (session override ?? global) and swaps the
+// registry policy for the session's permission tier. runTurn holds turnMu while
+// it runs, so the policy swap is serialized with the turn; the returned restore
+// func reinstates the base policy. Fail-open: any store or builder error falls
+// back to the globals.
 func (a *app) applySessionRuntime(id string) (sessionRuntime, func()) {
 	rt := sessionRuntime{model: a.cfg.Model, effort: a.cfg.ReasoningEffort, prompt: a.prompt}
 	perm := ""
 	if scs, ok := a.store.(store.SessionConfigStore); ok {
 		if id != "" {
 			if cfg, err := scs.GetSessionConfig(context.Background(), id); err == nil {
+				if cfg.Provider != "" {
+					rt.provider = cfg.Provider
+				}
 				if cfg.Model != "" {
 					rt.model = cfg.Model
+				}
+				if cfg.ReasoningEffort != "" {
+					rt.effort = cfg.ReasoningEffort
 				}
 				if cfg.AgentPreset != "" && cfg.AgentPreset != a.cfg.Mode {
 					rt.prompt = a.promptFor(cfg.AgentPreset)

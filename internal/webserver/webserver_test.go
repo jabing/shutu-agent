@@ -418,10 +418,11 @@ func TestSessionNewResume(t *testing.T) {
 	}
 }
 
-// TestSessionConfigAPI exercises the per-session override endpoints (Phase 2):
-// POST /api/sessions stores agent_preset/model/permission; GET and PATCH
-// {id}/config read and rewrite model/permission (mode stays locked). Invalid
-// mode/permission are rejected; an unknown id answers 404.
+// TestSessionConfigAPI exercises the per-session override endpoints (Phase 2;
+// dsh ModelSelection 对齐): POST /api/sessions stores agent_preset/model/
+// permission; GET and PATCH {id}/config read and rewrite provider/model/
+// reasoning_effort/permission (mode stays locked). Invalid mode/permission/
+// effort are rejected; an unknown id answers 404.
 func TestSessionConfigAPI(t *testing.T) {
 	srv, st := newTestServer(t, "tok")
 	srv.SetSessionManager(func(ctx context.Context, action, id string) (string, error) {
@@ -457,17 +458,18 @@ func TestSessionConfigAPI(t *testing.T) {
 		t.Fatalf("get config body = %v, want minimal/deepseek-chat/readonly", out)
 	}
 
-	// PATCH rewrites model + permission; mode stays locked.
+	// PATCH rewrites the dsh selection (provider+model+effort) + permission;
+	// mode stays locked.
 	rec = doReqBody(t, srv.Handler(), "PATCH", "/api/sessions/s-cfg/config", "tok",
-		`{"model":"deepseek-reasoner","permission":"full"}`)
+		`{"provider":"openai","model":"gpt-4o","reasoning_effort":"max","permission":"full"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch config → %d, want 200 (body %s)", rec.Code, rec.Body.String())
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out["agent_preset"] != "minimal" || out["model"] != "deepseek-reasoner" || out["permission"] != "full" {
-		t.Fatalf("patch config body = %v, want minimal/deepseek-reasoner/full", out)
+	if out["agent_preset"] != "minimal" || out["provider"] != "openai" || out["model"] != "gpt-4o" || out["reasoning_effort"] != "max" || out["permission"] != "full" {
+		t.Fatalf("patch config body = %v, want minimal/openai/gpt-4o/max/full", out)
 	}
 
 	// Unknown id → 404.
@@ -478,12 +480,15 @@ func TestSessionConfigAPI(t *testing.T) {
 		t.Fatalf("patch config missing → %d, want 404", rec.Code)
 	}
 
-	// Invalid mode / permission → 400.
+	// Invalid mode / permission / effort → 400.
 	if rec := doReqBody(t, srv.Handler(), "POST", "/api/sessions", "tok", `{"agent_preset":"nope"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("create invalid mode → %d, want 400", rec.Code)
 	}
 	if rec := doReqBody(t, srv.Handler(), "PATCH", "/api/sessions/s-cfg/config", "tok", `{"permission":"nope"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("patch invalid permission → %d, want 400", rec.Code)
+	}
+	if rec := doReqBody(t, srv.Handler(), "PATCH", "/api/sessions/s-cfg/config", "tok", `{"reasoning_effort":"turbo"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("patch invalid effort → %d, want 400", rec.Code)
 	}
 }
 

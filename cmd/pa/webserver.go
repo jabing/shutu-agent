@@ -472,10 +472,11 @@ type modelEffort struct {
 }
 
 // deepseekReasoning mirrors dsh's llm-deepseek catalog for the V4 models
-// (DEFAULT_MODELS reasoning: off/high/max, default high).
+// (REASONING_EFFORTS: off/low/high/max, default high).
 var deepseekReasoning = modelReasoning{
 	Efforts: []modelEffort{
 		{ID: "off", Name: "Off"},
+		{ID: "low", Name: "Low"},
 		{ID: "high", Name: "High"},
 		{ID: "max", Name: "Max"},
 	},
