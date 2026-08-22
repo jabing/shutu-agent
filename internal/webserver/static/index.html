@@ -176,33 +176,38 @@
             </div>
             <div class="hero-glow" aria-hidden="true"></div>
           </div>
-          <!-- Composer card (dsh InputBar): input box + a toolbar row below with
-               command(＋) / permission / model / submit. A direct child of the
-               milieu so a single element is centered in the hero phase (below the
-               headlline/workspace row) and docked at the bottom in the active
-               phase — the column's data-phase drives both postures. -->
+          <!-- Composer card (dsh InputBar): a single rounded capsule holding the
+               draft textarea on top and an action row below — command(＋) /
+               permission on the left, model seat + submit on the right. A direct
+               child of the milieu so one element is centered in the hero phase
+               (below the headline/workspace row) and docked at the bottom in the
+               active phase — the column's data-phase drives both postures. -->
           <div class="composer-card">
             <div class="composer">
               <div class="grow-wrap">
                 <textarea id="composer-text" rows="1" placeholder="给智能体发消息…"></textarea>
                 <div class="mirror" aria-hidden="true"></div>
               </div>
-            </div>
-            <div class="composer-tools">
-              <div class="ct-left">
-                <button id="cmd-btn" class="tool-btn" type="button" title="命令" aria-haspopup="menu" aria-expanded="false">
-                  <span class="tool-ico" data-icon="plus" aria-hidden="true"></span>
-                </button>
-                <div id="cmd-menu" class="ws-menu hidden" role="menu"></div>
-                <select id="perm-select" class="tool-select" title="权限" aria-label="权限">
-                  <option value="readonly">只读</option>
-                  <option value="standard">标准</option>
-                  <option value="full">全部</option>
-                </select>
-              </div>
-              <div class="ct-right">
-                <select id="model-select" class="tool-select model-select" title="模型" aria-label="模型"></select>
-                <button id="composer-send" class="send-btn" title="发送" aria-label="发送">➤</button>
+              <div class="composer-tools">
+                <div class="ct-left">
+                  <button id="cmd-btn" class="tool-btn" type="button" title="命令" aria-haspopup="menu" aria-expanded="false">
+                    <span class="tool-ico" data-icon="plus" aria-hidden="true"></span>
+                  </button>
+                  <div id="cmd-menu" class="ws-menu hidden" role="menu"></div>
+                  <select id="perm-select" class="tool-select" title="权限" aria-label="权限">
+                    <option value="readonly">只读</option>
+                    <option value="standard">标准</option>
+                    <option value="full">全部</option>
+                  </select>
+                </div>
+                <div class="ct-right">
+                  <button id="model-seat" class="model-seat" type="button" aria-haspopup="listbox" aria-expanded="false" title="选择模型">
+                    <span id="model-seat-label" class="ms-label">模型</span>
+                    <span class="ms-caret" data-icon="caretdown" aria-hidden="true"></span>
+                  </button>
+                  <div id="model-menu" class="ws-menu model-menu hidden" role="listbox"></div>
+                  <button id="composer-send" class="send-btn" title="发送" aria-label="发送">➤</button>
+                </div>
               </div>
             </div>
           </div>

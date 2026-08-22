@@ -44,7 +44,8 @@ const scrollBottomBtn = $("scroll-bottom");
 const settingsEl = $("settings"), placeholderEl = $("placeholder");
 const heroWsChip = $("hero-ws-chip"), heroWsLabel = $("hero-ws-label"), heroWsMenu = $("hero-ws-menu");
 const heroModeChip = $("hero-mode-chip"), heroModeLabel = $("hero-mode-label"), heroModeMenu = $("hero-mode-menu");
-const cmdBtn = $("cmd-btn"), cmdMenu = $("cmd-menu"), permSelect = $("perm-select"), modelSelect = $("model-select");
+const cmdBtn = $("cmd-btn"), cmdMenu = $("cmd-menu"), permSelect = $("perm-select");
+const modelSeat = $("model-seat"), modelSeatLabel = $("model-seat-label"), modelMenu = $("model-menu");
 const detailsPanel = $("details-panel"), detailsTitle = $("details-title"),
   detailsCloseBtn = $("details-close"), detailsEmptyEl = $("details-empty"), detailsSelEl = $("details-selection");
 
@@ -58,6 +59,7 @@ let heroWorkspace = "";             // selected hero workspace id ("" = pick a w
 let heroMenuOpen = false;           // hero workspace picker popover state
 let heroModeOpen = false;           // hero mode (agent preset) popover state
 let cmdMenuOpen = false;            // composer +(command) menu popover state
+let modelMenuOpen = false;          // composer model seat popover state
 let mode = "";                      // current mode preset: standard | code | minimal
 let permissionPreset = "";          // current permission preset: readonly | standard | full
 let sessionCfg = { model: "", permission: "" }; // active session's per-session overrides ("" → fall back global)
@@ -1553,6 +1555,56 @@ function toggleCmdMenu(force) {
   if (cmdMenu) cmdMenu.classList.toggle("hidden", !open);
   if (cmdBtn) cmdBtn.setAttribute("aria-expanded", String(open));
 }
+
+// ---- composer model seat (dsh ModelSeat) ------------------------------------
+function syncModelSeatPosition() {
+  if (modelMenu && modelSeat) {
+    const r = modelSeat.getBoundingClientRect();
+    modelMenu.style.left = Math.max(8, r.right - 260) + "px";
+    modelMenu.style.top = (r.bottom + 6) + "px";
+  }
+}
+function renderModelMenu(term) {
+  if (!modelMenu) return;
+  const q = (term || "").toLowerCase();
+  const provs = (config.providers || []).filter((p) => p.available || p.id === config.llm_provider);
+  const multiple = provs.length > 1;
+  const active = sessionCfg.model || config.model || "";
+  const groups = [];
+  for (const p of provs) {
+    const models = [];
+    if (p.model) models.push(p.model);
+    for (const c of (p.candidates || [])) if (!models.includes(c)) models.push(c);
+    const filtered = q ? models.filter((m) => m.toLowerCase().includes(q)) : models;
+    if (filtered.length) groups.push({ name: p.name, id: p.id, models: filtered });
+  }
+  const search = `<div class="ms-search"><input id="model-search" type="text" placeholder="搜索模型…" autocomplete="off" value="${esc(term || "")}"></div>`;
+  let body = groups.map((g) =>
+    (multiple ? `<div class="ms-group">${esc(g.name)}</div>` : "") +
+    g.models.map((m) =>
+      `<button class="hm-item${m === active ? " hm-active" : ""}" role="option" data-prov="${esc(g.id)}" data-model="${esc(m)}">
+        <span class="hm-item-text"><span class="hm-item-name">${esc(m)}</span><span class="hm-item-desc">${esc(m === active ? "当前" : "")}</span></span>
+      </button>`).join("")
+  ).join("");
+  if (!groups.length) body = `<button class="hm-item" disabled><span class="hm-item-name">无匹配模型</span></button>`;
+  modelMenu.innerHTML = search + body;
+  modelMenu.querySelectorAll(".hm-item").forEach((btn) => {
+    if (btn.disabled) return;
+    btn.addEventListener("click", () => { setModel(btn.dataset.prov, btn.dataset.model); toggleModelMenu(false); });
+  });
+  const si = $("model-search");
+  if (si) {
+    si.focus();
+    si.addEventListener("input", () => renderModelMenu(si.value));
+    si.addEventListener("keydown", (e) => { if (e.key === "Escape") toggleModelMenu(false); e.stopPropagation(); });
+  }
+}
+function toggleModelMenu(force) {
+  const open = force === undefined ? !modelMenuOpen : force;
+  modelMenuOpen = open;
+  if (modelMenu) modelMenu.classList.toggle("hidden", !open);
+  if (modelSeat) modelSeat.setAttribute("aria-expanded", String(open));
+}
 function runCmd(cmd) {
   toggleCmdMenu(false);
   if (cmd === "new") { newSession(); return; }
@@ -1575,32 +1627,17 @@ function modelOptions() {
   }
   return out;
 }
-function populateModelSelect() {
-  if (!modelSelect) return;
-  const opts = modelOptions();
-  modelSelect.innerHTML = opts.map((o) => `<option value="${esc(o.val)}">${esc(o.label)}</option>`).join("");
-  const cur = (config.llm_provider || "") + "\u0000" + (config.model || "");
-  if (opts.some((o) => o.val === cur)) modelSelect.value = cur;
-  else if (config.model) modelSelect.value = "\u0000" + config.model;
+// Current effective model shown on the model seat label (dsh ModelSeat): the
+// session override, else the live global model.
+function syncModelSeat() {
+  if (!modelSeatLabel) return;
+  const eff = sessionCfg.model || config.model || "";
+  modelSeatLabel.textContent = eff || "模型";
 }
 function syncPermSelect() {
   if (!permSelect) return;
   const v = sessionCfg.permission || permissionPreset || localStorage.getItem("pa_permission_preset") || "standard";
   permSelect.value = v;
-}
-// Sync the model picker's displayed value to the active session's model override
-// ("" → the live global model), matching across providers when possible.
-function syncSessionModel() {
-  if (!modelSelect) return;
-  const eff = sessionCfg.model || config.model || "";
-  const effProvider = sessionCfg.model ? "" : (config.llm_provider || "");
-  const opts = modelOptions();
-  if (effProvider && opts.some((o) => o.val === effProvider + "\u0000" + eff)) {
-    modelSelect.value = effProvider + "\u0000" + eff;
-  } else if (eff) {
-    const mOpt = opts.find((o) => o.model === eff);
-    modelSelect.value = mOpt ? mOpt.val : "\u0000" + eff;
-  }
 }
 async function savePermissionPreset(v) {
   permissionPreset = v;
@@ -1629,7 +1666,7 @@ async function savePermissionPreset(v) {
   }
 }
 async function setModel(provider, model) {
-  if (!provider) { modelSelect.value = (config.llm_provider || "") + "\u0000" + (config.model || ""); return; }
+  if (!provider) { syncModelSeat(); return; }
   if (currentID) {
     // Per-session model: update the active session's override.
     try {
@@ -1639,6 +1676,7 @@ async function setModel(provider, model) {
       if (res.status === 401) return;
       if (!res.ok) { toast("模型切换失败"); return; }
       sessionCfg.model = model;
+      syncModelSeat();
     } catch (e) {
       if (e.message !== "unauthorized") { console.error("session model", e); toast("模型切换失败"); }
     }
@@ -1658,7 +1696,7 @@ async function setModel(provider, model) {
 // composer permission + model pickers. An empty id (hero) resets to globals.
 async function loadSessionConfig(id) {
   sessionCfg = { model: "", permission: "" };
-  if (!id) { syncPermSelect(); syncSessionModel(); return; }
+  if (!id) { syncPermSelect(); syncModelSeat(); return; }
   try {
     const res = await api(`/api/sessions/${encodeURIComponent(id)}/config`);
     if (res.status === 401) return;
@@ -1668,7 +1706,7 @@ async function loadSessionConfig(id) {
     if (e.message !== "unauthorized") { console.error("session config", e); sessionCfg = { model: "", permission: "" }; }
   }
   syncPermSelect();
-  syncSessionModel();
+  syncModelSeat();
 }
 // Composer pref loading: the mode comes from the config view (loadConfigLabels);
 // the permission preset is a persisted setting (fallback localStorage).
@@ -1888,7 +1926,7 @@ function setComposerDisabled(disabled) {
   composerText.disabled = disabled;
   // The toolbar controls follow the same lock (dsh: the model seat stays live
   // only while a session exists; here the whole toolbar locks while inert).
-  [permSelect, modelSelect, cmdBtn].forEach((el) => { if (el) el.disabled = disabled; });
+  [permSelect, modelSeat, cmdBtn].forEach((el) => { if (el) el.disabled = disabled; });
 }
 function placeholderFor() {
   if (currentID) return "给智能体发消息…";
@@ -2076,7 +2114,7 @@ sendBtn.addEventListener("click", sendMessage);
 function loadConfigLabels() {
   modelLabelEl.textContent = (config.model || "") + (config.llm_provider ? " · " + config.llm_provider : "");
   syncModeBadge();
-  populateModelSelect();
+  syncModelSeat();
   // The hero chip defaults to the runtime mode until the persisted agent_preset
   // arrives (loadComposerPrefs overrides it with the staged default).
   if (!mode) { mode = config.mode || ""; syncModeChip(); }
@@ -3465,6 +3503,7 @@ document.addEventListener("click", (e) => {
   if (heroMenuOpen && !e.target.closest("#hero-ws-chip, #hero-ws-menu")) toggleHeroMenu(false);
   if (heroModeOpen && !e.target.closest("#hero-mode-chip, #hero-mode-menu")) toggleModeMenu(false);
   if (cmdMenuOpen && !e.target.closest("#cmd-btn, #cmd-menu")) toggleCmdMenu(false);
+  if (modelMenuOpen && !e.target.closest("#model-seat, #model-menu")) toggleModelMenu(false);
 });
 // Hero mode (agent preset) chip: opens the mode menu (dsh AgentPresetSeat).
 if (heroModeChip) heroModeChip.addEventListener("click", (e) => {
@@ -3482,10 +3521,26 @@ if (cmdBtn) cmdBtn.addEventListener("click", (e) => {
 });
 // Permission preset selector → persisted global default (dsh PermissionRow).
 if (permSelect) permSelect.addEventListener("change", () => savePermissionPreset(permSelect.value));
-// Model picker → live global model switch (dsh ModelSeat, P5.1 real-time).
-if (modelSelect) modelSelect.addEventListener("change", () => {
-  const [provider, model] = (modelSelect.value || "").split("\u0000");
-  setModel(provider || "", model || "");
+// Model seat button → grouped/searchable model picker (dsh ModelSeat).
+if (modelSeat) modelSeat.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const open = !modelMenuOpen;
+  if (open) { renderModelMenu(""); syncModelSeatPosition(); }
+  toggleModelMenu(open);
+});
+// Cmd/Ctrl+K focuses the composer draft; Escape closes any open composer popover.
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    if (composerText) composerText.focus();
+    return;
+  }
+  if (e.key === "Escape") {
+    if (modelMenuOpen) toggleModelMenu(false);
+    if (cmdMenuOpen) toggleCmdMenu(false);
+    if (heroMenuOpen) toggleHeroMenu(false);
+    if (heroModeOpen) toggleModeMenu(false);
+  }
 });
 // Right details panel close button (dsh DetailsPanel close).
 if (detailsCloseBtn) detailsCloseBtn.addEventListener("click", closeDetails);
