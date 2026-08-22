@@ -1839,10 +1839,21 @@ function renderDetails() {
     detailsSelEl.classList.remove("hidden");
     let html = "";
     if (selectedTool.args) {
-      html += `<section class="details-sec"><div class="details-sec-label">输入</div><pre class="details-pre">${escCode(prettyJson(selectedTool.args))}</pre></section>`;
+      html += `<section class="details-sec"><div class="details-sec-label">输入</div><div class="details-codewrap"><button type="button" class="details-copy" data-copy="1">复制</button><pre class="details-pre">${escCode(prettyJson(selectedTool.args))}</pre></div></section>`;
     }
-    html += `<section class="details-sec"><div class="details-sec-label">输出</div><pre class="details-pre${selectedTool.error ? " details-err" : ""}">${escCode(selectedTool.output)}</pre></section>`;
+    html += `<section class="details-sec"><div class="details-sec-label">输出</div><div class="details-codewrap"><button type="button" class="details-copy" data-copy="1">复制</button><pre class="details-pre${selectedTool.error ? " details-err" : ""}">${escCode(selectedTool.output)}</pre></div></section>`;
     detailsSelEl.innerHTML = html;
+    detailsSelEl.querySelectorAll(".details-copy").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const text = btn.parentElement.querySelector(".details-pre")?.textContent || "";
+        if (!text) return;
+        (navigator.clipboard && navigator.clipboard.writeText)
+          ? navigator.clipboard.writeText(text)
+          : (btn.textContent = "已复制");
+        if (navigator.clipboard) btn.textContent = "已复制";
+        setTimeout(() => { btn.textContent = "复制"; }, 1200);
+      });
+    });
   } else {
     detailsTitle.textContent = "详情";
     detailsEmptyEl.classList.remove("hidden");

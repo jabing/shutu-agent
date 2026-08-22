@@ -946,6 +946,14 @@ mark {
   max-height: 320px; overflow: auto;
 }
 .details-pre.details-err { color: var(--dsw-alias-state-error-text, #d03050); }
+/* dsh CodeBlock copy affordance: absolute button in the top-right of the block */
+.details-codewrap { position: relative; }
+.details-codewrap .details-copy {
+  position: absolute; top: 6px; right: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer;
+  color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-button-floating-bg);
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 5px;
+}
+.details-codewrap .details-copy:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .msg.tool.selected .tool-card { border-color: var(--dsw-alias-state-business-primary); box-shadow: 0 0 0 1px var(--dsw-alias-state-business-tertiary); }
 .drag-handle-details { margin-left: 0; }
 
