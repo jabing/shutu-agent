@@ -1237,6 +1237,16 @@ body[data-ds-dark-theme="false"] .nav-cell.active { background: #EBEEF2; }
 .m-dot.configured { background: var(--dsw-alias-state-success-primary); }
 .m-dot.missing { background: var(--dsw-alias-state-error-primary); }
 .m-rowmodel { margin-left: auto; font-size: 12px; line-height: 18px; }
+.m-modelcands { display: flex; flex-wrap: wrap; gap: 6px; }
+.m-modelcand {
+  box-sizing: border-box; height: 30px; font: inherit; cursor: pointer; border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 15px; padding: 0 12px; font-size: 12px; line-height: 18px;
+  color: var(--dsw-alias-label-primary); background: transparent;
+}
+.m-modelcand:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.m-modelcand.active {
+  background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); border-color: transparent;
+}
 .m-rowactions { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
 .m-btn {
   box-sizing: border-box; height: 36px; font: inherit; cursor: pointer; border: none;

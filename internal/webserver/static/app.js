@@ -2538,10 +2538,32 @@ function renderModel(c) {
 
   // dsh ProviderEditor: the primary field is the API key; the collapsed
   // 自定义设置 details carries the per-family extras (API 地址 + 模型).
+  // dsh ModelListEditor: for a built-in provider the model field is a VISIBLE
+  // candidate list (each model one clickable row, current one highlighted)
+  // instead of an input+datalist — a datalist filters its options by the
+  // input's current value, so with deepseek-v4-flash prefilled the v4-pro
+  // candidate was unreachable. A hidden input keeps the apply-path contract
+  // (#m-model-name) intact.
+  const modelCandidateList = (p, curModel) => {
+    const cands = p.candidates || [];
+    const chips = cands.map((m) =>
+      `<button type="button" class="m-modelcand${m === curModel ? " active" : ""}" data-model="${esc(m)}">${esc(MODEL_DISPLAY[m] || m)}</button>`).join("");
+    return `<div class="m-modelcands" data-cur="${esc(curModel)}">${chips || `<span class="m-fieldvalue">${esc(curModel)}</span>`}</div>
+      <input id="m-model-name" type="hidden" value="${esc(curModel)}">`;
+  };
+
+  // Provider-row model summary: every candidate with the current one bolded
+  // (dsh ModelSeat 对齐) — the row previously showed only the active model, so
+  // a provider with two candidates looked like it offered just one.
+  const modelRowLabel = (p) => {
+    const cands = p.candidates && p.candidates.length ? p.candidates : (p.model ? [p.model] : []);
+    const cur = p.model || "";
+    return cands.map((m) => m === cur ? `<b>${esc(MODEL_DISPLAY[m] || m)}</b>` : esc(MODEL_DISPLAY[m] || m)).join(" · ") || "";
+  };
+
   const editorHTML = (p, mode) => {
     const name = PROVIDER_DISPLAY[p.id] || p.name || p.id;
     const active = p.id === currentProvider;
-    const candOpts = (p.candidates || []).map((m) => `<option value="${esc(m)}">${esc(MODEL_DISPLAY[m] || m)}</option>`).join("");
     const curModel = active ? currentModel : (p.model || "");
     const title = mode === "add" ? `增加 ${esc(providerLabel(p))}` : `编辑 ${esc(providerLabel(p))}`;
     const submitLabel = mode === "add" ? "保存" : "应用";
@@ -2568,8 +2590,7 @@ function renderModel(c) {
             <span class="m-fieldlabel">模型</span>
             ${p.custom
               ? modelListHTML()
-              : `<input id="m-model-name" class="m-input" list="m-model-candidates" value="${esc(curModel)}" placeholder="输入或从建议中选择">
-                 <datalist id="m-model-candidates">${candOpts}</datalist>`}
+              : modelCandidateList(p, curModel)}
           </div>
         </div>
       </details>
@@ -2601,7 +2622,7 @@ function renderModel(c) {
             ${p.custom ? `<span class="m-rowtag custom">自定义</span>` : ""}
             <span class="m-dot ${p.configured ? "configured" : "missing"}" title="${p.configured ? "API Key 已配置" : "未配置（缺 API Key）"}"></span>
           </span>
-          <span class="m-rowmodel muted">${esc(p.model || "")}</span>
+          <span class="m-rowmodel muted">${modelRowLabel(p)}</span>
           <span class="m-rowactions">
             <button type="button" class="m-btn m-secondary" data-edit="${esc(p.id)}">编辑</button>
             ${p.custom ? `<button type="button" class="m-btn m-secondary m-danger" data-del="${esc(p.id)}">删除</button>` : ""}
@@ -2730,6 +2751,17 @@ function renderModel(c) {
         modelDraft = (p.models && p.models.length) ? p.models.map((m) => ({ id: m.id, name: m.name || "", context_window: m.context_window || undefined, max_tokens: m.max_tokens || undefined })) : [{ id: p.model || "", name: "" }];
       }
       renderModel(c);
+    });
+  });
+  // Built-in candidate chips: clicking one selects it (dsh ModelListEditor).
+  // The hidden #m-model-name input carries the selection to the apply path.
+  sec.querySelectorAll(".m-modelcands").forEach((wrap) => {
+    const input = wrap.parentElement.querySelector("#m-model-name");
+    wrap.querySelectorAll(".m-modelcand").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        wrap.querySelectorAll(".m-modelcand").forEach((x) => x.classList.toggle("active", x === chip));
+        if (input) input.value = chip.dataset.model;
+      });
     });
   });
   // Delete a custom provider (dsh remove, with confirm).
