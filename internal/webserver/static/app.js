@@ -2517,11 +2517,13 @@ let savedNotice = null;   // persistent "已保存 <provider>。" notice (dsh sa
 // model rows of the open custom card live here so re-renders keep them; the
 // picker modal is a temporary overlay appended to document.body.
 let modelDraft = [];   // [{id,name,context_window,max_tokens}]
-// providerFormDraft keeps the unsaved API-key / API-地址 values of the open
-// editor card across the model-list re-renders (dsh ProviderEditor: the card
-// is a controlled form, so adding/removing a model row never loses the other
-// fields). Reset when the editor closes or switches provider.
-let providerFormDraft = { key: "", base: "" };
+// providerFormDraft keeps the unsaved form values of the open editor card
+// across the model-list re-renders (dsh ProviderEditor: the card is a
+// controlled form, so adding/removing a model row or adopting probe results
+// never loses the other fields). key/base cover the provider edit card;
+// custom carries the 增加自定义提供方 card's route/name/base/protocol/key.
+// Reset when the editor closes or switches provider.
+let providerFormDraft = { key: "", base: "", custom: { route: "", name: "", base: "", protocol: "openai-completions", key: "" } };
 let probeOpen = false; // true while the 获取可用模型 picker overlay is up
 
 // modelListHTML renders the ModelListEditor into an open card: one row per
@@ -2584,20 +2586,24 @@ function wireModelList(sec, probeCtx) {
   sec.querySelectorAll(".m-modeldel").forEach((btn) => {
     btn.addEventListener("click", () => { saveFormDraft(); const i = Number(btn.closest(".m-modelrow").dataset.i); modelDraft.splice(i, 1); renderModel(config); });
   });
-  if (probeBtn) probeBtn.addEventListener("click", () => { void probeModels(sec, probeCtx); });
+  if (probeBtn) probeBtn.addEventListener("click", () => { saveFormDraft(); void probeModels(sec, probeCtx); });
 }
 
 // probeModels asks the endpoint (POST /api/config/provider/discover) which
 // models it advertises and opens the picker. probeCtx reads the live form:
 // base URL, protocol, and a key typed but not yet saved. A built-in provider
 // (directory route) answers from its own catalog without any endpoint — the
-// base_url requirement applies only to hand-declared custom endpoints.
+// base_url and key requirements apply only to hand-declared custom endpoints:
+// probing one needs both the API 地址 and the API Key.
 async function probeModels(sec, ctx) {
   if (probeOpen) return;
   const base = (ctx.baseEl ? ctx.baseEl.value : "").trim();
-  if (!base && !ctx.directory) { alert("请先填写 API 地址再获取可用模型"); return; }
+  const key = (ctx.keyEl ? ctx.keyEl.value : "").trim();
+  if (!ctx.directory) {
+    if (!base) { alert("请先填写 API 地址再获取可用模型"); return; }
+    if (!key) { alert("请先输入 API Key 再获取可用模型"); return; }
+  }
   const protocol = ctx.protocolEl ? ctx.protocolEl.value : (ctx.protocol || "openai-completions");
-  const key = ctx.keyEl ? ctx.keyEl.value : "";
   const provider = ctx.provider || "";
   probeOpen = true;
   try {
@@ -2825,6 +2831,7 @@ function renderModel(c) {
     ["openai-responses", "OpenAI Responses"],
   ];
   if (customAdding) {
+    const cd = providerFormDraft.custom || { route: "", name: "", base: "", protocol: "openai-completions", key: "" };
     t += `<li class="m-rowcard m-editing">
       <div class="m-editor">
         <div class="m-editorhead">
@@ -2833,21 +2840,21 @@ function renderModel(c) {
         </div>
         <div class="m-field">
           <span class="m-fieldlabel">路由 ID</span>
-          <input id="m-custom-route" class="m-input" value="" placeholder="acme-gateway" autocomplete="off">
+          <input id="m-custom-route" class="m-input" value="${esc(cd.route)}" placeholder="acme-gateway" autocomplete="off">
         </div>
         <p id="m-custom-route-msg" class="m-fieldhint">小写字母开头，仅小写字母 / 数字 / 单个连字符分隔（如 acme-gateway）。</p>
         <div class="m-field">
           <span class="m-fieldlabel">显示名称</span>
-          <input id="m-custom-name" class="m-input" value="" placeholder="留空使用路由 ID" autocomplete="off">
+          <input id="m-custom-name" class="m-input" value="${esc(cd.name)}" placeholder="留空使用路由 ID" autocomplete="off">
         </div>
         <div class="m-field">
           <span class="m-fieldlabel">API 地址</span>
-          <input id="m-custom-base" class="m-input" value="" placeholder="https://gateway.example/v1" autocomplete="off">
+          <input id="m-custom-base" class="m-input" value="${esc(cd.base)}" placeholder="https://gateway.example/v1" autocomplete="off">
         </div>
         <div class="m-field">
           <span class="m-fieldlabel">协议</span>
           <select id="m-custom-protocol" class="m-input m-select">
-            ${PROTOCOL_OPTIONS.map(([v, label]) => `<option value="${v}">${esc(label)}（${v}）</option>`).join("")}
+            ${PROTOCOL_OPTIONS.map(([v, label]) => `<option value="${v}"${cd.protocol === v ? " selected" : ""}>${esc(label)}（${v}）</option>`).join("")}
           </select>
         </div>
         <div class="m-field">
@@ -2856,7 +2863,7 @@ function renderModel(c) {
         </div>
         <div class="m-field">
           <span class="m-fieldlabel">API Key</span>
-          <input id="m-custom-key" class="m-input" type="password" autocomplete="off" value="" placeholder="留空使用环境变量">
+          <input id="m-custom-key" class="m-input" type="password" autocomplete="off" value="${esc(cd.key)}" placeholder="留空使用环境变量">
         </div>
         <p id="m-custom-key-msg" class="m-fieldhint">Key 默认读取环境变量（大写路由名 + _API_KEY，如 ACME_GATEWAY_API_KEY）；填入后以配置值为准。</p>
         <div class="m-editoractions">
@@ -2966,10 +2973,18 @@ function renderModel(c) {
       const ready = r.ok && sec.querySelector("#m-custom-base").value.trim().length > 0
         && modelDraft.length > 0 && !kf;
       apply.disabled = !ready;
+      // Keep the typed values across re-renders (probe adoption / row edits).
+      providerFormDraft.custom = {
+        route: routeInput.value, name: sec.querySelector("#m-custom-name").value,
+        base: sec.querySelector("#m-custom-base").value, protocol: sec.querySelector("#m-custom-protocol").value,
+        key: keyInput.value,
+      };
     };
     routeInput.addEventListener("input", refreshCustomState);
     keyInput.addEventListener("input", refreshCustomState);
+    sec.querySelector("#m-custom-name").addEventListener("input", refreshCustomState);
     sec.querySelector("#m-custom-base").addEventListener("input", refreshCustomState);
+    sec.querySelector("#m-custom-protocol").addEventListener("change", refreshCustomState);
     // The model list is a self-contained editor: its rows live in modelDraft.
     wireModelList(sec, { baseEl: sec.querySelector("#m-custom-base"), protocolEl: sec.querySelector("#m-custom-protocol"), keyEl: keyInput });
     refreshCustomState();
