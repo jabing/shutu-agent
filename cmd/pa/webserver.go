@@ -215,6 +215,13 @@ func (a *app) webMessage(ctx context.Context, sessionID, text string, images []l
 			return err
 		}
 	}
+	// dsh 斜杠命令 (输入条 "/"): a leading "/" routes to a command handler that
+	// appends a rendered result to the session — no LLM turn. Session-switching
+	// commands (/new, /resume) stay on the sidebar/+ menu, which already drive
+	// them through the session manager.
+	if len(images) == 0 && strings.HasPrefix(strings.TrimSpace(text), "/") {
+		return a.webCommand(ctx, strings.TrimSpace(text))
+	}
 	if len(images) > 0 {
 		if !a.multimodalEnabled() || a.attachStore == nil {
 			return fmt.Errorf("multimodal disabled (llm.multimodal.enabled=false)")
@@ -249,6 +256,84 @@ func (a *app) webMessage(ctx context.Context, sessionID, text string, images []l
 	// the previous view, so this restores last_viewed_at >= updated_at).
 	a.markSessionViewed(ctx, sessionID)
 	return nil
+}
+
+// webCommand handles a leading "/" in a web composer message (dsh 斜杠命令
+// 对齐, ①③⑤): it appends the command as a user/message, dispatches it, and
+// appends the result as an assistant/message so the web chat renders the whole
+// exchange without an LLM turn. The events flow through the same event hub as
+// a turn, so the SSE stream renders them. Session-switching commands (/new,
+// /resume) are deliberately not routed here — the sidebar and the composer "+"
+// menu already drive them through the session manager.
+func (a *app) webCommand(ctx context.Context, line string) error {
+	fields := strings.Fields(line)
+	name := fields[0]
+	args := fields[1:]
+	if _, err := a.log.Append(session.EventUserMessage, session.NewUserMessage(line)); err != nil {
+		return err
+	}
+	result, err := a.execWebCommand(ctx, name, args)
+	if err != nil {
+		result = "⚠ " + err.Error()
+	}
+	if _, err := a.log.Append(session.EventAssistantMessage, session.NewAssistantMessage(result, nil, "stop")); err != nil {
+		return err
+	}
+	return nil
+}
+
+// execWebCommand dispatches a single web slash command and returns the
+// model-facing result text (a non-nil error means an invalid command or bad
+// args; the caller renders it as the assistant reply).
+func (a *app) execWebCommand(ctx context.Context, name string, args []string) (string, error) {
+	switch name {
+	case "/help":
+		return a.webHelp(), nil
+	case "/status":
+		return a.webStatus(), nil
+	case "/goal", "/plan":
+		return a.webPlanGoal(ctx, args)
+	default:
+		return "", fmt.Errorf("unknown command %q (try /help)", name)
+	}
+}
+
+// webHelp returns the web composer's slash-command table (dsh 输入条命令对齐).
+func (a *app) webHelp() string {
+	return "可用的斜杠命令:\n" +
+		"  /help               显示本命令表\n" +
+		"  /status             显示当前 provider / model / mode\n" +
+		"  /goal <标题> [说明]   创建目标 (plan_goal)\n" +
+		"  /plan <标题> [说明]   创建目标 (plan 模式入口)\n" +
+		"  其他文本             发送给智能体"
+}
+
+// webStatus returns the current provider / model / mode summary (dsh 输入条
+// 状态命令, mirrors the REPL /help's llm line).
+func (a *app) webStatus() string {
+	return fmt.Sprintf("provider=%s model=%s mode=%s",
+		a.cfg.LLM.Provider, llmProviderModel(a.cfg, a.cfg.LLM.Provider), a.cfg.Mode)
+}
+
+// webPlanGoal creates a goal via the plan_goal tool (dsh /goal /plan entry). It
+// returns the tool's model-facing output; the plan/create fact also lands in
+// the session log (D3). When plan is disabled the tool is unregistered and
+// Execute reports it.
+func (a *app) webPlanGoal(ctx context.Context, args []string) (string, error) {
+	if len(args) == 0 {
+		return "", errors.New("usage: /goal <标题> [目标说明]")
+	}
+	title := args[0]
+	objective := strings.Join(args[1:], " ")
+	payload, err := json.Marshal(map[string]any{"title": title, "objective": objective})
+	if err != nil {
+		return "", err
+	}
+	res, err := a.reg.Execute(ctx, "plan_goal", payload)
+	if err != nil {
+		return "", err
+	}
+	return res.Output, nil
 }
 
 // webSessionManager implements the session new/resume API (ADR D-WEB2-C),

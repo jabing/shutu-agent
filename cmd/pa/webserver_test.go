@@ -144,14 +144,14 @@ func TestWebSubagentsJobsProviders(t *testing.T) {
 	if h.Subagents == nil || h.Jobs == nil {
 		t.Fatal("registerWebServer must wire SetSubagentProvider + SetJobsProvider")
 	}
-	out, err := h.Subagents(context.Background())
+	out, err := h.Subagents(context.Background(), "")
 	if err != nil {
 		t.Fatalf("webSubagents: %v", err)
 	}
 	if len(out) != 0 {
 		t.Fatalf("subagents = %#v, want empty (disabled)", out)
 	}
-	out, err = h.Jobs(context.Background())
+	out, err = h.Jobs(context.Background(), "")
 	if err != nil {
 		t.Fatalf("webJobs: %v", err)
 	}
