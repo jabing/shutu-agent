@@ -197,11 +197,12 @@
                     <span class="tool-ico" data-icon="plus" aria-hidden="true"></span>
                   </button>
                   <div id="cmd-menu" class="ws-menu hidden" role="menu"></div>
-                  <select id="perm-select" class="tool-select" title="权限" aria-label="权限">
-                    <option value="readonly">只读</option>
-                    <option value="standard">标准</option>
-                    <option value="full">全部</option>
-                  </select>
+                  <button id="perm-seat" class="perm-seat" type="button" aria-haspopup="menu" aria-expanded="false" title="权限">
+                    <span id="perm-seat-icon" class="perm-seat-icon" aria-hidden="true"></span>
+                    <span id="perm-seat-label" class="ps-label">标准</span>
+                    <span class="ps-caret" data-icon="caretdown" aria-hidden="true"></span>
+                  </button>
+                  <div id="perm-menu" class="ws-menu perm-menu hidden" role="menu"></div>
                 </div>
                 <div class="ct-right">
                   <button id="model-seat" class="model-seat" type="button" aria-haspopup="listbox" aria-expanded="false" title="选择模型">

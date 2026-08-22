@@ -44,7 +44,8 @@ const scrollBottomBtn = $("scroll-bottom");
 const settingsEl = $("settings"), placeholderEl = $("placeholder");
 const heroWsChip = $("hero-ws-chip"), heroWsLabel = $("hero-ws-label"), heroWsMenu = $("hero-ws-menu");
 const heroModeChip = $("hero-mode-chip"), heroModeLabel = $("hero-mode-label"), heroModeMenu = $("hero-mode-menu");
-const cmdBtn = $("cmd-btn"), cmdMenu = $("cmd-menu"), permSelect = $("perm-select");
+const cmdBtn = $("cmd-btn"), cmdMenu = $("cmd-menu");
+const permSeat = $("perm-seat"), permSeatLabel = $("perm-seat-label"), permSeatIcon = $("perm-seat-icon"), permMenu = $("perm-menu");
 const modelSeat = $("model-seat"), modelSeatLabel = $("model-seat-label"), modelMenu = $("model-menu");
 const contextMeter = $("context-meter");
 const detailsPanel = $("details-panel"), detailsTitle = $("details-title"),
@@ -66,6 +67,7 @@ let effortTarget = "";              // model id whose effort pane is open ("" = 
 let effortTargetProv = "";          // provider id of effortTarget
 let mode = "";                      // current mode preset: standard | code | minimal
 let permissionPreset = "";          // current permission preset: readonly | standard | full
+let permMenuOpen = false;           // composer permission seat popover state
 let sessionCfg = { model: "", permission: "" }; // active session's per-session overrides ("" → fall back global)
 let wsList = [];                    // [{id,title}] for the hero picker (from /api/workspaces)
 let toolMeta = {};                  // callId -> {name, args} captured from assistant tool_call
@@ -1831,10 +1833,101 @@ async function stopTurn() {
     await api(`/api/sessions/${encodeURIComponent(currentID)}/stop`, { method: "POST" });
   } catch (e) { if (e.message !== "unauthorized") console.error("stop", e); }
 }
+// ---- composer permission seat (dsh PermissionSelect / Access chip) ---------
+// The permission tiers map to dsh's shield glyphs: read-only = check,
+// workspace-write (standard) = pencil, danger-full-access (full) = exclamation.
+// Full access requires an explicit confirmation before it applies (dsh
+// RiskConfirmation), so a stray tap can never open the whole whitelist.
+const PERMISSIONS = [
+  { id: "readonly", label: "只读", desc: "仅允许只读工具（dsh Read-only）" },
+  { id: "standard", label: "标准", desc: "标准工具权限（dsh Workspace write）" },
+  { id: "full", label: "完全访问", desc: "允许所有工具（dsh Full access）" },
+];
+const PERMISSION_GLYPHS = {
+  readonly: "perm-shield-check",
+  standard: "perm-shield-pencil",
+  full: "perm-shield-alert",
+};
+function currentPerm() {
+  return sessionCfg.permission || permissionPreset || localStorage.getItem("pa_permission_preset") || "standard";
+}
 function syncPermSelect() {
-  if (!permSelect) return;
-  const v = sessionCfg.permission || permissionPreset || localStorage.getItem("pa_permission_preset") || "standard";
-  permSelect.value = v;
+  if (!permSeatLabel || !permSeatIcon) return;
+  const v = currentPerm();
+  const p = PERMISSIONS.find((x) => x.id === v) || PERMISSIONS[1];
+  permSeatLabel.textContent = p.label;
+  const glyph = PERMISSION_GLYPHS[p.id];
+  permSeatIcon.innerHTML = glyph ? htmlEscapeIcon(PA_ICONS[glyph]) : "";
+  if (permSeat) {
+    permSeat.title = "权限：" + p.desc;
+    permSeat.setAttribute("aria-label", "权限：" + p.label);
+  }
+}
+function syncPermSeatPosition() {
+  if (!permMenu || !permSeat) return;
+  const r = permSeat.getBoundingClientRect();
+  const wasHidden = permMenu.classList.contains("hidden");
+  if (wasHidden) permMenu.classList.remove("hidden");
+  const h = permMenu.offsetHeight || 132;
+  if (wasHidden) permMenu.classList.add("hidden");
+  const GAP = 6, EDGE = 8;
+  permMenu.style.left = Math.max(EDGE, r.left) + "px";
+  const up = r.top - h - GAP;
+  permMenu.style.top = (up >= EDGE ? up : (r.bottom + GAP)) + "px";
+}
+function renderPermMenu() {
+  if (!permMenu) return;
+  const v = currentPerm();
+  permMenu.innerHTML = PERMISSIONS.map((p) =>
+    `<button class="hm-item${p.id === v ? " hm-active" : ""}" role="menuitemradio" data-perm="${esc(p.id)}">
+      <span class="hm-item-ico" aria-hidden="true">${htmlEscapeIcon(PA_ICONS[PERMISSION_GLYPHS[p.id]] || "")}</span>
+      <span class="hm-item-text"><span class="hm-item-name">${esc(p.label)}</span><span class="hm-item-desc">${esc(p.desc)}</span></span>
+      ${p.id === v ? `<span class="hm-check">✓</span>` : ""}
+    </button>`).join("");
+  permMenu.querySelectorAll(".hm-item").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const id = btn.dataset.perm;
+      if (id === v) { togglePermMenu(false); return; }
+      if (id === "full") { openFullAccessConfirm(); return; }
+      togglePermMenu(false);
+      savePermissionPreset(id);
+    });
+  });
+}
+function togglePermMenu(force) {
+  const open = force === undefined ? !permMenuOpen : force;
+  permMenuOpen = open;
+  if (permMenu) permMenu.classList.toggle("hidden", !open);
+  if (permSeat) permSeat.setAttribute("aria-expanded", String(open));
+}
+// Full access requires explicit acknowledgement (dsh RiskConfirmation): the
+// modal is a small overlay asking the user to check the risk box before the
+// tier applies.
+function openFullAccessConfirm() {
+  const overlay = document.createElement("div");
+  overlay.className = "perm-confirm-overlay";
+  overlay.innerHTML = `<div class="perm-confirm-modal" role="alertdialog" aria-modal="true">
+    <div class="perm-confirm-title">启用完全访问</div>
+    <div class="perm-confirm-desc">完全访问允许智能体执行所有已注册工具（包括写入和修改操作）。请确认你了解这一风险。</div>
+    <label class="perm-confirm-check"><input type="checkbox" id="perm-confirm-box"> 我了解完全访问的风险</label>
+    <div class="perm-confirm-actions">
+      <button type="button" class="m-btn m-secondary" id="perm-confirm-cancel">取消</button>
+      <button type="button" class="m-btn m-primary" id="perm-confirm-ok" disabled>启用</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector("#perm-confirm-cancel").addEventListener("click", close);
+  overlay.querySelector("#perm-confirm-box").addEventListener("change", (e) => {
+    overlay.querySelector("#perm-confirm-ok").disabled = !e.target.checked;
+  });
+  overlay.querySelector("#perm-confirm-ok").addEventListener("click", () => {
+    close();
+    togglePermMenu(false);
+    savePermissionPreset("full");
+  });
 }
 async function savePermissionPreset(v) {
   permissionPreset = v;
@@ -1851,6 +1944,7 @@ async function savePermissionPreset(v) {
     } catch (e) {
       if (e.message !== "unauthorized") { console.error("session permission", e); toast("权限保存失败"); }
     }
+    syncPermSelect();
     return;
   }
   // No active session: persist the global default tier (applied at next launch).
@@ -1861,6 +1955,7 @@ async function savePermissionPreset(v) {
   } catch (e) {
     if (e.message !== "unauthorized") { console.error("save permission_preset", e); toast("权限保存失败"); }
   }
+  syncPermSelect();
 }
 async function setModel(provider, model) {
   if (!provider) { syncModelSeat(); return; }
@@ -2155,7 +2250,7 @@ function setComposerDisabled(disabled) {
   composerText.disabled = disabled;
   // The toolbar controls follow the same lock (dsh: the model seat stays live
   // only while a session exists; here the whole toolbar locks while inert).
-  [permSelect, modelSeat, cmdBtn].forEach((el) => { if (el) el.disabled = disabled; });
+  [permSeat, modelSeat, cmdBtn].forEach((el) => { if (el) el.disabled = disabled; });
 }
 function placeholderFor() {
   if (currentID) return "给智能体发消息…";
@@ -3838,6 +3933,7 @@ document.addEventListener("click", (e) => {
   if (heroMenuOpen && !e.target.closest("#hero-ws-chip, #hero-ws-menu")) toggleHeroMenu(false);
   if (heroModeOpen && !e.target.closest("#hero-mode-chip, #hero-mode-menu")) toggleModeMenu(false);
   if (cmdMenuOpen && !e.target.closest("#cmd-btn, #cmd-menu")) toggleCmdMenu(false);
+  if (permMenuOpen && !e.target.closest("#perm-seat, #perm-menu")) togglePermMenu(false);
   if (modelMenuOpen && !e.target.closest("#model-seat, #model-menu")) toggleModelMenu(false);
 });
 // Hero mode (agent preset) chip: opens the mode menu (dsh AgentPresetSeat).
@@ -3856,8 +3952,18 @@ if (cmdBtn) cmdBtn.addEventListener("click", (e) => {
   toggleCmdMenu();
   syncCmdMenuPosition();
 });
-// Permission preset selector → persisted global default (dsh PermissionRow).
-if (permSelect) permSelect.addEventListener("change", () => savePermissionPreset(permSelect.value));
+// Permission seat → dsh Access chip menu (shield glyph + label + chevron).
+if (permSeat) permSeat.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const open = !permMenuOpen;
+  if (open) {
+    renderPermMenu();
+    togglePermMenu(true);
+    syncPermSeatPosition();
+    return;
+  }
+  togglePermMenu(false);
+});
 // Model seat button → two-level model/effort picker (dsh ModelSelect).
 if (modelSeat) modelSeat.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -3882,6 +3988,7 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape") {
     if (modelMenuOpen) toggleModelMenu(false);
+    if (permMenuOpen) togglePermMenu(false);
     if (cmdMenuOpen) toggleCmdMenu(false);
     if (heroMenuOpen) toggleHeroMenu(false);
     if (heroModeOpen) toggleModeMenu(false);

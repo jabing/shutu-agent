@@ -1064,6 +1064,40 @@ mark {
 }
 .model-menu .ms-search input:focus { border-color: var(--dsw-alias-state-business-primary); }
 .model-menu .ms-group { padding: 6px 10px 2px; font-size: 12px; color: var(--dsw-alias-label-caption); font-weight: 600; }
+/* permission seat button (dsh PermissionSelect Access chip): shield glyph +
+   label + chevron, matching the sibling model trigger */
+.perm-seat {
+  display: inline-flex; align-items: center; gap: 4px; flex: none;
+  height: 28px; padding: 0 4px 0 8px;
+  border: none; border-radius: 24px; background: transparent;
+  color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 20px; font-weight: 500;
+  white-space: nowrap; cursor: pointer; text-align: left;
+}
+.perm-seat:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.perm-seat:disabled { opacity: 0.5; cursor: default; }
+.perm-seat[aria-expanded="true"] { background: var(--dsw-alias-interactive-bg-hover); }
+.perm-seat-icon { display: inline-flex; flex: 0 0 auto; }
+.perm-seat-icon svg { display: block; width: 14px; height: 14px; }
+.ps-label { overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; max-width: 96px; }
+.ps-caret { display: inline-flex; flex: 0 0 auto; }
+.ps-caret svg { display: block; width: 12px; height: 12px; }
+.perm-menu { min-width: 220px; }
+.perm-menu .hm-item .hm-item-ico { display: inline-flex; flex: none; }
+.perm-menu .hm-item .hm-item-ico svg { display: block; width: 16px; height: 16px; }
+/* full-access confirmation (dsh RiskConfirmation) */
+.perm-confirm-overlay {
+  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+}
+.perm-confirm-modal {
+  width: min(360px, calc(100vw - 48px)); background: var(--dsw-alias-bg-module-platform);
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px; padding: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.perm-confirm-title { color: var(--dsw-alias-label-primary); font-size: 15px; font-weight: 600; }
+.perm-confirm-desc { color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 20px; }
+.perm-confirm-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--dsw-alias-label-primary); cursor: pointer; }
+.perm-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 /* context token meter (dsh ContextMeter): a compact caption in the trailing row */
 .context-meter { flex: none; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-caption); white-space: nowrap; }
 /* command / mode menu items: name + short description (dsh AgentPresetSeat item) */
