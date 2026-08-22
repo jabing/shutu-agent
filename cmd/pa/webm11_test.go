@@ -60,7 +60,7 @@ func TestWebProviderKeyOverride(t *testing.T) {
 	}
 
 	// Save an override key — it wins over the env var.
-	if err := a.webSaveProvider(context.Background(), "deepseek-official", "ui-key"); err != nil {
+	if err := a.webSaveProvider(context.Background(), "deepseek-official", "ui-key", "", "", nil); err != nil {
 		t.Fatalf("webSaveProvider: %v", err)
 	}
 	got, err := st.GetSettings(context.Background())
@@ -75,7 +75,7 @@ func TestWebProviderKeyOverride(t *testing.T) {
 	}
 
 	// Clearing the override falls back to the env var.
-	if err := a.webSaveProvider(context.Background(), "deepseek-official", ""); err != nil {
+	if err := a.webSaveProvider(context.Background(), "deepseek-official", "", "", "", nil); err != nil {
 		t.Fatalf("webSaveProvider(clear): %v", err)
 	}
 	if k := a.providerKey("deepseek-official"); k != "env-key" {
@@ -83,6 +83,69 @@ func TestWebProviderKeyOverride(t *testing.T) {
 	}
 	if got, _ := st.GetSettings(context.Background()); got["llm.key.deepseek-official"] != "" {
 		t.Fatalf("llm.key.deepseek-official should be deleted after clear, got %q", got["llm.key.deepseek-official"])
+	}
+}
+
+// TestWebBuiltinProfileOverride verifies the dsh ProviderEditor 自定义设置
+// alignment for a built-in provider: saving base_url / model / model list
+// persists llm.profile.<id>, overrides the registered provider's base URL and
+// model, shows in webProviders, and clears back to config.yaml defaults.
+func TestWebBuiltinProfileOverride(t *testing.T) {
+	a, st := m11App(t)
+	ctx := context.Background()
+
+	// Save a profile override (API 地址 + 模型目录).
+	models := []customModel{
+		{ID: "deepseek-v4-flash", Name: "DeepSeek-V4-Flash"},
+		{ID: "deepseek-v4-pro", Name: "DeepSeek-V4-Pro"},
+	}
+	if err := a.webSaveProvider(ctx, "deepseek-official", "", "https://custom.example/v1", "deepseek-v4-flash", models); err != nil {
+		t.Fatalf("webSaveProvider(profile): %v", err)
+	}
+	got, err := st.GetSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := got["llm.profile.deepseek-official"]
+	if raw == "" {
+		t.Fatal("llm.profile.deepseek-official should be persisted")
+	}
+	var bp builtinProviderProfile
+	if err := json.Unmarshal([]byte(raw), &bp); err != nil {
+		t.Fatal(err)
+	}
+	if bp.BaseURL != "https://custom.example/v1" || bp.Model != "deepseek-v4-flash" || len(bp.Models) != 2 {
+		t.Fatalf("profile = %+v", bp)
+	}
+	// The registered deepseek provider picked up the override.
+	if p, err := a.llmReg.Get("deepseek-official"); err != nil {
+		t.Fatalf("deepseek not registered: %v", err)
+	} else if p.ID() != "deepseek-official" || !p.Available() {
+		t.Fatalf("deepseek wrong id/availability: %v", p.ID())
+	}
+	// webProviders reflects the override + models + flag.
+	providers := a.webConfig()["providers"].([]map[string]any)
+	p := findProvider(providers, "deepseek-official")
+	if p == nil {
+		t.Fatal("deepseek-official missing from providers")
+	}
+	if p["base_url"] != "https://custom.example/v1" || p["model"] != "deepseek-v4-flash" || p["profile_override"] != true {
+		t.Fatalf("provider view = %#v", p)
+	}
+	if ms, ok := p["models"].([]customModel); !ok || len(ms) != 2 {
+		t.Fatalf("provider models = %#v", p["models"])
+	}
+
+	// Clearing (all-empty edit) removes the profile → back to config defaults.
+	if err := a.webSaveProvider(ctx, "deepseek-official", "", "", "", nil); err != nil {
+		t.Fatalf("webSaveProvider(clear profile): %v", err)
+	}
+	if got, _ := st.GetSettings(ctx); got["llm.profile.deepseek-official"] != "" {
+		t.Fatal("llm.profile.deepseek-official should be deleted after clear")
+	}
+	providers = a.webConfig()["providers"].([]map[string]any)
+	if p := findProvider(providers, "deepseek-official"); p == nil || p["profile_override"] == true || p["base_url"] != "" {
+		t.Fatalf("provider view after clear = %#v", p)
 	}
 }
 
@@ -240,7 +303,7 @@ func TestWebProvidersRegisterByProtocol(t *testing.T) {
 	}
 
 	// Settings override key (llm.key.<id>) for a messages-protocol provider.
-	if err := a.webSaveProvider(context.Background(), "minimax", "minimax-ui-key"); err != nil {
+	if err := a.webSaveProvider(context.Background(), "minimax", "minimax-ui-key", "", "", nil); err != nil {
 		t.Fatalf("webSaveProvider(minimax): %v", err)
 	}
 	if p, err := a.llmReg.Get("minimax"); err != nil {
@@ -275,7 +338,7 @@ func TestWebProvidersRegisterByProtocol(t *testing.T) {
 	}
 
 	// Removing the override returns the provider to dormant.
-	if err := a.webSaveProvider(context.Background(), "minimax", ""); err != nil {
+	if err := a.webSaveProvider(context.Background(), "minimax", "", "", "", nil); err != nil {
 		t.Fatalf("webSaveProvider(minimax clear): %v", err)
 	}
 	if p, err := a.llmReg.Get("minimax"); err == nil || p != nil {

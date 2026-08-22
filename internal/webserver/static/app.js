@@ -2517,6 +2517,11 @@ let savedNotice = null;   // persistent "已保存 <provider>。" notice (dsh sa
 // model rows of the open custom card live here so re-renders keep them; the
 // picker modal is a temporary overlay appended to document.body.
 let modelDraft = [];   // [{id,name,context_window,max_tokens}]
+// providerFormDraft keeps the unsaved API-key / API-地址 values of the open
+// editor card across the model-list re-renders (dsh ProviderEditor: the card
+// is a controlled form, so adding/removing a model row never loses the other
+// fields). Reset when the editor closes or switches provider.
+let providerFormDraft = { key: "", base: "" };
 let probeOpen = false; // true while the 获取可用模型 picker overlay is up
 
 // modelListHTML renders the ModelListEditor into an open card: one row per
@@ -2565,11 +2570,19 @@ function readModelDraft(sec) {
 // probeCtx supplies the live form's base URL / protocol / key for the 获取可用
 // 模型 action (dsh: ask the endpoint the form currently shows, key included).
 function wireModelList(sec, probeCtx) {
+  // Keep the unsaved key / base values across the re-render a row edit causes
+  // (dsh ProviderEditor controlled form).
+  const saveFormDraft = () => {
+    const k = sec.querySelector("#m-provider-key");
+    const b = sec.querySelector("#m-provider-base");
+    if (k) providerFormDraft.key = k.value;
+    if (b) providerFormDraft.base = b.value;
+  };
   const addBtn = sec.querySelector("#m-model-add");
   const probeBtn = sec.querySelector("#m-model-probe");
-  if (addBtn) addBtn.addEventListener("click", () => { modelDraft.push({ id: "", name: "" }); renderModel(config); });
+  if (addBtn) addBtn.addEventListener("click", () => { saveFormDraft(); modelDraft.push({ id: "", name: "" }); renderModel(config); });
   sec.querySelectorAll(".m-modeldel").forEach((btn) => {
-    btn.addEventListener("click", () => { const i = Number(btn.closest(".m-modelrow").dataset.i); modelDraft.splice(i, 1); renderModel(config); });
+    btn.addEventListener("click", () => { saveFormDraft(); const i = Number(btn.closest(".m-modelrow").dataset.i); modelDraft.splice(i, 1); renderModel(config); });
   });
   if (probeBtn) probeBtn.addEventListener("click", () => { void probeModels(sec, probeCtx); });
 }
@@ -2667,34 +2680,31 @@ function renderModel(c) {
   const rows = sorted.filter((p) => p.custom || p.registered);
 
   // dsh ProviderEditor: the primary field is the API key; the collapsed
-  // 自定义设置 details carries the per-family extras (API 地址 + 模型).
-  // dsh ModelListEditor: for a built-in provider the model field is a VISIBLE
-  // candidate list (each model one clickable row, current one highlighted)
-  // instead of an input+datalist — a datalist filters its options by the
-  // input's current value, so with deepseek-v4-flash prefilled the v4-pro
-  // candidate was unreachable. A hidden input keeps the apply-path contract
-  // (#m-model-name) intact.
-  const modelCandidateList = (p, curModel) => {
-    const cands = p.candidates || [];
-    const chips = cands.map((m) =>
-      `<button type="button" class="m-modelcand${m === curModel ? " active" : ""}" data-model="${esc(m)}">${esc(MODEL_DISPLAY[m] || m)}</button>`).join("");
-    return `<div class="m-modelcands" data-cur="${esc(curModel)}">${chips || `<span class="m-fieldvalue">${esc(curModel)}</span>`}</div>
-      <input id="m-model-name" type="hidden" value="${esc(curModel)}">`;
-  };
+  // 自定义设置 details carries the per-family extras (API 地址 + 模型目录).
 
-  // Provider-row model summary: every candidate with the current one bolded
-  // (dsh ModelSeat 对齐) — the row previously showed only the active model, so
-  // a provider with two candidates looked like it offered just one.
+  // Provider-row model summary: the profile's model list when overridden
+  // (dsh ProviderEditor 自定义设置), else every candidate — with the current
+  // one bolded (dsh ModelSeat 对齐). The row previously showed only the active
+  // model, so a provider with two models looked like it offered just one.
   const modelRowLabel = (p) => {
-    const cands = p.candidates && p.candidates.length ? p.candidates : (p.model ? [p.model] : []);
+    const fromProfile = (p.models && p.models.length) ? p.models.map((m) => m.id || m) : null;
+    const cands = fromProfile || (p.candidates && p.candidates.length ? p.candidates : (p.model ? [p.model] : []));
     const cur = p.model || "";
     return cands.map((m) => m === cur ? `<b>${esc(MODEL_DISPLAY[m] || m)}</b>` : esc(MODEL_DISPLAY[m] || m)).join(" · ") || "";
+  };
+
+  // The model-directory snapshot a provider editor was seeded with (its
+  // persisted profile models, else the directory candidates) — the baseline
+  // "未发生变化" compares the edited draft against.
+  const seedModelsFor = (p) => {
+    if (!p) return [];
+    const seed = (p.models && p.models.length) ? p.models : (p.candidates || []).map((m) => ({ id: m, name: "" }));
+    return seed.map((m) => ({ id: m.id || m, name: m.name || "", context_window: m.context_window || undefined, max_tokens: m.max_tokens || undefined }));
   };
 
   const editorHTML = (p, mode) => {
     const name = PROVIDER_DISPLAY[p.id] || p.name || p.id;
     const active = p.id === currentProvider;
-    const curModel = active ? currentModel : (p.model || "");
     const title = mode === "add" ? `增加 ${esc(providerLabel(p))}` : `编辑 ${esc(providerLabel(p))}`;
     const submitLabel = mode === "add" ? "保存" : "应用";
     return `<div class="m-editor">
@@ -2704,7 +2714,7 @@ function renderModel(c) {
       </div>
       <div class="m-field">
         <span class="m-fieldlabel">API Key</span>
-        <input id="m-provider-key" class="m-input" type="password" autocomplete="off" placeholder="留空使用环境变量 ${esc(envName(p))}" value="">
+        <input id="m-provider-key" class="m-input" type="password" autocomplete="off" placeholder="留空使用环境变量 ${esc(envName(p))}" value="${esc(providerFormDraft.key)}">
         <span class="m-fieldhint">Key 默认读取环境变量 ${esc(envName(p))}；填入后以配置值为准（留空并保存即清除自定义 Key，回到环境变量）。</span>
       </div>
       <details class="m-customized">
@@ -2712,15 +2722,11 @@ function renderModel(c) {
         <div class="m-customizedbody">
           <div class="m-field">
             <span class="m-fieldlabel">API 地址</span>
-            ${p.custom
-              ? `<input id="m-provider-base" class="m-input" value="${esc(p.base_url || "")}" placeholder="https://api.example.com/v1">`
-              : `<span class="m-fieldvalue">${esc(p.base_url || "提供方默认")}</span>`}
+            <input id="m-provider-base" class="m-input" value="${esc(providerFormDraft.base !== "" ? providerFormDraft.base : (p.base_url || ""))}" placeholder="${p.custom ? "https://api.example.com/v1" : "https://api.deepseek.com（提供方默认）"}">
           </div>
           <div class="m-field">
             <span class="m-fieldlabel">模型</span>
-            ${p.custom
-              ? modelListHTML()
-              : modelCandidateList(p, curModel)}
+            ${modelListHTML()}
           </div>
         </div>
       </details>
@@ -2873,25 +2879,17 @@ function renderModel(c) {
   sec.querySelectorAll("[data-edit]").forEach((btn) => {
     btn.addEventListener("click", () => {
       savedNotice = null; modelEditing = btn.dataset.edit; adding = false; addingId = null; customAdding = false;
-      // A custom provider's edit card shows the multi-model list (M11-pi-ai):
-      // seed the draft from its persisted models, falling back to the legacy
-      // single model. A built-in provider keeps the single-model field.
+      providerFormDraft = { key: "", base: "" };
+      // Both custom and built-in edit cards show the multi-model list
+      // (dsh ProviderEditor 自定义设置): seed the draft from the persisted
+      // profile models when present, else the provider directory candidates
+      // (a built-in without a profile starts from its catalog).
       const p = providers.find((x) => x.id === btn.dataset.edit);
-      if (p && p.custom) {
-        modelDraft = (p.models && p.models.length) ? p.models.map((m) => ({ id: m.id, name: m.name || "", context_window: m.context_window || undefined, max_tokens: m.max_tokens || undefined })) : [{ id: p.model || "", name: "" }];
+      if (p) {
+        const seed = (p.models && p.models.length) ? p.models : (p.candidates || []).map((m) => ({ id: m, name: "" }));
+        modelDraft = seed.length ? seed.map((m) => ({ id: m.id, name: m.name || "", context_window: m.context_window || undefined, max_tokens: m.max_tokens || undefined })) : [{ id: p.model || "", name: "" }];
       }
       renderModel(c);
-    });
-  });
-  // Built-in candidate chips: clicking one selects it (dsh ModelListEditor).
-  // The hidden #m-model-name input carries the selection to the apply path.
-  sec.querySelectorAll(".m-modelcands").forEach((wrap) => {
-    const input = wrap.parentElement.querySelector("#m-model-name");
-    wrap.querySelectorAll(".m-modelcand").forEach((chip) => {
-      chip.addEventListener("click", () => {
-        wrap.querySelectorAll(".m-modelcand").forEach((x) => x.classList.toggle("active", x === chip));
-        if (input) input.value = chip.dataset.model;
-      });
     });
   });
   // Delete a custom provider (dsh remove, with confirm).
@@ -2939,7 +2937,7 @@ function renderModel(c) {
   if (!apply) return;
   const cancel = sec.querySelector("#m-model-cancel");
   const status = sec.querySelector("#m-model-status");
-  cancel.addEventListener("click", () => { modelEditing = null; customAdding = false; adding = false; addingId = null; renderModel(c); });
+  cancel.addEventListener("click", () => { modelEditing = null; customAdding = false; adding = false; addingId = null; providerFormDraft = { key: "", base: "" }; renderModel(c); });
 
   if (customAdding) {
     // Live inline validation (dsh apiKeyFailure / ROUTE_PATTERN 范式): the
@@ -3010,35 +3008,41 @@ function renderModel(c) {
   const target = (modelEditing ? sorted : dormant).find((x) => x.id === editId);
   const active = editId === currentProvider;
   const isCustomEdit = modelEditing && target && target.custom;
-  const input = sec.querySelector("#m-model-name");
   const keyInput = sec.querySelector("#m-provider-key");
   const baseInput = sec.querySelector("#m-provider-base");
   const isAdd = adding && !modelEditing;
-  // A custom provider's editor shows the multi-model list (M11-pi-ai): wire
-  // its rows + probe, seeded from the provider's persisted models. Protocol is
-  // fixed at create time (dsh: route chosen at create); the probe passes it so
-  // an OpenAI-compatible custom route can still be interrogated.
-  if (isCustomEdit) {
-    wireModelList(sec, { baseEl: baseInput, keyEl: keyInput, protocol: target.protocol || "openai-completions" });
+  // Both custom and built-in editors show the multi-model list (M11-pi-ai /
+  // dsh ProviderEditor 自定义设置): wire its rows + probe, seeded from the
+  // provider's persisted models / directory candidates. Protocol is fixed at
+  // create time (dsh: route chosen at create); the probe passes it so an
+  // OpenAI-compatible custom route can still be interrogated.
+  if (modelEditing && target) {
+    wireModelList(sec, {
+      baseEl: baseInput,
+      keyEl: keyInput,
+      provider: target.id,
+      ...target.custom ? { protocol: target.protocol || "openai-completions" } : {},
+    });
   }
   apply.addEventListener("click", async () => {
+    readModelDraft(sec);
     const body = {};
     if (!active && !isAdd) body.provider = editId;
-    // Custom rows keep the effective default model = first draft row's id.
-    let customModelsChanged = false;
-    if (isCustomEdit) {
-      readModelDraft(sec);
-      const first = modelDraft.length ? modelDraft[0].id : "";
-      if (first && first !== (active ? currentModel : (target && target.model))) body.model = first;
-    } else {
-      const m = input.value.trim();
-      if (m && m !== (active ? currentModel : (target && target.model))) body.model = m;
-    }
+    // The model list's first row is the effective default model.
+    const first = modelDraft.length ? modelDraft[0].id : "";
+    if (first && first !== (active ? currentModel : (target && target.model))) body.model = first;
     const key = keyInput.value.trim();
     if (key) body.api_key = key;
-    // Custom-provider rows can also edit their profile (API 地址 / 模型).
+    // 自定义设置 (dsh ProviderEditor): API 地址 + 模型目录, saved for built-ins
+    // as a profile override and for custom rows as their full profile.
     const base = baseInput ? baseInput.value.trim() : "";
-    if (target && target.custom && base && base !== target.base_url) body.base_url = base;
+    const baseChanged = base !== (target && target.base_url || "");
+    const modelsChanged = JSON.stringify(modelDraft) !== JSON.stringify(seedModelsFor(target));
+    const profileChanged = baseChanged || modelsChanged;
+    if (profileChanged) {
+      body.base_url = base;
+      body.models = modelDraft;
+    }
     if (isAdd) {
       // dsh add flow: register the dormant provider with its key (nothing else
       // changes for a built-in — model/API 地址 come from the config defaults).
@@ -3059,19 +3063,23 @@ function renderModel(c) {
       } finally { apply.disabled = false; }
       return;
     }
-    if (!body.provider && !body.model && !body.api_key && !body.base_url && !isCustomEdit) { status.textContent = "未发生变化"; return; }
+    if (!body.provider && !body.model && !body.api_key && !profileChanged) { status.textContent = "未发生变化"; return; }
     status.textContent = "应用中…";
     apply.disabled = true;
     try {
-      // Key override (M11) is persisted via the provider API first, then the
-      // model switch applies live (P5.1). Custom rows resave their profile on
-      // any of key / API 地址 / 模型 change so the profile stays authoritative.
-      if (body.api_key || body.base_url || (target && target.custom && (body.model || isCustomEdit))) {
+      // Key / profile (M11 / dsh ProviderEditor 自定义设置) persists via the
+      // provider API first, then the model switch applies live (P5.1).
+      if (body.api_key || profileChanged || (target && target.custom && body.model)) {
         const rk = await api("/api/config/provider", {
           method: "POST",
-          body: target && target.custom
-            ? JSON.stringify({ id: editId, name: target.name, base_url: body.base_url || target.base_url, model: body.model || (modelDraft.length ? modelDraft[0].id : target.model), models: modelDraft, api_key: key, protocol: target.protocol || "openai-completions", custom: true })
-            : JSON.stringify({ id: editId, api_key: key }),
+          body: JSON.stringify({
+            id: editId,
+            ...target && target.custom ? { name: target.name, protocol: target.protocol || "openai-completions", custom: true } : {},
+            ...(body.base_url !== undefined ? { base_url: body.base_url } : target && target.custom ? { base_url: target.base_url } : {}),
+            ...(body.model !== undefined ? { model: body.model } : target && target.custom ? { model: target.model } : {}),
+            ...(body.models !== undefined ? { models: body.models } : target && target.custom ? { models: modelDraft } : {}),
+            api_key: key,
+          }),
         });
         if (rk.status === 401) { showLogin("令牌无效或已过期"); return; }
         if (!rk.ok) { const eb = await rk.json().catch(() => ({})); throw new Error(eb.error || ("HTTP " + rk.status)); }
@@ -3086,6 +3094,7 @@ function renderModel(c) {
       const savedP = (config.providers || []).find((x) => x.id === editId) || target;
       savedNotice = "已保存 " + providerLabel(savedP) + "。";
       modelEditing = null;       // close the editor (dsh closeEditor)
+      providerFormDraft = { key: "", base: "" };
       renderModel(config);       // re-render with the new selection
     } catch (e) {
       status.textContent = "失败：" + e.message;

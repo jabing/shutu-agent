@@ -154,14 +154,14 @@ func (a *app) registerWebServer() error {
 	srv.SetProviderManager(func(ctx context.Context, action string, edit webserver.ProviderEdit) error {
 		switch action {
 		case "save":
+			models := make([]customModel, 0, len(edit.Models))
+			for _, m := range edit.Models {
+				models = append(models, customModel{ID: m.ID, Name: m.Name, ContextWindow: m.ContextWindow, MaxTokens: m.MaxTokens})
+			}
 			if edit.Custom {
-				models := make([]customModel, 0, len(edit.Models))
-				for _, m := range edit.Models {
-					models = append(models, customModel{ID: m.ID, Name: m.Name, ContextWindow: m.ContextWindow, MaxTokens: m.MaxTokens})
-				}
 				return a.webSaveCustomProvider(ctx, edit.ID, edit.Name, edit.BaseURL, edit.Model, edit.APIKey, edit.Protocol, models)
 			}
-			return a.webSaveProvider(ctx, edit.ID, edit.APIKey)
+			return a.webSaveProvider(ctx, edit.ID, edit.APIKey, edit.BaseURL, edit.Model, models)
 		case "delete":
 			return a.webDeleteCustomProvider(ctx, edit.ID)
 		default:
@@ -535,27 +535,43 @@ func (a *app) webProviders() []map[string]any {
 			model = llmProviderModel(a.cfg, bp.id)
 			baseURL = llmProviderBaseURL(a.cfg, bp.id)
 		}
+		// dsh ProviderEditor 自定义设置 对齐: a persisted llm.profile.<id>
+		// override wins over config.yaml for base URL / model / model list.
+		prof, overridden := a.builtinProfiles[bp.id]
+		if overridden {
+			if prof.BaseURL != "" {
+				baseURL = prof.BaseURL
+			}
+			if prof.Model != "" {
+				model = prof.Model
+			}
+		}
 		registered := false
 		available := false
 		if p, err := reg.Get(bp.id); err == nil {
 			registered = true
 			available = p.Available()
 		}
-		out = append(out, map[string]any{
-			"id":             bp.id,
-			"name":           bp.name,
-			"protocol":       string(bp.protocol),
-			"protocol_label": protocolLabel(bp.protocol),
-			"custom":         false,
-			"registered":     registered,
-			"available":      available,
-			"configured":     a.providerKey(bp.id) != "",
-			"model":          model,
-			"base_url":       baseURL,
-			"candidates":     modelCandidates(bp.id),
-			"env_var":        providerEnv(bp.id),
-			"reasoning":      providerReasoning(bp.id),
-		})
+		entry := map[string]any{
+			"id":               bp.id,
+			"name":             bp.name,
+			"protocol":         string(bp.protocol),
+			"protocol_label":   protocolLabel(bp.protocol),
+			"custom":           false,
+			"registered":       registered,
+			"available":        available,
+			"configured":       a.providerKey(bp.id) != "",
+			"model":            model,
+			"base_url":         baseURL,
+			"candidates":       modelCandidates(bp.id),
+			"env_var":          providerEnv(bp.id),
+			"reasoning":        providerReasoning(bp.id),
+			"profile_override": overridden,
+		}
+		if overridden && len(prof.Models) > 0 {
+			entry["models"] = prof.Models
+		}
+		out = append(out, entry)
 	}
 	// M11 custom providers from settings.
 	for _, cp := range a.customProviders {
@@ -585,13 +601,14 @@ func (a *app) webProviders() []map[string]any {
 	return out
 }
 
-// webSaveProvider persists a provider API-key override (M11, POST
-// /api/config/provider): it writes llm.key.<id> to the settings table and
-// rebuilds the registry so the change applies immediately (no restart — the
-// registry is built per registerLLM, and this re-runs it). It runs under
-// turnMu (D5 serial: no turn is in flight while the registry is rebuilt).
-// An empty api_key removes the override, falling back to the env var.
-func (a *app) webSaveProvider(ctx context.Context, id, apiKey string) error {
+// webSaveProvider persists a provider edit for a built-in provider (M11, POST
+// /api/config/provider): it writes the API-key override (llm.key.<id>) and,
+// when the edit carries 自定义设置 changes (dsh ProviderEditor 对齐), a profile
+// override (llm.profile.<id> = base_url / model / model list), then rebuilds the
+// registry so the change applies immediately (no restart). It runs under turnMu
+// (D5 serial). An empty api_key removes the key override, falling back to the
+// env var; an empty base_url/model/models removes the profile override.
+func (a *app) webSaveProvider(ctx context.Context, id, apiKey, baseURL, model string, models []customModel) error {
 	a.turnMu.Lock()
 	defer a.turnMu.Unlock()
 	if a.llmReg == nil {
@@ -615,7 +632,41 @@ func (a *app) webSaveProvider(ctx context.Context, id, apiKey string) error {
 		}
 		delete(a.llmKeys, id)
 	}
-	// Rebuild the registry so the new key is live immediately.
+	// 自定义设置 override: persist base_url / model / model list when any is
+	// non-empty; an all-empty edit clears a stored profile back to config.yaml.
+	baseURL = strings.TrimSpace(baseURL)
+	model = strings.TrimSpace(model)
+	cleaned := models[:0]
+	for _, m := range models {
+		m.ID = strings.TrimSpace(m.ID)
+		if m.ID == "" {
+			continue
+		}
+		cleaned = append(cleaned, m)
+	}
+	models = cleaned
+	if baseURL != "" || model != "" || len(models) > 0 {
+		if model == "" && len(models) > 0 {
+			model = models[0].ID
+		}
+		raw, err := json.Marshal(builtinProviderProfile{BaseURL: baseURL, Model: model, Models: models})
+		if err != nil {
+			return err
+		}
+		if err := a.store.SetSetting(ctx, "llm.profile."+id, string(raw)); err != nil {
+			return err
+		}
+		if a.builtinProfiles == nil {
+			a.builtinProfiles = map[string]builtinProviderProfile{}
+		}
+		a.builtinProfiles[id] = builtinProviderProfile{BaseURL: baseURL, Model: model, Models: models}
+	} else if _, ok := a.builtinProfiles[id]; ok {
+		if err := a.store.DeleteSetting(ctx, "llm.profile."+id); err != nil {
+			return err
+		}
+		delete(a.builtinProfiles, id)
+	}
+	// Rebuild the registry so the new key/profile is live immediately.
 	if err := a.registerLLM(); err != nil {
 		return err
 	}

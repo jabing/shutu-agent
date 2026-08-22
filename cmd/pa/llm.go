@@ -47,11 +47,21 @@ func (a *app) registerLLM() error {
 	// The deepseek provider is always registered; its parameters come from the
 	// legacy top-level model/base_url (the deepseek default configuration,
 	// dispatch-m8-2 §5) and DEEPSEEK_API_KEY from the environment (a configured
-	// llm.key.deepseek-official setting wins, M11).
+	// llm.key.deepseek-official setting wins, M11). A persisted
+	// llm.profile.deepseek-official override (dsh ProviderEditor 自定义设置)
+	// wins over config.yaml for base URL / model / model list.
+	dsProfile := a.builtinProfile("deepseek-official")
+	dsBaseURL, dsModel := a.cfg.BaseURL, a.cfg.Model
+	if dsProfile.BaseURL != "" {
+		dsBaseURL = dsProfile.BaseURL
+	}
+	if dsProfile.Model != "" {
+		dsModel = dsProfile.Model
+	}
 	if err := reg.Register(deepseek.New(deepseek.Config{
 		APIKey:               a.providerKey("deepseek-official"),
-		BaseURL:              a.cfg.BaseURL,
-		Model:                a.cfg.Model,
+		BaseURL:              dsBaseURL,
+		Model:                dsModel,
 		MaxRetries:           2,
 		SupportsImages:       strings.Contains(a.cfg.LLM.ModelInputModalities, "image"),
 		MaxRequestImageBytes: a.cfg.LLM.Multimodal.MaxRequestImageBytes, // 默认 20MiB 由 New 兜底
@@ -249,6 +259,18 @@ type customProviderProfile struct {
 	Models   []customModel `json:"models,omitempty"`
 }
 
+// builtinProviderProfile is the persisted override for a built-in provider
+// (settings row llm.profile.<id> = JSON, dsh ProviderEditor 自定义设置 对齐): a
+// base URL override, an effective model, and an optional multi-model list. A
+// built-in provider with no profile row keeps its config.yaml defaults; the
+// profile lets the Model settings page override API 地址 / 模型 per provider
+// (like dsh's llm-deepseek settings section) without touching config.yaml.
+type builtinProviderProfile struct {
+	BaseURL string        `json:"base_url,omitempty"`
+	Model   string        `json:"model,omitempty"`
+	Models  []customModel `json:"models,omitempty"`
+}
+
 // validProtocol reports whether protocol is one of the four supported wire
 // protocols (M11-pi-ai, user 2026-09). Empty is valid and means the default
 // openai-completions.
@@ -282,6 +304,16 @@ func (a *app) providerKey(id string) string {
 		}
 	}
 	return os.Getenv(llmKeyEnv(id))
+}
+
+// builtinProfile returns the persisted override profile for a built-in provider
+// (llm.profile.<id>, dsh ProviderEditor 自定义设置 对齐), or the zero value when
+// none is stored.
+func (a *app) builtinProfile(id string) builtinProviderProfile {
+	if a.builtinProfiles != nil {
+		return a.builtinProfiles[id]
+	}
+	return builtinProviderProfile{}
 }
 
 // llmCredentialEnv returns the environment variable that carries provider id's

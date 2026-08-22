@@ -184,6 +184,14 @@ func main() {
 			if json.Unmarshal([]byte(v), &cp) == nil && cp.ID != "" && cp.Name != "" {
 				app.customProviders = append(app.customProviders, cp)
 			}
+		} else if strings.HasPrefix(k, "llm.profile.") {
+			var bp builtinProviderProfile
+			if json.Unmarshal([]byte(v), &bp) == nil {
+				if app.builtinProfiles == nil {
+					app.builtinProfiles = map[string]builtinProviderProfile{}
+				}
+				app.builtinProfiles[strings.TrimPrefix(k, "llm.profile.")] = bp
+			}
 		}
 	}
 	// M8-2: registerLLM builds the provider registry and injects the selected
@@ -525,6 +533,12 @@ type app struct {
 	// startup and updated by the provider-save endpoint. registerLLM registers
 	// each under its route.
 	customProviders []customProviderProfile
+	// builtinProfiles is the per-built-in-provider override map (settings rows
+	// llm.profile.<id> = JSON builtinProviderProfile, dsh ProviderEditor
+	// 自定义设置 对齐): base URL / model / model-list overrides for the
+	// config-driven built-ins (deepseek-official). Loaded at startup and updated
+	// by the provider-save endpoint; registerLLM applies them over config.yaml.
+	builtinProfiles map[string]builtinProviderProfile
 	// attachStore is the M8-3 image-attachment store (dispatch-m8-3 §4): created
 	// by registerAttachments only when llm.multimodal.enabled; nil when disabled
 	// (D10) — /attach then errors.
