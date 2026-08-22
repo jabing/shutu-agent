@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -125,8 +126,10 @@ func TestWebMessageRunsTurn(t *testing.T) {
 
 // TestWebMessageResumesOtherSession verifies webMessage implicitly resumes a
 // target session that differs from the current one (D-WEB2-A): the turn runs on
-// the resumed session (its store gains the events) and the previous session
-// stays untouched.
+// the resumed session (its store gains the events). The previous session is
+// BLANK (no events) here, so dsh discards it when the user switches away — the
+// abandoned empty row is pruned from the store (see the separate
+// TestPruneBlankSession tests for a blank held on the hero).
 func TestWebMessageResumesOtherSession(t *testing.T) {
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -142,6 +145,10 @@ func TestWebMessageResumesOtherSession(t *testing.T) {
 	a := makeTurnApp()
 	a.store = st
 	a.currentID = "s-a"
+	// Keep a.log consistent with currentID so the blank check (len(log)==0)
+	// reflects the session the user is leaving — the app invariant is that
+	// a.log always corresponds to a.currentID.
+	a.log = session.New()
 	if err := a.webMessage(ctx, "s-other", "hi", nil); err != nil {
 		t.Fatalf("webMessage: %v", err)
 	}
@@ -155,12 +162,75 @@ func TestWebMessageResumesOtherSession(t *testing.T) {
 	if len(events) == 0 {
 		t.Fatal("the resumed session must hold the turn's events")
 	}
-	prev, err := st.LoadSession(ctx, "s-a")
+	// The blank source session was discarded on switch (dsh).
+	if _, err := st.LoadSession(ctx, "s-a"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("s-a err = %v, want ErrNotFound (blank session discarded on switch)", err)
+	}
+}
+
+// TestPruneBlankSessionOnSwitch verifies dsh's empty-session behavior: a session
+// with no events that the user leaves by switching to another session is
+// discarded from the store, while a session that has content is preserved.
+func TestPruneBlankSessionOnSwitch(t *testing.T) {
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(prev) != 0 {
-		t.Fatalf("s-a events = %d, want 0 (the turn must run on the resumed session)", len(prev))
+	defer st.Close()
+	ctx := context.Background()
+	for _, id := range []string{"blank", "target", "real"} {
+		if err := st.CreateSession(ctx, id, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := makeTurnApp()
+	a.store = st
+
+	// Leave a blank session (no events) → it is discarded.
+	a.currentID = "blank"
+	a.log = session.New()
+	if err := a.resumeSession(ctx, "target"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.LoadSession(ctx, "blank"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("blank err = %v, want ErrNotFound (blank discarded on switch)", err)
+	}
+
+	// Leave a session with content → it is preserved.
+	a.currentID = "real"
+	a.log = session.New()
+	if _, err := a.log.Append(session.EventUserMessage, session.NewUserMessage("hi")); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.resumeSession(ctx, "target"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.LoadSession(ctx, "real"); err != nil {
+		t.Fatalf("real should be preserved: %v", err)
+	}
+}
+
+// TestPruneBlankSessionOnNew verifies dsh's empty-session behavior when starting
+// a fresh session: the abandoned blank current session is discarded.
+func TestPruneBlankSessionOnNew(t *testing.T) {
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if err := st.CreateSession(ctx, "old-blank", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	a := makeTurnApp()
+	a.store = st
+	a.currentID = "old-blank"
+	a.log = session.New()
+	if err := a.newSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.LoadSession(ctx, "old-blank"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("old-blank err = %v, want ErrNotFound (blank discarded on new)", err)
 	}
 }
 

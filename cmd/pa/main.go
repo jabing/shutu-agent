@@ -634,12 +634,29 @@ func (a *app) startup(ctx context.Context) error {
 	return nil
 }
 
+// pruneBlankCurrent removes the current session from the store when it holds no
+// events (nothing submitted). dsh discards a blank session once the user leaves
+// it — a new-session hero never accumulates empty rows in the sidebar. It is a
+// no-op when there is no current session or it already has content. Best-effort:
+// a blank session has no durable value to lose, so a delete failure is logged
+// rather than failing the switch.
+func (a *app) pruneBlankCurrent(ctx context.Context) {
+	if a.currentID == "" || a.log == nil || len(a.log.Events()) != 0 {
+		return
+	}
+	if err := a.store.DeleteSession(ctx, a.currentID); err != nil {
+		fmt.Fprintf(os.Stderr, "pa: prune blank session %q: %v\n", a.currentID, err)
+	}
+}
+
 // newSession starts a fresh session with a random id.
 func (a *app) newSession(ctx context.Context) error {
 	id, err := newSessionID()
 	if err != nil {
 		return fmt.Errorf("pa: generate session id: %w", err)
 	}
+	// dsh: starting a fresh session discards an abandoned blank one.
+	a.pruneBlankCurrent(ctx)
 	if err := a.store.CreateSession(ctx, id, time.Now().UTC()); err != nil {
 		return err
 	}
@@ -659,6 +676,12 @@ func (a *app) resumeSession(ctx context.Context, id string) error {
 			return fmt.Errorf("no such session %q (see /list)", id)
 		}
 		return err
+	}
+	// dsh: switching from a blank session to another one discards the empty row.
+	// Guarded here (after a successful load) so a failed switch never deletes
+	// the session the user is still on.
+	if id != a.currentID {
+		a.pruneBlankCurrent(ctx)
 	}
 	a.currentID = id
 	a.log = session.New()
