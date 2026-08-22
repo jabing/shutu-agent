@@ -524,6 +524,31 @@ func TestSessionContextAPI(t *testing.T) {
 	}
 }
 
+// TestTurnStopAPI verifies POST /api/sessions/{id}/stop (dsh 停止按钮): a wired
+// stopper forwards the session id and returns 200, an unwired server answers
+// 501, and the route is auth-guarded.
+func TestTurnStopAPI(t *testing.T) {
+	srv, _ := newTestServer(t, "tok")
+	var stopped string
+	srv.SetTurnStopper(func(sessionID string) error { stopped = sessionID; return nil })
+	rec := doReq(t, srv.Handler(), "POST", "/api/sessions/s-9/stop", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stop → %d, want 200", rec.Code)
+	}
+	if stopped != "s-9" {
+		t.Fatalf("stopper got %q, want s-9", stopped)
+	}
+	// Unwired stopper → 501.
+	srv2, _ := newTestServer(t, "tok")
+	if rec := doReq(t, srv2.Handler(), "POST", "/api/sessions/s-9/stop", "tok"); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("unwired stop → %d, want 501", rec.Code)
+	}
+	// Auth required.
+	if rec := doReq(t, srv.Handler(), "POST", "/api/sessions/s-9/stop", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("stop without auth → %d, want 401", rec.Code)
+	}
+}
+
 // TestEventsStreamSSE verifies the SSE stream: with a seeded session and an
 // injected fake event source the response is text/event-stream and the body
 // carries the snapshot frames plus a synchronously pushed live frame and the

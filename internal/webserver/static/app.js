@@ -420,7 +420,7 @@ function finishAssistant(text, timeIso, seq) {
     // replay path (snapshot with no streaming chunks): render the bubble fresh
     addAssistant(text, timeIso, seq);
   }
-  if (streamActive) { streamActive = false; loadSessions(); refreshContextMeter(); }
+  if (streamActive) { streamActive = false; turnRunning = false; syncSendButton(); loadSessions(); refreshContextMeter(); }
   scrollToBottom(true);
 }
 
@@ -481,6 +481,7 @@ scrollBottomBtn.addEventListener("click", () => { scrollToBottom(true); });
 // ---- session list (P2: dsh ui-workspace single-line rows) -------------------
 let searchQuery = "";
 let streamActive = false; // a streaming assistant turn is in flight
+let turnRunning = false;  // the composer shows the ■ stop affordance (dsh 停止)
 // dsh ui-workspace search affordance: a section-header icon that expands into
 // an inline input (wide), and a 36px rail icon that expands the sidebar and
 // lands focus in the input (rail). A non-empty query pins the expansion open.
@@ -1345,6 +1346,8 @@ function newSession() {
   streamState = null;
   runningNode = null;
   streamActive = false;
+  turnRunning = false;
+  syncSendButton();
   messagesEl.querySelector(".messages-inner")?.remove();
   curSessionEl.textContent = "";
   sessionCfg = { model: "", permission: "" };
@@ -1654,6 +1657,21 @@ function refreshContextMeter() {
 function fmtTokens(n) {
   return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n);
 }
+// The send button doubles as the run stop (dsh InputBar primaryStops): while a
+// turn is in flight it shows ■ and aborts; otherwise it is the send arrow.
+function syncSendButton() {
+  if (!sendBtn) return;
+  sendBtn.classList.toggle("running", turnRunning);
+  sendBtn.textContent = turnRunning ? "■" : "➤";
+  sendBtn.title = turnRunning ? "停止" : "发送";
+  sendBtn.setAttribute("aria-label", turnRunning ? "停止" : "发送");
+}
+async function stopTurn() {
+  if (!currentID) return;
+  try {
+    await api(`/api/sessions/${encodeURIComponent(currentID)}/stop`, { method: "POST" });
+  } catch (e) { if (e.message !== "unauthorized") console.error("stop", e); }
+}
 function syncPermSelect() {
   if (!permSelect) return;
   const v = sessionCfg.permission || permissionPreset || localStorage.getItem("pa_permission_preset") || "standard";
@@ -1819,6 +1837,8 @@ function openSession(id) {
   streamState = null;
   runningNode = null;
   streamActive = false;
+  turnRunning = false;
+  syncSendButton();
   messagesEl.querySelector(".messages-inner")?.remove();
   curSessionEl.textContent = id || "";
   toolMeta = {};
@@ -1973,6 +1993,8 @@ async function sendMessage() {
     if (sessionEmpty) { sessionEmpty = false; setHeroPhase(); }
     addRunning();
     streamActive = true;
+    turnRunning = true;
+    syncSendButton();
     loadSessions(); // blue running dot on the current row
     let images = [];
     if (drafts.length) {
@@ -2128,7 +2150,7 @@ composerText.addEventListener("keydown", (e) => {
     sendMessage();
   }
 });
-sendBtn.addEventListener("click", sendMessage);
+sendBtn.addEventListener("click", () => { if (turnRunning) stopTurn(); else sendMessage(); });
 
 // ---- topbar / config ----------------------------------------------------------
 // loadConfigLabels fills the topbar model/mode badges from the cached config.
@@ -3487,6 +3509,7 @@ function boot() {
   syncGrow();
   updatePlaceholder();
   syncPermSelect();
+  syncSendButton();
   loadConfig();
   loadComposerPrefs();
   loadSessions();

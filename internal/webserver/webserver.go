@@ -78,6 +78,10 @@ type Server struct {
 	// means the server falls back to its default.
 	contextWindowFn func(sessionID string) int
 
+	// stopFn cancels a running turn for a session (POST
+	// /api/sessions/{id}/stop, dsh 停止按钮). nil makes the API answer 501.
+	stopFn func(sessionID string) error
+
 	// M10 W4 (ADR D-WEB2-H): optional read-only providers for the subagent and
 	// background-job panels (GET /api/subagents, GET /api/jobs). Both are nil
 	// until a Setter is called; a nil provider makes its API answer 501. Each
@@ -256,6 +260,8 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	mux.Handle("GET /api/sessions/{id}/events", s.requireAuth(http.HandlerFunc(s.handleEvents)))
 	// ContextMeter (dsh ContextMeter): the current session's estimated tokens.
 	mux.Handle("GET /api/sessions/{id}/context", s.requireAuth(http.HandlerFunc(s.handleSessionContext)))
+	// Stop a running turn (dsh 停止按钮).
+	mux.Handle("POST /api/sessions/{id}/stop", s.requireAuth(http.HandlerFunc(s.handleTurnStop)))
 	// M10 W1 interactive API (ADR D-WEB2): session new/resume, message dispatch
 	// and the SSE event stream all sit behind the same bearer middleware.
 	mux.Handle("POST /api/sessions", s.requireAuth(http.HandlerFunc(s.handleSessionCreate)))
@@ -379,6 +385,13 @@ func (s *Server) SetConfigProvider(fn func() map[string]any) {
 // composition root; nil keeps the default budget.
 func (s *Server) SetContextWindow(fn func(sessionID string) int) {
 	s.contextWindowFn = fn
+}
+
+// SetTurnStopper wires the running-turn cancel for POST
+// /api/sessions/{id}/stop (dsh 停止按钮). Called by the composition root; nil
+// keeps the API at 501.
+func (s *Server) SetTurnStopper(fn func(sessionID string) error) {
+	s.stopFn = fn
 }
 
 // SetSessionStatusProvider wires the live per-session status computation
@@ -1788,6 +1801,21 @@ func (s *Server) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 }
 
 const defaultContextWindow = 128000
+
+// handleTurnStop implements POST /api/sessions/{id}/stop (dsh 停止按钮): it asks
+// the composition root to cancel the session's running turn (if any).
+func (s *Server) handleTurnStop(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.stopFn == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "turn stopper not wired"})
+		return
+	}
+	if err := s.stopFn(id); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
 
 // writeSSEEvent writes one SSE frame for an event and returns. Writes to a
 // disconnected client fail silently (the handler exits on context cancellation).

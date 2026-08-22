@@ -565,6 +565,11 @@ type app struct {
 	// turnMu serializes every turn (D5): the REPL and the web message API share
 	// one loop, so at most one Run executes at any moment (M10 W1, D-WEB2-A).
 	turnMu sync.Mutex
+	// cancelMu + turnCancel let POST /api/sessions/{id}/stop abort the web turn
+	// (dsh 停止按钮) without holding turnMu: the web message handler registers its
+	// cancellable context here, and the stop handler calls the stored cancel.
+	cancelMu   sync.Mutex
+	turnCancel context.CancelFunc
 	// runningSession is the session id whose turn is currently in flight, or ""
 	// when idle. It is published by runTurn under turnMu and read atomically by
 	// the sidebar status provider, so the webserver always sees a consistent

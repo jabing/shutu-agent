@@ -131,6 +131,7 @@ func (a *app) registerWebServer() error {
 	// exposes web_server.token or any key — the webserver only forwards it.
 	srv.SetConfigProvider(a.webConfig)
 	srv.SetContextWindow(a.contextWindowOf)
+	srv.SetTurnStopper(a.stopTurn)
 	// M10 W4 (ADR D-WEB2-H): inject the read-only subagent and background-job
 	// panels. Each provider returns sanitized views (id/status/timestamps only);
 	// a disabled capability answers an empty list, never an error.
@@ -229,7 +230,13 @@ func (a *app) webMessage(ctx context.Context, sessionID, text string, images []l
 			return fmt.Errorf("web message: log image: %w", err)
 		}
 	}
-	if err := a.runTurn(ctx, text, false); err != nil {
+	// A cancellable turn context so POST /api/sessions/{id}/stop can abort this
+	// turn (dsh 停止按钮) without touching the request context (which the
+	// handler returns, cancelling it, after the turn completes).
+	turnCtx, cancel := context.WithCancel(ctx)
+	a.setTurnCancel(cancel)
+	defer func() { a.clearTurnCancel(); cancel() }()
+	if err := a.runTurn(turnCtx, text, false); err != nil {
 		return err
 	}
 	// session-title alignment (dsh): after the first eligible message, the
@@ -298,6 +305,36 @@ func (a *app) contextWindowOf(sessionID string) int {
 		return w
 	}
 	return 0
+}
+
+// setTurnCancel registers the web turn's cancel func for the running turn.
+func (a *app) setTurnCancel(cancel context.CancelFunc) {
+	a.cancelMu.Lock()
+	defer a.cancelMu.Unlock()
+	a.turnCancel = cancel
+}
+
+// clearTurnCancel drops the registered cancel func once the turn settles.
+func (a *app) clearTurnCancel() {
+	a.cancelMu.Lock()
+	defer a.cancelMu.Unlock()
+	a.turnCancel = nil
+}
+
+// stopTurn cancels the running web turn (POST /api/sessions/{id}/stop). It is a
+// no-op when no turn is in flight; returns an error only when the id does not
+// match the session whose turn is running.
+func (a *app) stopTurn(sessionID string) error {
+	a.cancelMu.Lock()
+	defer a.cancelMu.Unlock()
+	if a.turnCancel == nil {
+		return errors.New("no turn running")
+	}
+	if sessionID != "" && sessionID != a.currentID {
+		return errors.New("turn belongs to another session")
+	}
+	a.turnCancel()
+	return nil
 }
 
 func (a *app) webConfig() map[string]any {
