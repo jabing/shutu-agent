@@ -484,6 +484,19 @@ mark {
   border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px;
 }
 .si-hover .shv-copy:hover { background: var(--dsw-alias-interactive-bg-hover); }
+/* workspace-header hover card (dsh ProjectRowItem): same portal shell */
+.ws-hover {
+  position: fixed; z-index: 60; min-width: 180px; max-width: 320px;
+  padding: 10px 12px; border-radius: 10px;
+  background: var(--dsw-specific-menu); border: 1px solid var(--dsw-alias-border-l2);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  color: var(--dsw-alias-label-primary); font-size: 13px;
+}
+.ws-hover .shv-title {
+  font-weight: 500; margin-bottom: 4px; white-space: normal;
+  overflow-wrap: anywhere; line-height: 1.35;
+}
+.ws-hover .shv-time { font-size: 12px; color: var(--dsw-alias-label-tertiary); }
 
 /* inline rename input replaces the title row */
 .session-item.renaming { cursor: text; }

@@ -770,6 +770,46 @@ function hideSessionHover() {
   if (siHoverEl) siHoverEl.hidden = true;
 }
 
+// ---- workspace header hover card (dsh ProjectRowItem) ----------------------
+// A portal card over a workspace group header: title + creation time. shutu
+// workspaces are title-only groups (no persisted directory path), so the dsh
+// cwd line is intentionally omitted.
+let wsHoverEl = null;
+function ensureWsHover() {
+  if (wsHoverEl) return wsHoverEl;
+  wsHoverEl = document.createElement("div");
+  wsHoverEl.id = "ws-hover";
+  wsHoverEl.className = "ws-hover";
+  wsHoverEl.hidden = true;
+  document.body.appendChild(wsHoverEl);
+  return wsHoverEl;
+}
+function showWorkspaceHover(rowEl, g) {
+  const card = ensureWsHover();
+  const created = g.created_at;
+  const timeHtml = created ? `<div class="shv-time">创建于 ${fmtShort(created)}</div>` : "";
+  card.innerHTML = `
+    <div class="shv-title">${esc(g.title)}</div>
+    ${timeHtml}`;
+  card.hidden = false;
+  positionWorkspaceHover(rowEl);
+}
+function positionWorkspaceHover(rowEl) {
+  const card = ensureWsHover();
+  if (card.hidden) return;
+  const r = rowEl.getBoundingClientRect();
+  const cw = card.offsetWidth, ch = card.offsetHeight;
+  let left = r.right + 8;
+  if (left + cw > window.innerWidth - 8) left = Math.max(8, r.left - cw - 8);
+  let top = r.top;
+  if (top + ch > window.innerHeight - 8) top = Math.max(8, window.innerHeight - ch - 8);
+  card.style.left = left + "px";
+  card.style.top = top + "px";
+}
+function hideWorkspaceHover() {
+  if (wsHoverEl) wsHoverEl.hidden = true;
+}
+
 // renderFlat draws the single-list view (dsh FlatList). In manual order a
 // user drag establishes flat_sort (manual order wins); otherwise fall back to
 // the recently-updated list order. In updated order recent activity always wins.
@@ -797,7 +837,7 @@ function renderGrouped(list) {
     if (orderBy === "updated") {
       ids.sort((a, b) => new Date(byId.get(b).updated_at) - new Date(byId.get(a).updated_at));
     }
-    groups.push({ key: w.id, title: w.title, ws: true, ids });
+    groups.push({ key: w.id, title: w.title, ws: true, ids, created_at: w.created_at });
   }
   const unIds = wsUngrouped.filter((id) => byId.has(id));
   if (unIds.length > 0) groups.push({ key: "__u", title: "未分组", ws: false, ids: unIds });
@@ -848,6 +888,11 @@ function renderGrouped(list) {
         e.stopPropagation();
         openWorkspaceMenu(g);
       });
+      // dsh ProjectRowItem hover card: title + creation time (shutu workspaces
+      // carry no directory path, so the cwd line is omitted).
+      head.addEventListener("mouseenter", () => { if (!openMenuEl) showWorkspaceHover(head, g); });
+      head.addEventListener("mousemove", () => { if (!openMenuEl) positionWorkspaceHover(head); });
+      head.addEventListener("mouseleave", hideWorkspaceHover);
     }
     wrap.appendChild(head);
     if (wsOpenState(g.key)) {

@@ -90,6 +90,9 @@ type WorkspaceMeta struct {
 	ID    string
 	Title string
 	Sort  int
+	// CreatedAt is the workspace creation time (dsh workspace hover card); the
+	// zero value means it predates the column and is omitted from the UI.
+	CreatedAt time.Time
 }
 
 // Store is the durable append-only event backend. The agent loop is strictly

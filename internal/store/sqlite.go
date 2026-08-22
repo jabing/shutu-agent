@@ -42,7 +42,8 @@ CREATE INDEX IF NOT EXISTS idx_events_session ON events (session_id, seq);
 CREATE TABLE IF NOT EXISTS workspaces (
     id    TEXT    NOT NULL PRIMARY KEY,
     title TEXT    NOT NULL,
-    sort  INTEGER NOT NULL
+    sort  INTEGER NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT NOT NULL PRIMARY KEY,
@@ -65,6 +66,7 @@ func migrateSchema(db *sql.DB) error {
 		{"sessions", "agent_preset", `ALTER TABLE sessions ADD COLUMN agent_preset TEXT`},
 		{"sessions", "model", `ALTER TABLE sessions ADD COLUMN model TEXT`},
 		{"sessions", "permission", `ALTER TABLE sessions ADD COLUMN permission TEXT`},
+		{"workspaces", "created_at", `ALTER TABLE workspaces ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, st := range steps {
 		if _, err := db.Exec(st.ddl); err != nil {
@@ -527,8 +529,8 @@ func (s *SQLiteStore) CreateWorkspace(ctx context.Context, id, title string) err
 		return fmt.Errorf("store: next workspace sort: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO workspaces (id, title, sort) VALUES (?, ?, ?)
-		 ON CONFLICT(id) DO NOTHING`, id, title, next); err != nil {
+		`INSERT INTO workspaces (id, title, sort, created_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(id) DO NOTHING`, id, title, next, time.Now().UnixMilli()); err != nil {
 		return fmt.Errorf("store: create workspace %q: %w", id, err)
 	}
 	return nil
@@ -536,7 +538,7 @@ func (s *SQLiteStore) CreateWorkspace(ctx context.Context, id, title string) err
 
 // ListWorkspaces returns every workspace, ordered by Sort then id.
 func (s *SQLiteStore) ListWorkspaces(ctx context.Context) ([]WorkspaceMeta, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, title, sort FROM workspaces ORDER BY sort, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, title, sort, created_at FROM workspaces ORDER BY sort, id`)
 	if err != nil {
 		return nil, fmt.Errorf("store: list workspaces: %w", err)
 	}
@@ -544,8 +546,12 @@ func (s *SQLiteStore) ListWorkspaces(ctx context.Context) ([]WorkspaceMeta, erro
 	var out []WorkspaceMeta
 	for rows.Next() {
 		var m WorkspaceMeta
-		if err := rows.Scan(&m.ID, &m.Title, &m.Sort); err != nil {
+		var created int64
+		if err := rows.Scan(&m.ID, &m.Title, &m.Sort, &created); err != nil {
 			return nil, fmt.Errorf("store: scan workspace: %w", err)
+		}
+		if created > 0 {
+			m.CreatedAt = time.UnixMilli(created).UTC()
 		}
 		out = append(out, m)
 	}

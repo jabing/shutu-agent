@@ -1287,6 +1287,7 @@ type workspaceView struct {
 	ID         string   `json:"id"`
 	Title      string   `json:"title"`
 	SessionIDs []string `json:"session_ids"`
+	CreatedAt  int64    `json:"created_at"`
 }
 
 // handleWorkspaces implements GET /api/workspaces (P6): every workspace with
@@ -1340,7 +1341,11 @@ func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 		if ids == nil {
 			ids = []string{} // always a JSON array, never null
 		}
-		out = append(out, workspaceView{ID: m.ID, Title: m.Title, SessionIDs: ids})
+		created := int64(0)
+		if !m.CreatedAt.IsZero() {
+			created = m.CreatedAt.UnixMilli()
+		}
+		out = append(out, workspaceView{ID: m.ID, Title: m.Title, SessionIDs: ids, CreatedAt: created})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"workspaces": out, "ungrouped_ids": ungrouped})
 }

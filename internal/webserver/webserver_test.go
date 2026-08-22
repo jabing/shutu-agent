@@ -915,6 +915,7 @@ func TestWorkspaceAPI(t *testing.T) {
 			ID         string   `json:"id"`
 			Title      string   `json:"title"`
 			SessionIDs []string `json:"session_ids"`
+			CreatedAt  int64    `json:"created_at"`
 		} `json:"workspaces"`
 		UngroupedIDs []string `json:"ungrouped_ids"`
 	}
@@ -923,6 +924,9 @@ func TestWorkspaceAPI(t *testing.T) {
 	}
 	if len(list.Workspaces) != 2 || list.Workspaces[0].Title != "研究" {
 		t.Fatalf("workspaces = %+v", list.Workspaces)
+	}
+	if list.Workspaces[0].CreatedAt <= 0 {
+		t.Fatalf("workspace created_at = %d, want > 0 (dsh workspace hover card)", list.Workspaces[0].CreatedAt)
 	}
 	if len(list.Workspaces[0].SessionIDs) != 1 || list.Workspaces[0].SessionIDs[0] != "s1" {
 		t.Fatalf("w1 sessions = %v, want [s1]", list.Workspaces[0].SessionIDs)
@@ -973,6 +977,7 @@ func TestWorkspaceAPI(t *testing.T) {
 			ID         string   `json:"id"`
 			Title      string   `json:"title"`
 			SessionIDs []string `json:"session_ids"`
+			CreatedAt  int64    `json:"created_at"`
 		} `json:"workspaces"`
 		UngroupedIDs []string `json:"ungrouped_ids"`
 	}{}
