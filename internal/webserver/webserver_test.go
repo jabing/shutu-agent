@@ -487,6 +487,43 @@ func TestSessionConfigAPI(t *testing.T) {
 	}
 }
 
+// TestSessionContextAPI verifies GET /api/sessions/{id}/context (dsh
+// ContextMeter): a seeded session returns 200 with a non-zero used_tokens and a
+// context_window (the wired budget), while an unknown session is 404.
+func TestSessionContextAPI(t *testing.T) {
+	srv, st := newTestServer(t, "tok")
+	seedSession(t, st, "s-1", []session.Event{
+		{Seq: 1, Type: "user/message", At: time.Now(), Version: 1, Data: mustData(t, map[string]any{"Text": "你好，这是一个较长的消息，用于估算上下文 token 用量。"})},
+		{Seq: 2, Type: "assistant/message", At: time.Now(), Version: 1, Data: mustData(t, map[string]any{"Text": "回你一样长度的消息，让估算非零。"})},
+	})
+	srv.SetContextWindow(func(sessionID string) int { return 128000 })
+	rec := doReq(t, srv.Handler(), "GET", "/api/sessions/s-1/context", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("context → %d, want 200", rec.Code)
+	}
+	var d struct {
+		UsedTokens    int     `json:"used_tokens"`
+		ContextWindow int     `json:"context_window"`
+		Percent       float64 `json:"percent"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if d.UsedTokens <= 0 {
+		t.Fatalf("used_tokens = %d, want > 0", d.UsedTokens)
+	}
+	if d.ContextWindow != 128000 {
+		t.Fatalf("context_window = %d, want 128000", d.ContextWindow)
+	}
+	if d.Percent <= 0 {
+		t.Fatalf("percent = %v, want > 0", d.Percent)
+	}
+	// Unknown session → 404.
+	if rec := doReq(t, srv.Handler(), "GET", "/api/sessions/s-nope/context", "tok"); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown session → %d, want 404", rec.Code)
+	}
+}
+
 // TestEventsStreamSSE verifies the SSE stream: with a seeded session and an
 // injected fake event source the response is text/event-stream and the body
 // carries the snapshot frames plus a synchronously pushed live frame and the
@@ -566,7 +603,7 @@ func TestConfigAPI(t *testing.T) {
 		called = true
 		return map[string]any{
 			"model":            "deepseek-chat",
-			"llm_provider":     "deepseek",
+			"llm_provider":     "deepseek-official",
 			"mode":             "standard",
 			"web_server_addr":  "127.0.0.1:8080",
 			"web_server.token": "***",
@@ -1058,11 +1095,11 @@ func TestModelSwitch(t *testing.T) {
 		return nil
 	})
 	rec := doReqBody(t, srv.Handler(), "POST", "/api/config/model", "tok",
-		`{"provider":"deepseek","model":"deepseek-reasoner"}`)
+		`{"provider":"deepseek-official","model":"deepseek-reasoner"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("model switch → %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
-	if gotP != "deepseek" || gotM != "deepseek-reasoner" {
+	if gotP != "deepseek-official" || gotM != "deepseek-reasoner" {
 		t.Fatalf("switcher got (%q, %q), want (deepseek, deepseek-reasoner)", gotP, gotM)
 	}
 

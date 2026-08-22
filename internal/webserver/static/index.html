@@ -183,7 +183,7 @@
                (below the headline/workspace row) and docked at the bottom in the
                active phase — the column's data-phase drives both postures. -->
           <div class="composer-card">
-            <div class="composer">
+            <div id="composer" class="composer">
               <div class="grow-wrap">
                 <textarea id="composer-text" rows="1" placeholder="给智能体发消息…"></textarea>
                 <div class="mirror" aria-hidden="true"></div>
@@ -206,6 +206,7 @@
                     <span class="ms-caret" data-icon="caretdown" aria-hidden="true"></span>
                   </button>
                   <div id="model-menu" class="ws-menu model-menu hidden" role="listbox"></div>
+                  <span id="context-meter" class="context-meter" title="上下文用量" aria-label="上下文用量"></span>
                   <button id="composer-send" class="send-btn" title="发送" aria-label="发送">➤</button>
                 </div>
               </div>

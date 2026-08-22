@@ -24,6 +24,7 @@ import (
 	"github.com/jabing/shutu-agent/internal/config"
 	"github.com/jabing/shutu-agent/internal/llm"
 	"github.com/jabing/shutu-agent/internal/session"
+	"github.com/jabing/shutu-agent/internal/store"
 	"github.com/jabing/shutu-agent/internal/webserver"
 )
 
@@ -129,6 +130,7 @@ func (a *app) registerWebServer() error {
 	// M10 W2 (ADR D-WEB2-D): inject the sanitized config view. webConfig never
 	// exposes web_server.token or any key — the webserver only forwards it.
 	srv.SetConfigProvider(a.webConfig)
+	srv.SetContextWindow(a.contextWindowOf)
 	// M10 W4 (ADR D-WEB2-H): inject the read-only subagent and background-job
 	// panels. Each provider returns sanitized views (id/status/timestamps only);
 	// a disabled capability answers an empty list, never an error.
@@ -269,6 +271,35 @@ func (a *app) webSessionManager(ctx context.Context, action, id string) (string,
 // settings page cannot leak credentials. Field names are snake_case. P5.1 adds
 // the live model panel: the currently active provider's model plus the
 // registered providers (id/available/model/candidates) for the pickers.
+// builtinContextWindows are the known DeepSeek defaults; unknown models fall
+// back to the webserver's defaultContextWindow (128k).
+var builtinContextWindows = map[string]int{
+	"deepseek-chat":     128000,
+	"deepseek-reasoner": 128000,
+}
+
+// contextWindowOf resolves the effective model's context window for the
+// ContextMeter. It honors the per-session model override (store assertion,
+// same as the webserver's config handlers) and falls back to the global model.
+func (a *app) contextWindowOf(sessionID string) int {
+	model := ""
+	if scs, ok := a.store.(store.SessionConfigStore); ok && sessionID != "" {
+		if cfg, err := scs.GetSessionConfig(context.Background(), sessionID); err == nil && cfg.Model != "" {
+			model = cfg.Model
+		}
+	}
+	if model == "" {
+		model = a.cfg.Model
+	}
+	if model == "" {
+		return 0
+	}
+	if w, ok := builtinContextWindows[model]; ok {
+		return w
+	}
+	return 0
+}
+
 func (a *app) webConfig() map[string]any {
 	return map[string]any{
 		"model":        llmProviderModel(a.cfg, a.cfg.LLM.Provider),
@@ -327,7 +358,7 @@ func (a *app) webProviders() []map[string]any {
 	for _, bp := range builtinProviders {
 		model := bp.model
 		baseURL := bp.baseURL
-		if bp.id == "deepseek" || bp.id == "openai" || bp.id == "anthropic" {
+		if bp.id == "deepseek-official" || bp.id == "openai" || bp.id == "anthropic" {
 			model = llmProviderModel(a.cfg, bp.id)
 			baseURL = llmProviderBaseURL(a.cfg, bp.id)
 		}

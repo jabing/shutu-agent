@@ -72,6 +72,12 @@ type Server struct {
 	// (the default) makes the API answer 501.
 	cfgFn func() map[string]any
 
+	// contextWindowFn resolves the effective model's context window (used by
+	// GET /api/sessions/{id}/context for the ContextMeter). It takes the session
+	// id (for the per-session model override) and returns a token budget; 0
+	// means the server falls back to its default.
+	contextWindowFn func(sessionID string) int
+
 	// M10 W4 (ADR D-WEB2-H): optional read-only providers for the subagent and
 	// background-job panels (GET /api/subagents, GET /api/jobs). Both are nil
 	// until a Setter is called; a nil provider makes its API answer 501. Each
@@ -248,6 +254,8 @@ func New(st store.Store, token, addr string) (*Server, error) {
 	mux.Handle("GET /api/kb/{rest...}", s.requireAuth(http.HandlerFunc(s.handleKBStub)))
 	mux.Handle("GET /api/sessions", s.requireAuth(http.HandlerFunc(s.handleSessions)))
 	mux.Handle("GET /api/sessions/{id}/events", s.requireAuth(http.HandlerFunc(s.handleEvents)))
+	// ContextMeter (dsh ContextMeter): the current session's estimated tokens.
+	mux.Handle("GET /api/sessions/{id}/context", s.requireAuth(http.HandlerFunc(s.handleSessionContext)))
 	// M10 W1 interactive API (ADR D-WEB2): session new/resume, message dispatch
 	// and the SSE event stream all sit behind the same bearer middleware.
 	mux.Handle("POST /api/sessions", s.requireAuth(http.HandlerFunc(s.handleSessionCreate)))
@@ -362,6 +370,15 @@ func (s *Server) SetEventSource(fn func(sessionID string, sink func(session.Even
 // verbatim. Called by the composition root; nil makes the API answer 501.
 func (s *Server) SetConfigProvider(fn func() map[string]any) {
 	s.cfgFn = fn
+}
+
+// SetContextWindow wires the ContextMeter's token budget for
+// GET /api/sessions/{id}/context. fn takes the session id (so the per-session
+// model override can be honored) and returns the effective model's context
+// window; 0 makes the server fall back to its default. Called by the
+// composition root; nil keeps the default budget.
+func (s *Server) SetContextWindow(fn func(sessionID string) int) {
+	s.contextWindowFn = fn
 }
 
 // SetSessionStatusProvider wires the live per-session status computation
@@ -1731,6 +1748,46 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 	defer unsub()
 	<-r.Context().Done()
 }
+
+// handleSessionContext implements GET /api/sessions/{id}/context (dsh
+// ContextMeter): it estimates the current session's model-visible token use from
+// its stored events and pairs it with the effective model's context window (the
+// composition root's contextWindowFn honors the per-session model override).
+func (s *Server) handleSessionContext(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	events, err := s.store.LoadSession(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "session not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	// Rough token proxy (len/4, mirroring compaction.defaultTokenEstimate): the
+	// body of every event - messages, tool-call names/arguments, injected text.
+	used := 0
+	for _, ev := range events {
+		used += len(ev.Data) / 4
+	}
+	window := defaultContextWindow
+	if s.contextWindowFn != nil {
+		if w := s.contextWindowFn(id); w > 0 {
+			window = w
+		}
+	}
+	percent := 0.0
+	if window > 0 {
+		percent = float64(used) / float64(window)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"used_tokens":    used,
+		"context_window": window,
+		"percent":        percent,
+	})
+}
+
+const defaultContextWindow = 128000
 
 // writeSSEEvent writes one SSE frame for an event and returns. Writes to a
 // disconnected client fail silently (the handler exits on context cancellation).

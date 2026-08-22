@@ -851,7 +851,7 @@ mark {
   display: flex; align-items: center; justify-content: center;
   pointer-events: none;
 }
-.hero-inner { text-align: center; position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; }
+.hero-inner { max-width: 780px; width: 100%; text-align: center; position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; }
 .hero-headline {
   display: grid; grid-template-columns: 34px auto auto; column-gap: 10px; align-items: center;
   justify-content: center; font-size: 26px; line-height: 32px; font-weight: 500;
@@ -865,7 +865,7 @@ mark {
   color: var(--dsw-alias-label-caption); padding: 1px 6px 2px; border-radius: 999px;
   background: var(--dsw-alias-interactive-bg-hover);
 }
-.hero-ws-row { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 12px; }
+.hero-ws-row { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 12px; justify-content: flex-start; align-self: stretch; }
 /* The hero shell disables pointer events so the headline does not block message
    clicks; the workspace chip and its picker are interactive, so re-enable them. */
 .hero .ws-chip, .hero .ws-menu { pointer-events: auto; }
@@ -952,7 +952,6 @@ mark {
   box-shadow: var(--dsw-shadow-lv2);
   padding: 10px 12px;
 }
-.composer:focus-within { border-color: var(--dsw-alias-state-business-primary); }
 .composer.disabled { opacity: 0.5; pointer-events: none; }
 .grow-wrap {
   flex: 1; display: grid;
@@ -1023,6 +1022,8 @@ mark {
 }
 .model-menu .ms-search input:focus { border-color: var(--dsw-alias-state-business-primary); }
 .model-menu .ms-group { padding: 6px 10px 2px; font-size: 12px; color: var(--dsw-alias-label-caption); font-weight: 600; }
+/* context token meter (dsh ContextMeter): a compact caption in the trailing row */
+.context-meter { flex: none; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-caption); white-space: nowrap; }
 /* command / mode menu items: name + short description (dsh AgentPresetSeat item) */
 .ws-menu .hm-item .hm-item-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .ws-menu .hm-item .hm-item-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1223,6 +1224,8 @@ body[data-ds-dark-theme="false"] .nav-cell.active { background: #EBEEF2; }
 .m-notice { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-warn-label); }
 .m-editoractions { display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
 .m-editoractions .model-status { font-size: 12px; color: var(--dsw-alias-label-caption); }
+/* M11 保存确认通知 (dsh savedNotice 对齐): role="status", 列表上方持久显示. */
+.m-saved-notice { margin: 8px 0 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-success-primary); }
 .m-fieldhint { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-caption); }
 .m-fielderror { color: var(--dsw-alias-danger-fg, var(--dsw-danger-500)); }
 /* M11-pi-ai multi-model list editor (dsh ModelListEditor 对齐). */

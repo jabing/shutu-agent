@@ -46,6 +46,7 @@ const heroWsChip = $("hero-ws-chip"), heroWsLabel = $("hero-ws-label"), heroWsMe
 const heroModeChip = $("hero-mode-chip"), heroModeLabel = $("hero-mode-label"), heroModeMenu = $("hero-mode-menu");
 const cmdBtn = $("cmd-btn"), cmdMenu = $("cmd-menu"), permSelect = $("perm-select");
 const modelSeat = $("model-seat"), modelSeatLabel = $("model-seat-label"), modelMenu = $("model-menu");
+const contextMeter = $("context-meter");
 const detailsPanel = $("details-panel"), detailsTitle = $("details-title"),
   detailsCloseBtn = $("details-close"), detailsEmptyEl = $("details-empty"), detailsSelEl = $("details-selection");
 
@@ -419,7 +420,7 @@ function finishAssistant(text, timeIso, seq) {
     // replay path (snapshot with no streaming chunks): render the bubble fresh
     addAssistant(text, timeIso, seq);
   }
-  if (streamActive) { streamActive = false; loadSessions(); }
+  if (streamActive) { streamActive = false; loadSessions(); refreshContextMeter(); }
   scrollToBottom(true);
 }
 
@@ -1323,6 +1324,7 @@ async function deleteSession(id) {
     syncHeroChip();
     syncHeroPickState();
     setHeroPhase();
+    refreshContextMeter();
     syncGrow();
   }
   loadSessions();
@@ -1353,6 +1355,7 @@ function newSession() {
   syncHeroPickState();
   setHeroPhase();
   updatePlaceholder();
+  refreshContextMeter();
   syncGrow();
 }
 
@@ -1634,6 +1637,23 @@ function syncModelSeat() {
   const eff = sessionCfg.model || config.model || "";
   modelSeatLabel.textContent = eff || "模型";
 }
+// ContextMeter (dsh): fetch the session's estimated token use + window and show
+// a compact "used / window" caption in the composer trailing row.
+function refreshContextMeter() {
+  if (!contextMeter) return;
+  if (!currentID) { contextMeter.textContent = ""; contextMeter.title = ""; return; }
+  api(`/api/sessions/${encodeURIComponent(currentID)}/context`).then((res) => {
+    if (!res.ok) return;
+    return res.json().then((d) => {
+      const used = d.used_tokens || 0, win = d.context_window || 0;
+      contextMeter.textContent = fmtTokens(used) + (win ? " / " + fmtTokens(win) : "");
+      contextMeter.title = "上下文用量：" + used + " / " + win + " tokens";
+    });
+  }).catch(() => {});
+}
+function fmtTokens(n) {
+  return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n);
+}
 function syncPermSelect() {
   if (!permSelect) return;
   const v = sessionCfg.permission || permissionPreset || localStorage.getItem("pa_permission_preset") || "standard";
@@ -1808,7 +1828,7 @@ function openSession(id) {
   // picked workspace. (dsh: session → composer active, hero → choose-workspace.)
   setComposerDisabled(!id);
   updatePlaceholder();
-  if (!id) { sessionCfg = { model: "", permission: "" }; setHeroPhase(); return; }
+  if (!id) { sessionCfg = { model: "", permission: "" }; setHeroPhase(); if (contextMeter) { contextMeter.textContent = ""; contextMeter.title = ""; } return; }
   loadSessionConfig(id);
   return Promise.all([loadEvents(id), connectStream(id)]);
 }
@@ -1829,6 +1849,7 @@ async function loadEvents(id) {
     sessionEmpty = evs.length === 0;
     setHeroPhase();
     if (!sessionEmpty) heroEl.classList.add("hidden");
+    refreshContextMeter();
     scrollToBottom(true);
   } catch (e) { if (e.message !== "unauthorized") console.error(e); }
 }
@@ -2144,7 +2165,7 @@ const CAPABILITY_NAMES = {
   spill: "溢出", compaction: "压缩", multimodal: "多模态",
 };
 const MODEL_DISPLAY = { "deepseek-chat": "DeepSeek Chat", "deepseek-reasoner": "DeepSeek Reasoner" };
-const PROVIDER_DISPLAY = { deepseek: "DeepSeek" };
+const PROVIDER_DISPLAY = { "deepseek-official": "DeepSeek" };
 
 let settingsSec = "general";
 let settingsConfig = null;
@@ -2262,7 +2283,7 @@ function renderGeneral(c) {
 }
 
 // Model settings page (M11: dsh ModelsSection) — provider row-cards, one per
-// known provider: every built-in (deepseek always; openai/anthropic even when
+// known provider: every built-in (deepseek-official always; openai/anthropic even when
 // their env key is absent) plus every M11 custom OpenAI-compatible provider.
 // Rows render only for configured/custom providers (dormant built-ins — known
 // but no key — are NOT rows; they are reached through the 增加提供方 add card).
@@ -2275,11 +2296,12 @@ function renderGeneral(c) {
 // provider then just enter its API key. 增加自定义提供方 declares a brand-new
 // OpenAI-compatible endpoint. Keys default from the environment variable; a key
 // entered here takes precedence (配置后以配置的为准, user 2026-09).
-const PROVIDER_ENV = { deepseek: "DEEPSEEK_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY" };
+const PROVIDER_ENV = { "deepseek-official": "DEEPSEEK_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY" };
 let modelEditing = null;  // provider id open in its full editor card (row 编辑)
 let adding = false;       // true while the 增加提供方 add card is open
 let addingId = null;      // provider id selected in the add card's <select>
 let customAdding = false; // true while the 增加自定义提供方 create card is open
+let savedNotice = null;   // persistent "已保存 <provider>。" notice (dsh savedNotice 对齐)
 
 // M11-pi-ai multi-model list editor (dsh ModelListEditor 对齐). The draft
 // model rows of the open custom card live here so re-renders keep them; the
@@ -2412,10 +2434,15 @@ function openProbePicker(candidates) {
   });
 }
 
+const providerLabel = (p) => {
+  const d = PROVIDER_DISPLAY[p.id] || p.name || p.id;
+  return d === p.id ? d : d + " (" + p.id + ")";
+};
+
 function renderModel(c) {
   const sec = settingsSectionEl();
   const providers = (c.providers || []).slice();
-  const currentProvider = c.llm_provider || "deepseek";
+  const currentProvider = c.llm_provider || "deepseek-official";
   const currentModel = c.model || "";
   // configured-first (dsh sorts usable providers up), then registered; the
   // active one keeps its place among the configured rows.
@@ -2436,7 +2463,7 @@ function renderModel(c) {
     const active = p.id === currentProvider;
     const candOpts = (p.candidates || []).map((m) => `<option value="${esc(m)}">${esc(MODEL_DISPLAY[m] || m)}</option>`).join("");
     const curModel = active ? currentModel : (p.model || "");
-    const title = mode === "add" ? `增加 ${esc(name)}` : `编辑 ${esc(name)}`;
+    const title = mode === "add" ? `增加 ${esc(providerLabel(p))}` : `编辑 ${esc(providerLabel(p))}`;
     const submitLabel = mode === "add" ? "保存" : "应用";
     return `<div class="m-editor">
       <div class="m-editorhead">
@@ -2476,11 +2503,12 @@ function renderModel(c) {
   };
 
   let t = `<h2>模型</h2>
-    <p class="intro">配置 API Key 后即可使用以下提供方。切换提供方 / 模型即时生效（下一条消息即用新模型）；Key 默认从环境变量读取，在本页填入的 Key 以配置值为准（覆盖环境变量）。</p>
-    <ul class="m-rows">`;
+    <p class="intro">配置 API Key 后即可使用以下提供方。切换提供方 / 模型即时生效（下一条消息即用新模型）；Key 默认从环境变量读取，在本页填入的 Key 以配置值为准（覆盖环境变量）。</p>`;
+  if (savedNotice) t += `<p class="m-saved-notice" role="status" aria-live="polite">${esc(savedNotice)}</p>`;
+  t += `<ul class="m-rows">`;
 
   for (const p of rows) {
-    const name = PROVIDER_DISPLAY[p.id] || p.name || p.id;
+    const name = providerLabel(p);
     const active = p.id === currentProvider;
     if (modelEditing === p.id) {
       t += `<li class="m-rowcard m-editing">${editorHTML(p, "edit")}</li>`;
@@ -2613,7 +2641,7 @@ function renderModel(c) {
   // Open the full editor card for a provider row.
   sec.querySelectorAll("[data-edit]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      modelEditing = btn.dataset.edit; adding = false; addingId = null; customAdding = false;
+      savedNotice = null; modelEditing = btn.dataset.edit; adding = false; addingId = null; customAdding = false;
       // A custom provider's edit card shows the multi-model list (M11-pi-ai):
       // seed the draft from its persisted models, falling back to the legacy
       // single model. A built-in provider keeps the single-model field.
@@ -2629,6 +2657,7 @@ function renderModel(c) {
     btn.addEventListener("click", async () => {
       const id = btn.dataset.del;
       if (!confirm(`删除自定义提供方 ${id}？`)) return;
+      savedNotice = null;
       try {
         const res = await api("/api/config/provider", { method: "DELETE", body: JSON.stringify({ id }) });
         if (res.status === 401) { showLogin("令牌无效或已过期"); return; }
@@ -2643,7 +2672,7 @@ function renderModel(c) {
   const addProvider = sec.querySelector("#m-add-provider");
   if (addProvider) {
     addProvider.addEventListener("click", () => {
-      adding = true; addingId = dormant[0] ? dormant[0].id : null; modelEditing = null; customAdding = false; renderModel(c);
+      savedNotice = null; adding = true; addingId = dormant[0] ? dormant[0].id : null; modelEditing = null; customAdding = false; renderModel(c);
     });
   }
   // Switching the provider <select> in the add card re-targets the editor.
@@ -2658,7 +2687,7 @@ function renderModel(c) {
   const addCustom = sec.querySelector("#m-add-custom");
   if (addCustom) {
     addCustom.addEventListener("click", () => {
-      modelEditing = null; adding = false; addingId = null; customAdding = true;
+      savedNotice = null; modelEditing = null; adding = false; addingId = null; customAdding = true;
       modelDraft = [{ id: "", name: "" }]; renderModel(c);
     });
   }
@@ -2723,9 +2752,10 @@ function renderModel(c) {
         }) });
         if (res.status === 401) { showLogin("令牌无效或已过期"); return; }
         if (!res.ok) { const eb = await res.json().catch(() => ({})); throw new Error(eb.error || ("HTTP " + res.status)); }
-        status.textContent = "已保存 ✓";
         modelEditing = null; customAdding = false;
         await loadConfig();
+        const savedP = (config.providers || []).find((x) => x.id === route) || { id: route, name };
+        savedNotice = "已保存 " + providerLabel(savedP) + "。";
         renderModel(config);
       } catch (e) {
         status.textContent = "失败：" + e.message;
@@ -2777,9 +2807,10 @@ function renderModel(c) {
         const res = await api("/api/config/provider", { method: "POST", body: JSON.stringify({ id: editId, api_key: key }) });
         if (res.status === 401) { showLogin("令牌无效或已过期"); return; }
         if (!res.ok) { const eb = await res.json().catch(() => ({})); throw new Error(eb.error || ("HTTP " + res.status)); }
-        status.textContent = "已保存并生效 ✓";
         adding = false; addingId = null;
         await loadConfig();
+        const savedP = (config.providers || []).find((x) => x.id === editId) || target;
+        savedNotice = "已保存 " + providerLabel(savedP) + "。";
         renderModel(config);
       } catch (e) {
         status.textContent = "失败：" + e.message;
@@ -2797,8 +2828,8 @@ function renderModel(c) {
         const rk = await api("/api/config/provider", {
           method: "POST",
           body: target && target.custom
-            ? { id: editId, name: target.name, base_url: body.base_url || target.base_url, model: body.model || (modelDraft.length ? modelDraft[0].id : target.model), models: modelDraft, api_key: key, protocol: target.protocol || "openai-completions", custom: true }
-            : { id: editId, api_key: key },
+            ? JSON.stringify({ id: editId, name: target.name, base_url: body.base_url || target.base_url, model: body.model || (modelDraft.length ? modelDraft[0].id : target.model), models: modelDraft, api_key: key, protocol: target.protocol || "openai-completions", custom: true })
+            : JSON.stringify({ id: editId, api_key: key }),
         });
         if (rk.status === 401) { showLogin("令牌无效或已过期"); return; }
         if (!rk.ok) { const eb = await rk.json().catch(() => ({})); throw new Error(eb.error || ("HTTP " + rk.status)); }
@@ -2808,9 +2839,11 @@ function renderModel(c) {
         if (rm.status === 401) { showLogin("令牌无效或已过期"); return; }
         if (!rm.ok) { const eb = await rm.json().catch(() => ({})); throw new Error(eb.error || ("HTTP " + rm.status)); }
       }
-      status.textContent = "已生效 ✓";
       await loadConfig();        // refresh the config view (model/provider)
       loadConfigLabels();        // update the sidebar mode/model badge
+      const savedP = (config.providers || []).find((x) => x.id === editId) || target;
+      savedNotice = "已保存 " + providerLabel(savedP) + "。";
+      modelEditing = null;       // close the editor (dsh closeEditor)
       renderModel(config);       // re-render with the new selection
     } catch (e) {
       status.textContent = "失败：" + e.message;
