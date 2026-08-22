@@ -1581,13 +1581,21 @@ async function pickMode(id) {
 }
 
 // ---- composer toolbar: command(＋) / permission / model ---------------------
+// syncCmdMenuPosition places the composer command menu. The composer sits at
+// the bottom edge, so the menu opens upward (same edge logic as the model
+// seat); with no room above it flips below the button.
 function syncCmdMenuPosition() {
-  if (cmdMenu && cmdBtn) {
-    const r = cmdBtn.getBoundingClientRect();
-    cmdMenu.style.left = r.left + "px";
-    cmdMenu.style.top = (r.bottom + 6) + "px";
-    cmdMenu.style.minWidth = Math.max(r.width, 200) + "px";
-  }
+  if (!cmdMenu || !cmdBtn) return;
+  const r = cmdBtn.getBoundingClientRect();
+  cmdMenu.style.minWidth = Math.max(r.width, 200) + "px";
+  const wasHidden = cmdMenu.classList.contains("hidden");
+  if (wasHidden) cmdMenu.classList.remove("hidden");
+  const h = cmdMenu.offsetHeight || 160;
+  if (wasHidden) cmdMenu.classList.add("hidden");
+  const GAP = 6, EDGE = 8;
+  cmdMenu.style.left = Math.max(EDGE, r.left) + "px";
+  const up = r.top - h - GAP;
+  cmdMenu.style.top = (up >= EDGE ? up : (r.bottom + GAP)) + "px";
 }
 function renderCmdMenu() {
   if (!cmdMenu) return;
@@ -1612,11 +1620,25 @@ function toggleCmdMenu(force) {
 }
 
 // ---- composer model seat (dsh ModelSeat) ------------------------------------
+// syncModelSeatPosition places the model menu relative to the seat. The
+// composer sits at the bottom edge, so the menu opens UPWARD (dsh ModelSelect
+// .menu bottom: calc(100% + 8px)); when the space above is too small (hero
+// centered composer) it flips below the seat instead.
 function syncModelSeatPosition() {
-  if (modelMenu && modelSeat) {
-    const r = modelSeat.getBoundingClientRect();
-    modelMenu.style.left = Math.max(8, r.right - 260) + "px";
-    modelMenu.style.top = (r.bottom + 6) + "px";
+  if (!modelMenu || !modelSeat) return;
+  const r = modelSeat.getBoundingClientRect();
+  const wasHidden = modelMenu.classList.contains("hidden");
+  if (wasHidden) modelMenu.classList.remove("hidden");
+  const h = modelMenu.offsetHeight || 260;
+  if (wasHidden) modelMenu.classList.add("hidden");
+  const GAP = 6, EDGE = 8;
+  const left = Math.max(EDGE, Math.min(r.right - 260, window.innerWidth - 260 - EDGE));
+  modelMenu.style.left = left + "px";
+  const up = r.top - h - GAP;
+  if (up >= EDGE) {
+    modelMenu.style.top = up + "px";
+  } else {
+    modelMenu.style.top = (r.bottom + GAP) + "px";
   }
 }
 // renderModelMenu renders the composer model seat's two-level menu (dsh
@@ -1703,17 +1725,18 @@ function renderModelMenu(term) {
   modelMenu.innerHTML = search + body;
   modelMenu.querySelectorAll(".hm-item").forEach((btn) => {
     if (btn.disabled) return;
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
       const act = btn.dataset.action;
-      if (act === "open-model") { modelPane = "model"; renderModelMenu(""); return; }
+      if (act === "open-model") { modelPane = "model"; renderModelMenu(""); syncModelSeatPosition(); return; }
       if (act === "open-effort") {
         effortTarget = active; effortTargetProv = activeProv;
-        modelPane = "effort"; renderModelMenu(""); return;
+        modelPane = "effort"; renderModelMenu(""); syncModelSeatPosition(); return;
       }
       if (act === "pick-model") {
         const m = btn.dataset.model, prov = btn.dataset.prov;
         setModel(prov, m);
-        if (btn.querySelector(".hm-caret")) { effortTarget = m; effortTargetProv = prov; modelPane = "effort"; renderModelMenu(""); }
+        if (btn.querySelector(".hm-caret")) { effortTarget = m; effortTargetProv = prov; modelPane = "effort"; renderModelMenu(""); syncModelSeatPosition(); }
         else { modelPane = "root"; toggleModelMenu(false); }
         return;
       }
@@ -3799,8 +3822,10 @@ if (heroModeChip) heroModeChip.addEventListener("click", (e) => {
 if (cmdBtn) cmdBtn.addEventListener("click", (e) => {
   e.stopPropagation();
   renderCmdMenu();
-  syncCmdMenuPosition();
+  // Show before measuring so the real height positions the menu above the
+  // bottom-edge button.
   toggleCmdMenu();
+  syncCmdMenuPosition();
 });
 // Permission preset selector → persisted global default (dsh PermissionRow).
 if (permSelect) permSelect.addEventListener("change", () => savePermissionPreset(permSelect.value));
@@ -3808,8 +3833,16 @@ if (permSelect) permSelect.addEventListener("change", () => savePermissionPreset
 if (modelSeat) modelSeat.addEventListener("click", (e) => {
   e.stopPropagation();
   const open = !modelMenuOpen;
-  if (open) { modelPane = "root"; renderModelMenu(""); syncModelSeatPosition(); }
-  toggleModelMenu(open);
+  if (open) {
+    modelPane = "root";
+    renderModelMenu("");
+    // Show before measuring so the real pane height positions the menu above
+    // the bottom-edge seat (dsh ModelSelect opens upward).
+    toggleModelMenu(true);
+    syncModelSeatPosition();
+    return;
+  }
+  toggleModelMenu(false);
 });
 // Cmd/Ctrl+K focuses the composer draft; Escape closes any open composer popover.
 document.addEventListener("keydown", (e) => {
