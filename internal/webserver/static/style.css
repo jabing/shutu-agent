@@ -1114,7 +1114,50 @@ mark {
 .perm-confirm-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--dsw-alias-label-primary); cursor: pointer; }
 .perm-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 /* context token meter (dsh ContextMeter): a compact caption in the trailing row */
-.context-meter { flex: none; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-caption); white-space: nowrap; }
+/* ContextMeter (dsh ContextMeter 对齐): a 28px circular occupancy-ring trigger
+   beside the send button, a hover tooltip with the detailed figures, and a
+   click-open panel (menu surface: r12, inverted hairline, shadow-lv3). */
+.context-meter { position: relative; display: inline-flex; flex: none; }
+.cm-trigger {
+  display: grid; place-items: center; flex: none;
+  width: 28px; height: 28px; padding: 0;
+  border: none; border-radius: 999px; background: transparent;
+  color: var(--dsw-alias-label-secondary); cursor: pointer;
+}
+.cm-trigger:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.cm-track { fill: none; stroke: var(--dsw-alias-border-l3); stroke-width: 2; }
+.cm-fill { fill: none; stroke: var(--dsw-alias-label-tertiary); stroke-width: 2; stroke-linecap: round; }
+/* Hover tooltip (dsh Tooltip side=top, delayMs=200): the occupancy sentence +
+   the detailed figures; suppressed while the click panel is open. */
+.cm-tip {
+  position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 120;
+  padding: 6px 8px; border: 1px solid var(--dsw-alias-border-inverted); border-radius: 8px;
+  background: var(--dsw-specific-menu); box-shadow: var(--dsw-shadow-lv3);
+  font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);
+  white-space: nowrap; pointer-events: none;
+  opacity: 0; visibility: hidden;
+  transition: opacity 120ms ease 200ms, visibility 0s linear 320ms;
+}
+.cm-trigger:hover + .cm-tip { opacity: 1; visibility: visible; transition-delay: 200ms, 0s; }
+.context-meter.cm-open .cm-tip { opacity: 0; visibility: hidden; transition: none; }
+/* Click-open breakdown panel (dsh ContextMeter panel). */
+.cm-panel {
+  position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 100;
+  box-sizing: border-box; width: 264px; padding: 12px;
+  border: 1px solid var(--dsw-alias-border-inverted); border-radius: 12px;
+  background: var(--dsw-specific-menu); box-shadow: var(--dsw-shadow-lv3);
+  font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-secondary);
+  cursor: default;
+}
+.cm-header { display: flex; align-items: center; gap: 6px; }
+.cm-figures { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-primary); }
+.cm-percent { font-weight: 500; color: var(--dsw-alias-label-primary); }
+.cm-headline { color: var(--dsw-alias-label-tertiary); }
+.cm-bar {
+  display: flex; gap: 1px; margin: 10px 0 0; height: 4px;
+  border-radius: 999px; background: var(--dsw-alias-interactive-bg-hover); overflow: hidden;
+}
+.cm-segment { flex: none; min-width: 2px; height: 100%; border-radius: 1px; background: var(--dsw-alias-label-tertiary); }
 /* command / mode menu items: name + short description (dsh AgentPresetSeat item) */
 .ws-menu .hm-item .hm-item-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .ws-menu .hm-item .hm-item-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

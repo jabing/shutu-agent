@@ -1880,19 +1880,62 @@ function syncModelSeat() {
   }
   modelSeatLabel.textContent = name;
 }
-// ContextMeter (dsh): fetch the session's estimated token use + window and show
-// a compact "used / window" caption in the composer trailing row.
+// ContextMeter (dsh ContextMeter 对齐): a small occupancy ring beside the send
+// button fed by /api/sessions/{id}/context. Hovering the ring shows the dsh
+// tooltip sentence plus the detailed figures (~used / window); clicking opens
+// the dsh panel (percent + figures + bar). Renders nothing until a session
+// provides both usage and a window (dsh: renders nothing until the provider
+// reports pressure and capacity).
+const CM_RADIUS = 5.5;                        // dsh ring geometry: 14px viewBox, 2px stroke
+const CM_CIRCUMFERENCE = 2 * Math.PI * CM_RADIUS;
+let cmOpen = false;                           // click panel state (dsh ContextMeter open)
+
 function refreshContextMeter() {
   if (!contextMeter) return;
-  if (!currentID) { contextMeter.textContent = ""; contextMeter.title = ""; return; }
+  if (!currentID) { contextMeter.textContent = ""; cmOpen = false; return; }
   api(`/api/sessions/${encodeURIComponent(currentID)}/context`).then((res) => {
     if (!res.ok) return;
     return res.json().then((d) => {
       const used = d.used_tokens || 0, win = d.context_window || 0;
-      contextMeter.textContent = fmtTokens(used) + (win ? " / " + fmtTokens(win) : "");
-      contextMeter.title = "上下文用量：" + used + " / " + win + " tokens";
+      if (!win) { contextMeter.textContent = ""; cmOpen = false; return; }
+      // dsh contextOccupancy: integer percent, clamped to 100.
+      const percent = Math.min(100, Math.round(used / win * 100));
+      const figures = "~" + fmtTokens(used) + " / " + fmtTokens(win);
+      const arc = (CM_CIRCUMFERENCE * percent / 100).toFixed(2);
+      cmOpen = false; // a rebuild closes the panel (fresh content)
+      contextMeter.innerHTML =
+        `<button type="button" class="cm-trigger" aria-label="上下文已用 ${percent}%" aria-haspopup="dialog" aria-expanded="false">
+           <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
+             <circle class="cm-track" cx="7" cy="7" r="${CM_RADIUS}"></circle>
+             <circle class="cm-fill" cx="7" cy="7" r="${CM_RADIUS}" stroke-dasharray="${arc} ${CM_CIRCUMFERENCE.toFixed(2)}" transform="rotate(-90 7 7)"></circle>
+           </svg>
+         </button>
+         <div class="cm-tip" role="tooltip">上下文已用 <b>${percent}%</b> · ${figures}</div>
+         <div class="cm-panel hidden" role="dialog" aria-label="上下文已用">
+           <div class="cm-header">
+             <span class="cm-headline">上下文已用</span>
+             <span class="cm-percent">${percent}%</span>
+             <span class="cm-figures">${figures}</span>
+           </div>
+           <div class="cm-bar"><div class="cm-segment" style="width:${percent}%"></div></div>
+         </div>`;
+      contextMeter.querySelector(".cm-trigger").addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleCMPanel();
+      });
     });
   }).catch(() => {});
+}
+// toggleCMPanel shows/hides the click-open breakdown panel (dsh ContextMeter);
+// the tooltip is CSS-hover driven and suppresses itself while the panel is up.
+function toggleCMPanel(force) {
+  const open = force === undefined ? !cmOpen : force;
+  cmOpen = open;
+  const panel = contextMeter && contextMeter.querySelector(".cm-panel");
+  if (panel) panel.classList.toggle("hidden", !open);
+  const trig = contextMeter && contextMeter.querySelector(".cm-trigger");
+  if (trig) trig.setAttribute("aria-expanded", String(open));
+  if (contextMeter) contextMeter.classList.toggle("cm-open", open);
 }
 // fmtTokens renders a compact token count (dsh formatTokens): 517 / 12.2K /
 // 517K / 1.2M — one decimal only under three digits.
@@ -2259,7 +2302,7 @@ function openSession(id) {
   setComposerDisabled(!id);
   updatePlaceholder();
   syncRunsTrigger();
-  if (!id) { sessionCfg = { model: "", permission: "" }; setHeroPhase(); if (contextMeter) { contextMeter.textContent = ""; contextMeter.title = ""; } return; }
+  if (!id) { sessionCfg = { model: "", permission: "" }; setHeroPhase(); if (contextMeter) { contextMeter.textContent = ""; cmOpen = false; } return; }
   loadSessionConfig(id);
   return Promise.all([loadEvents(id), connectStream(id)]);
 }
@@ -2434,6 +2477,11 @@ async function sendMessage() {
     }
   } finally {
     setComposerDisabled(false);
+    // The POST settles exactly when the turn settles (success or error): a
+    // failed turn produces no assistant/message event, so finishAssistant
+    // never ran — reset the run state and refresh the ContextMeter here.
+    if (streamActive) { streamActive = false; turnRunning = false; syncSendButton(); }
+    refreshContextMeter();
   }
 }
 
@@ -4162,7 +4210,12 @@ document.addEventListener("keydown", (e) => {
     if (cmdMenuOpen) toggleCmdMenu(false);
     if (heroMenuOpen) toggleHeroMenu(false);
     if (heroModeOpen) toggleModeMenu(false);
+    if (cmOpen) toggleCMPanel(false);
   }
+});
+// dsh ContextMeter: a pointer down outside the meter closes its open panel.
+document.addEventListener("pointerdown", (e) => {
+  if (cmOpen && contextMeter && !contextMeter.contains(e.target)) toggleCMPanel(false);
 });
 // Right details panel close button (dsh DetailsPanel close).
 if (detailsCloseBtn) detailsCloseBtn.addEventListener("click", closeDetails);
