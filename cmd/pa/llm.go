@@ -370,7 +370,7 @@ func llmProviderBaseURL(cfg config.Config, id string) string {
 func modelCandidates(id string) []string {
 	switch id {
 	case "deepseek-official":
-		return []string{"deepseek-chat", "deepseek-reasoner"}
+		return []string{"deepseek-v4-flash", "deepseek-v4-pro"}
 	case "openai":
 		return []string{"gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"}
 	case "openrouter":

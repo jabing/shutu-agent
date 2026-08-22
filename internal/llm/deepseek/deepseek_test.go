@@ -48,7 +48,7 @@ func TestStreamText(t *testing.T) {
 	})
 
 	reader, err := c.Stream(context.Background(), llm.ChatRequest{
-		Model: "deepseek-chat",
+		Model: "deepseek-v4-flash",
 		Messages: []llm.Message{
 			{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.Text("hi")}},
 		},
@@ -86,7 +86,7 @@ func TestStreamText(t *testing.T) {
 	if gotBody["stream"] != true {
 		t.Fatalf("stream flag = %v, want true", gotBody["stream"])
 	}
-	if gotBody["model"] != "deepseek-chat" {
+	if gotBody["model"] != "deepseek-v4-flash" {
 		t.Fatalf("model = %v", gotBody["model"])
 	}
 }

@@ -61,7 +61,7 @@ var builtinProviders = []builtinProvider{
 	{id: "xiaomi", name: "Xiaomi MiMo", protocol: protocolCompletions, env: "XIAOMI_API_KEY", baseURL: "https://api.xiaomimimo.com/v1", model: "MiMo-7B-RL"},
 	{id: "ant-ling", name: "Ant Ling", protocol: protocolCompletions, env: "ANT_LING_API_KEY", baseURL: "https://api.ant-ling.com/v1", model: "antling-3.5"},
 	{id: "fireworks", name: "Fireworks", protocol: protocolCompletions, env: "FIREWORKS_API_KEY", baseURL: "https://api.fireworks.ai/inference/v1", model: "accounts/fireworks/models/llama-v3p3-70b-instruct"},
-	{id: "deepseek-official", name: "DeepSeek", protocol: protocolCompletions, env: "DEEPSEEK_API_KEY", baseURL: "https://api.deepseek.com", model: "deepseek-chat"},
+	{id: "deepseek-official", name: "DeepSeek", protocol: protocolCompletions, env: "DEEPSEEK_API_KEY", baseURL: "https://api.deepseek.com", model: "deepseek-v4-flash"},
 
 	// anthropic-messages family (Messages SSE, anthropic adapter).
 	{id: "anthropic", name: "Anthropic", protocol: protocolMessages, env: "ANTHROPIC_API_KEY", baseURL: "https://api.anthropic.com/v1", model: "claude-sonnet-4-5"},

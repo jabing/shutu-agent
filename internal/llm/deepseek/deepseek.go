@@ -22,7 +22,7 @@ import (
 
 const (
 	defaultBaseURL    = "https://api.deepseek.com"
-	defaultModel      = "deepseek-chat"
+	defaultModel      = "deepseek-v4-flash"
 	defaultMaxRetries = 2
 	// defaultBackoffBase is the first backoff delay; each later attempt doubles
 	// it, capped at maxBackoff.

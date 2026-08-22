@@ -366,8 +366,8 @@ func (a *app) webSessionManager(ctx context.Context, action, id string) (string,
 // builtinContextWindows are the known DeepSeek defaults; unknown models fall
 // back to the webserver's defaultContextWindow (128k).
 var builtinContextWindows = map[string]int{
-	"deepseek-chat":     128000,
-	"deepseek-reasoner": 128000,
+	"deepseek-v4-flash": 128000,
+	"deepseek-v4-pro":   128000,
 }
 
 // contextWindowOf resolves the effective model's context window for the

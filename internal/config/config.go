@@ -16,7 +16,7 @@ import (
 
 // Defaults applied to fields that are empty or absent in config.yaml.
 const (
-	DefaultModel      = "deepseek-chat"
+	DefaultModel      = "deepseek-v4-flash"
 	DefaultBaseURL    = "" // empty => provider default (https://api.deepseek.com)
 	DefaultDataDir    = "data"
 	DefaultPromptsDir = "config/prompts"
@@ -202,7 +202,7 @@ func Enabled(b *bool) bool { return b == nil || *b }
 // config.yaml; Load fills defaults for empty values, so callers never branch
 // on field presence.
 type Config struct {
-	Model      string           `yaml:"model"`       // chat model; default deepseek-chat
+	Model      string           `yaml:"model"`       // chat model; default deepseek-v4-flash
 	BaseURL    string           `yaml:"base_url"`    // optional OpenAI-compatible base URL; empty means the provider default
 	DataDir    string           `yaml:"data_dir"`    // directory for pa.db (and runtime data); default "data"
 	PromptsDir string           `yaml:"prompts_dir"` // directory of prompt section files; default "config/prompts"

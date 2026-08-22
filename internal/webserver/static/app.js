@@ -2244,7 +2244,7 @@ const CAPABILITY_NAMES = {
   mcp: "MCP", skill: "技能", schedule: "定时", plan: "计划",
   spill: "溢出", compaction: "压缩", multimodal: "多模态",
 };
-const MODEL_DISPLAY = { "deepseek-chat": "DeepSeek Chat", "deepseek-reasoner": "DeepSeek Reasoner" };
+const MODEL_DISPLAY = { "deepseek-v4-flash": "DeepSeek-V4-Flash", "deepseek-v4-pro": "DeepSeek-V4-Pro" };
 const PROVIDER_DISPLAY = { "deepseek-official": "DeepSeek" };
 
 let settingsSec = "general";
