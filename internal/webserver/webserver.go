@@ -87,8 +87,8 @@ type Server struct {
 	// until a Setter is called; a nil provider makes its API answer 501. Each
 	// returns sanitized view maps (id/status/timestamps only — no prompts,
 	// outputs or session content).
-	subFn  func(ctx context.Context) ([]map[string]any, error)
-	jobsFn func(ctx context.Context) ([]map[string]any, error)
+	subFn  func(ctx context.Context, sessionID string) ([]map[string]any, error)
+	jobsFn func(ctx context.Context, sessionID string) ([]map[string]any, error)
 
 	// P5 (ADR D-WEB2-I): the image-attachment store wired by the composition
 	// root when multimodal is enabled. nil (the default) makes the attachment
@@ -408,7 +408,7 @@ func (s *Server) SetSessionStatusProvider(fn func(ctx context.Context, m store.S
 // M10 W4, ADR D-WEB2-H). The provider returns sanitized child-agent views
 // (id/status/timestamps only). Called by the composition root; nil makes the
 // API answer 501.
-func (s *Server) SetSubagentProvider(fn func(ctx context.Context) ([]map[string]any, error)) {
+func (s *Server) SetSubagentProvider(fn func(ctx context.Context, sessionID string) ([]map[string]any, error)) {
 	s.subFn = fn
 }
 
@@ -416,7 +416,7 @@ func (s *Server) SetSubagentProvider(fn func(ctx context.Context) ([]map[string]
 // W4, ADR D-WEB2-H). The provider returns sanitized job views (id/kind/status/
 // timestamps only — no outputs). Called by the composition root; nil makes the
 // API answer 501.
-func (s *Server) SetJobsProvider(fn func(ctx context.Context) ([]map[string]any, error)) {
+func (s *Server) SetJobsProvider(fn func(ctx context.Context, sessionID string) ([]map[string]any, error)) {
 	s.jobsFn = fn
 }
 
@@ -428,8 +428,8 @@ type InteractiveHandlers struct {
 	Session   func(ctx context.Context, action, id string) (string, error)
 	Event     func(sessionID string, sink func(session.Event)) func()
 	Config    func() map[string]any
-	Subagents func(ctx context.Context) ([]map[string]any, error)
-	Jobs      func(ctx context.Context) ([]map[string]any, error)
+	Subagents func(ctx context.Context, sessionID string) ([]map[string]any, error)
+	Jobs      func(ctx context.Context, sessionID string) ([]map[string]any, error)
 	Model     func(ctx context.Context, provider, model string) error // P5.1 live switch
 }
 
@@ -1844,7 +1844,7 @@ func (s *Server) handleSubagents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "subagent provider not wired"})
 		return
 	}
-	items, err := s.subFn(r.Context())
+	items, err := s.subFn(r.Context(), r.URL.Query().Get("session_id"))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -1863,7 +1863,7 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "jobs provider not wired"})
 		return
 	}
-	items, err := s.jobsFn(r.Context())
+	items, err := s.jobsFn(r.Context(), r.URL.Query().Get("session_id"))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return

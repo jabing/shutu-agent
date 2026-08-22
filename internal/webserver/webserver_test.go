@@ -758,17 +758,24 @@ func TestEventViewToolArgs(t *testing.T) {
 // configured token the route stays behind requireAuth.
 func TestSubagentsJobsAPI(t *testing.T) {
 	srv, _ := newTestServer(t, "tok")
-	srv.SetSubagentProvider(func(ctx context.Context) ([]map[string]any, error) {
+	srv.SetSubagentProvider(func(ctx context.Context, sessionID string) ([]map[string]any, error) {
+		if sessionID != "" && sessionID != "s-1" {
+			return []map[string]any{}, nil
+		}
 		return []map[string]any{{"id": "a-1", "label": "task", "running": true}}, nil
 	})
-	srv.SetJobsProvider(func(ctx context.Context) ([]map[string]any, error) {
+	srv.SetJobsProvider(func(ctx context.Context, sessionID string) ([]map[string]any, error) {
 		return []map[string]any{{"id": "job-1", "kind": "workflow", "label": "wf", "status": "running"}}, nil
 	})
 	h := srv.Handler()
 
-	rec := doReq(t, h, "GET", "/api/subagents", "tok")
+	rec := doReq(t, h, "GET", "/api/subagents?session_id=s-1", "tok")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "a-1") {
 		t.Fatalf("subagents → %d %q, want 200 with a-1", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, h, "GET", "/api/subagents?session_id=s-2", "tok")
+	if !strings.Contains(rec.Body.String(), `"subagents":[]`) {
+		t.Fatalf("subagents other session → %q, want empty", rec.Body.String())
 	}
 	rec = doReq(t, h, "GET", "/api/jobs", "tok")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "job-1") {

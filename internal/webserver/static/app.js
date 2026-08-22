@@ -3544,7 +3544,8 @@ async function loadRuns() {
   // Show loading placeholders on the first open only.
   if (!runsSubs.dataset.loaded) { runsSubs.innerHTML = `<div class="runs-loading">正在加载子代理…</div>`; runsJobs.innerHTML = `<div class="runs-loading">正在加载任务…</div>`; }
   try {
-    const [subsRes, jobsRes] = await Promise.all([api("/api/subagents"), api("/api/jobs")]);
+    const q = currentID ? `?session_id=${encodeURIComponent(currentID)}` : "";
+    const [subsRes, jobsRes] = await Promise.all([api("/api/subagents" + q), api("/api/jobs" + q)]);
     const subs = subsRes.status === 501 ? [] : await subsRes.json();
     const jobs = jobsRes.status === 501 ? [] : await jobsRes.json();
     runsSubs.dataset.loaded = "1"; runsJobs.dataset.loaded = "1";

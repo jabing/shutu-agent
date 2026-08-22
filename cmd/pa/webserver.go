@@ -718,11 +718,16 @@ func (a *app) webSwitchModel(ctx context.Context, provider, model string) error 
 // webSubagents returns the sanitized active sub-agent views for GET
 // /api/subagents (ADR D-WEB2-H): only id/label/running — never prompts or
 // outputs. A disabled subagent capability answers an empty list, not an error.
-func (a *app) webSubagents(ctx context.Context) ([]map[string]any, error) {
+func (a *app) webSubagents(ctx context.Context, sessionID string) ([]map[string]any, error) {
 	if a.subagents == nil {
 		return []map[string]any{}, nil
 	}
-	children, err := a.subagents.ListChildren(ctx, a.currentID)
+	// dsh session-scoped catalog: the popover shows the requested session's
+	// subagents; a blank session_id falls back to the backend's current session.
+	if sessionID == "" {
+		sessionID = a.currentID
+	}
+	children, err := a.subagents.ListChildren(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -736,11 +741,16 @@ func (a *app) webSubagents(ctx context.Context) ([]map[string]any, error) {
 // webJobs returns the sanitized background-job views for GET /api/jobs (ADR
 // D-WEB2-H): id/kind/label/status/detail/started_at/finished_at — never outputs
 // or owner-session internals. A disabled jobs capability answers an empty list.
-func (a *app) webJobs(ctx context.Context) ([]map[string]any, error) {
+// session_id scopes it to one session (dsh session-header action); blank falls
+// back to the backend's current session.
+func (a *app) webJobs(ctx context.Context, sessionID string) ([]map[string]any, error) {
 	if a.jobs == nil {
 		return []map[string]any{}, nil
 	}
-	snaps, err := a.jobs.List(ctx, a.currentID)
+	if sessionID == "" {
+		sessionID = a.currentID
+	}
+	snaps, err := a.jobs.List(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
