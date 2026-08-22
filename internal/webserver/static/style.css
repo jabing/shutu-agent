@@ -324,6 +324,9 @@ code { font-family: var(--dsw-font-code); background: var(--dsw-alias-markdown-i
 /* A collapsed workspace keeps only its header row (dsh group collapse). */
 .ws-group.closed .group-sessions { display: none; }
 .gh-folder { flex: none; font-size: 14px; color: var(--dsw-alias-label-tertiary); }
+/* dsh ProjectRowItem folderActive: the current workspace's folder turns
+   business-blue while its group is expanded. */
+.gh-folder.active { color: var(--dsw-alias-state-business-primary); }
 .gh-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .gh-count {
   flex: none; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-tertiary);

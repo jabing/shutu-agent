@@ -9,6 +9,7 @@
 const KEY_TOKEN = "pa_token";
 const KEY_THEME = "pa_theme";
 const KEY_CURRENT = "pa_current";
+const KEY_RECENT_WS = "pa_recent_workspace"; // dsh recentWorkspaceId: where 新会话 lands
 
 // ---- layout constants (ui-layout columns.ts) -----------------------------
 const SIDEBAR_DEFAULT = 280;
@@ -604,6 +605,9 @@ async function loadSessions() {
     return;
   }
   list.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+  // Persist the active session's workspace (dsh recentWorkspaceId) so the next
+  // 新会话 lands in the same workspace even without an active session.
+  rememberRecentWorkspace(list);
   // A live query switches to the remote body-text search view (P6.3, dsh
   // searchAcrossSessions); nothing else is drawn while searching.
   if (searchQuery) { doSearch(searchQuery); return; }
@@ -861,9 +865,12 @@ function renderGrouped(list) {
     head.className = "group-head";
     head.draggable = true;
     const open = wsOpenState(g.key);
+    // dsh ProjectRowItem folderActive: the workspace that owns the current
+    // session shows a business-blue folder icon while its group is expanded.
+    const folderActive = g.ws && open && g.ids.includes(currentID);
     head.innerHTML = `
       <span class="gh-chevron" aria-hidden="true">${PA_ICONS.triangleright}</span>
-      <span class="gh-folder" aria-hidden="true">${g.ws ? (open ? PA_ICONS.folderopen16 : PA_ICONS.folderclose16) : PA_ICONS.folderclose16}</span>
+      <span class="gh-folder${folderActive ? " active" : ""}" aria-hidden="true">${g.ws ? (open ? PA_ICONS.folderopen16 : PA_ICONS.folderclose16) : PA_ICONS.folderclose16}</span>
       <span class="gh-title">${esc(g.title)}</span>
       <span class="gh-count">${g.ids.length}</span>
       ${g.ws ? `<span class="gh-actions">
@@ -878,6 +885,7 @@ function renderGrouped(list) {
       head.querySelector(".gh-folder").innerHTML = g.ws
         ? (next ? PA_ICONS.folderopen16 : PA_ICONS.folderclose16)
         : PA_ICONS.folderclose16;
+      head.querySelector(".gh-folder").classList.toggle("active", g.ws && next && g.ids.includes(currentID));
     });
     if (g.ws) {
       head.querySelector(".gh-add").addEventListener("click", async (e) => {
@@ -1385,12 +1393,38 @@ async function deleteSession(id) {
   loadSessions();
 }
 
-// newSession shows the dsh new-session hero (workspace chip + composer); no
-// session is created until the user picks a workspace (see pickHeroWorkspace)
-// or the composer is sent from an existing session. This matches dsh, where
-// "New Session" lands on the explore hero and the blank session is materialized
-// on the workspace pick.
-function newSession() {
+// currentWorkspaceId returns the workspace that owns the active session (dsh
+// startSession: the current Session's Workspace). "" when none — the session
+// may be ungrouped.
+function currentWorkspaceId() {
+  if (!currentID) return "";
+  for (const w of wsGroups) if (w.session_ids.includes(currentID)) return w.id;
+  return "";
+}
+// rememberRecentWorkspace persists the active session's workspace (dsh
+// recentWorkspaceId) so 新会话 lands there even without an active session.
+function rememberRecentWorkspace(list) {
+  if (!currentID || !Array.isArray(list)) return;
+  const s = list.find((x) => x.id === currentID);
+  if (s && s.workspace_id) localStorage.setItem(KEY_RECENT_WS, s.workspace_id);
+}
+function recentWorkspaceId() {
+  return localStorage.getItem(KEY_RECENT_WS) || "";
+}
+// newSession starts a session in the current workspace (dsh startSession):
+// the target is the current session's workspace, else the recent workspace,
+// else the hero-picked workspace; with no workspace at all it lands on the
+// choose-workspace hero (dsh: no Workspace → clear into the New Session view
+// state). The created blank session shows as 新会话 in the sidebar.
+async function newSession() {
+  const target = currentWorkspaceId() || recentWorkspaceId() || heroWorkspace;
+  if (!target) { showNewSessionHero(); return; }
+  await createSessionInWorkspace(target);
+}
+// showNewSessionHero is the no-workspace fallback of newSession (dsh New
+// Session hero): no session is created until the user picks a workspace
+// (see pickHeroWorkspace).
+function showNewSessionHero() {
   closeDetails();
   currentID = "";
   sessionEmpty = true;
