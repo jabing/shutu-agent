@@ -96,10 +96,10 @@ type Server struct {
 	att *attachment.Store
 
 	// P5.1 (模型选择实时生效, 用户 2026-08-20 拍板): the live model-switch
-	// dispatcher for POST /api/config/model. It validates the provider/model,
-	// rebuilds the selected LLM provider and answers the new config state. nil
-	// (the default) makes the API answer 501.
-	setModelFn func(ctx context.Context, provider, model string) error
+	// dispatcher for POST /api/config/model. It validates the provider/model/
+	// reasoning-effort, rebuilds the selected LLM provider and answers the new
+	// config state. nil (the default) makes the API answer 501.
+	setModelFn func(ctx context.Context, provider, model, effort string) error
 
 	// M11 (增加提供方 / 增加自定义提供方, dsh-synced): the provider-management
 	// dispatcher. setProviderFn handles POST /api/config/provider (save a
@@ -209,9 +209,10 @@ func (s *Server) SetSkillManager(fn func(ctx context.Context, action string, req
 func (s *Server) SetAttachmentStore(st *attachment.Store) { s.att = st }
 
 // SetModelSwitcher wires the live model switch (POST /api/config/model, P5.1):
-// the handler validates the provider/model and rebuilds the selected LLM
-// provider. Called by the composition root; nil (default) keeps the API at 501.
-func (s *Server) SetModelSwitcher(fn func(ctx context.Context, provider, model string) error) {
+// the handler validates the provider/model/reasoning-effort and rebuilds the
+// selected LLM provider. Called by the composition root; nil (default) keeps
+// the API at 501.
+func (s *Server) SetModelSwitcher(fn func(ctx context.Context, provider, model, effort string) error) {
 	s.setModelFn = fn
 }
 
@@ -430,7 +431,7 @@ type InteractiveHandlers struct {
 	Config    func() map[string]any
 	Subagents func(ctx context.Context, sessionID string) ([]map[string]any, error)
 	Jobs      func(ctx context.Context, sessionID string) ([]map[string]any, error)
-	Model     func(ctx context.Context, provider, model string) error // P5.1 live switch
+	Model     func(ctx context.Context, provider, model, effort string) error // P5.1 live switch
 }
 
 // Handlers returns the current interactive wiring.
@@ -1484,30 +1485,31 @@ type attachmentView struct {
 }
 
 // handleModelSwitch implements POST /api/config/model (P5.1, 模型选择实时生效):
-// it dispatches a live provider/model change to the injected switcher, which
-// rebuilds the selected LLM provider (no restart). An unwired switcher answers
-// 501; an empty body (neither provider nor model) answers 400; a rejected
-// switch (unknown provider / missing key / bad model) answers 400 and keeps the
-// previous selection. On success it returns the refreshed config view so the
-// frontend re-renders the settings panel.
+// it dispatches a live provider/model/reasoning-effort change to the injected
+// switcher, which rebuilds the selected LLM provider (no restart). An unwired
+// switcher answers 501; an empty body (neither provider nor model) answers 400;
+// a rejected switch (unknown provider / missing key / bad model or effort)
+// answers 400 and keeps the previous selection. On success it returns the
+// refreshed config view so the frontend re-renders the settings panel.
 func (s *Server) handleModelSwitch(w http.ResponseWriter, r *http.Request) {
 	if s.setModelFn == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "model switcher not wired"})
 		return
 	}
 	var body struct {
-		Provider string `json:"provider"`
-		Model    string `json:"model"`
+		Provider        string `json:"provider"`
+		Model           string `json:"model"`
+		ReasoningEffort string `json:"reasoning_effort"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
 		return
 	}
-	if strings.TrimSpace(body.Provider) == "" && strings.TrimSpace(body.Model) == "" {
+	if strings.TrimSpace(body.Provider) == "" && strings.TrimSpace(body.Model) == "" && strings.TrimSpace(body.ReasoningEffort) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "provider or model is required"})
 		return
 	}
-	if err := s.setModelFn(r.Context(), strings.TrimSpace(body.Provider), strings.TrimSpace(body.Model)); err != nil {
+	if err := s.setModelFn(r.Context(), strings.TrimSpace(body.Provider), strings.TrimSpace(body.Model), strings.TrimSpace(body.ReasoningEffort)); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}

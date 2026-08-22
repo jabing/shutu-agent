@@ -114,6 +114,34 @@ func TestRunSimpleAnswerNoTools(t *testing.T) {
 	}
 }
 
+// TestRunCarriesReasoningEffort verifies the loop forwards the configured
+// thinking effort to every model request (dsh 思考强度 对齐).
+func TestRunCarriesReasoningEffort(t *testing.T) {
+	model := &scriptedLLM{steps: [][]llm.StreamEvent{{
+		{Kind: llm.StreamTextDelta, Text: "ok"},
+		{Kind: llm.StreamFinish, FinishReason: "stop"},
+	}}}
+	reg := tools.New()
+	if err := reg.Register(tools.GetTime{}); err != nil {
+		t.Fatal(err)
+	}
+	log := session.New()
+	loop := New(Config{
+		LLM:             model,
+		Log:             log,
+		Tools:           reg,
+		Prompt:          prompt.New("You are helpful."),
+		Model:           "deepseek-v4-flash",
+		ReasoningEffort: "max",
+	})
+	if err := loop.Run(context.Background(), "think"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(model.calls) != 1 || model.calls[0].ReasoningEffort != "max" {
+		t.Fatalf("calls = %+v, want one with ReasoningEffort=max", model.calls)
+	}
+}
+
 func TestRunToolCallExecutesAndLogs(t *testing.T) {
 	model := &scriptedLLM{steps: [][]llm.StreamEvent{
 		{ // step 1: model asks for get_time

@@ -34,8 +34,13 @@ type ChatRequest struct {
 	// dispatch-m8-2 §2).
 	Provider string
 	Model    string
-	Messages []Message
-	Tools    []ToolSchema
+	// ReasoningEffort is the selected thinking effort ("off" | "low" | "high" |
+	// "max"; dsh ModelSelect 思考强度 对齐). Empty keeps the provider default.
+	// The deepseek adapter serializes it as the wire `reasoning_effort` field
+	// when non-empty and not "off" (off disables thinking).
+	ReasoningEffort string
+	Messages        []Message
+	Tools           []ToolSchema
 }
 
 // StreamEventKind discriminates StreamEvent values.

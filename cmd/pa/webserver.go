@@ -144,8 +144,8 @@ func (a *app) registerWebServer() error {
 		srv.SetAttachmentStore(a.attachStore)
 	}
 	// P5.1 (模型选择实时生效): wire the live model switch.
-	srv.SetModelSwitcher(func(ctx context.Context, provider, model string) error {
-		return a.webSwitchModel(ctx, provider, model)
+	srv.SetModelSwitcher(func(ctx context.Context, provider, model, effort string) error {
+		return a.webSwitchModel(ctx, provider, model, effort)
 	})
 	// M11 (增加提供方 / 增加自定义提供方): wire the provider-management API. A
 	// "save" of a built-in provider stores only the API-key override (custom:false);
@@ -424,11 +424,12 @@ func (a *app) stopTurn(sessionID string) error {
 
 func (a *app) webConfig() map[string]any {
 	return map[string]any{
-		"model":        llmProviderModel(a.cfg, a.cfg.LLM.Provider),
-		"base_url":     a.cfg.BaseURL,
-		"llm_provider": a.cfg.LLM.Provider,
-		"mode":         a.cfg.Mode,
-		"providers":    a.webProviders(), // P5.1 live model pickers
+		"model":            llmProviderModel(a.cfg, a.cfg.LLM.Provider),
+		"base_url":         a.cfg.BaseURL,
+		"llm_provider":     a.cfg.LLM.Provider,
+		"reasoning_effort": a.cfg.ReasoningEffort,
+		"mode":             a.cfg.Mode,
+		"providers":        a.webProviders(), // P5.1 live model pickers
 
 		// Capability gates (dsh 对齐: 默认全开, nil*bool→on; 显式 enabled:false 关).
 		"terminal_enabled":   config.Enabled(a.cfg.Terminal.Enabled),
@@ -453,6 +454,56 @@ func (a *app) webConfig() map[string]any {
 
 		"web_server_addr":     a.cfg.WebServer.Addr,
 	}
+}
+
+// modelReasoning describes one model's selectable thinking efforts (dsh
+// ModelSelect 思考强度 对齐): the offered levels and the default. effort IDs
+// match the deepseek wire (`reasoning_effort`), "off" meaning thinking
+// disabled. Absent means the model offers no effort choice.
+type modelReasoning struct {
+	Efforts       []modelEffort `json:"efforts"`
+	DefaultEffort string        `json:"default_effort,omitempty"`
+}
+
+// modelEffort is one selectable effort level.
+type modelEffort struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// deepseekReasoning mirrors dsh's llm-deepseek catalog for the V4 models
+// (DEFAULT_MODELS reasoning: off/high/max, default high).
+var deepseekReasoning = modelReasoning{
+	Efforts: []modelEffort{
+		{ID: "off", Name: "Off"},
+		{ID: "high", Name: "High"},
+		{ID: "max", Name: "Max"},
+	},
+	DefaultEffort: "high",
+}
+
+// reasoningFor returns the reasoning capability for a candidate model of a
+// provider ("" → none). DeepSeek's V4 models offer off/high/max; everything
+// else has no effort selector yet.
+func reasoningFor(provider, model string) *modelReasoning {
+	if provider == "deepseek-official" && (model == "deepseek-v4-flash" || model == "deepseek-v4-pro") {
+		r := deepseekReasoning
+		return &r
+	}
+	return nil
+}
+
+// providerReasoning returns the per-model reasoning catalog for a built-in
+// provider: model id → its effort choices. Only providers whose models declare
+// a reasoning capability contribute entries; the rest return an empty map.
+func providerReasoning(id string) map[string]modelReasoning {
+	out := map[string]modelReasoning{}
+	for _, m := range modelCandidates(id) {
+		if r := reasoningFor(id, m); r != nil {
+			out[m] = *r
+		}
+	}
+	return out
 }
 
 // webProviders returns the known providers for the P5.1/M11 model pickers:
@@ -491,18 +542,19 @@ func (a *app) webProviders() []map[string]any {
 			available = p.Available()
 		}
 		out = append(out, map[string]any{
-			"id":         bp.id,
-			"name":       bp.name,
-			"protocol":   string(bp.protocol),
+			"id":             bp.id,
+			"name":           bp.name,
+			"protocol":       string(bp.protocol),
 			"protocol_label": protocolLabel(bp.protocol),
-			"custom":     false,
-			"registered": registered,
-			"available":  available,
-			"configured": a.providerKey(bp.id) != "",
-			"model":      model,
-			"base_url":   baseURL,
-			"candidates": modelCandidates(bp.id),
-			"env_var":    providerEnv(bp.id),
+			"custom":         false,
+			"registered":     registered,
+			"available":      available,
+			"configured":     a.providerKey(bp.id) != "",
+			"model":          model,
+			"base_url":       baseURL,
+			"candidates":     modelCandidates(bp.id),
+			"env_var":        providerEnv(bp.id),
+			"reasoning":      providerReasoning(bp.id),
 		})
 	}
 	// M11 custom providers from settings.
@@ -527,6 +579,7 @@ func (a *app) webProviders() []map[string]any {
 			"protocol":       cp.Protocol,
 			"protocol_label": protocolLabel(providerProtocol(cp.Protocol)),
 			"models":         cp.Models,
+			"reasoning":      nil,
 		})
 	}
 	return out
@@ -745,14 +798,14 @@ func validProviderRoute(id string) bool {
 }
 
 // webSwitchModel implements POST /api/config/model (P5.1, 模型选择实时生效): it
-// validates and applies a live provider/model change, then rebuilds the
-// selected LLM provider — no restart. It runs under turnMu (D5 serial: no turn
-// is in flight while the selection swaps) and registerLLM publishes the new
-// pointer under llmMu, so the very next message (buildLoop re-wires every turn)
-// talks to the new provider. The change is runtime-only: config.yaml stays the
-// source of truth for the next launch. Fail-closed: on error the previous
-// selection is fully restored.
-func (a *app) webSwitchModel(ctx context.Context, provider, model string) error {
+// validates and applies a live provider/model/reasoning-effort change, then
+// rebuilds the selected LLM provider — no restart. It runs under turnMu (D5
+// serial: no turn is in flight while the selection swaps) and registerLLM
+// publishes the new pointer under llmMu, so the very next message (buildLoop
+// re-wires every turn) talks to the new provider. The change is runtime-only:
+// config.yaml stays the source of truth for the next launch. Fail-closed: on
+// error the previous selection is fully restored.
+func (a *app) webSwitchModel(ctx context.Context, provider, model, effort string) error {
 	a.turnMu.Lock()
 	defer a.turnMu.Unlock()
 	if a.llmReg == nil {
@@ -774,6 +827,7 @@ func (a *app) webSwitchModel(ctx context.Context, provider, model string) error 
 	// Snapshot for rollback.
 	oldProvider := a.cfg.LLM.Provider
 	oldModel, oldOpenAI, oldAnthropic := a.cfg.Model, a.cfg.LLM.OpenAI.Model, a.cfg.LLM.Anthropic.Model
+	oldEffort := a.cfg.ReasoningEffort
 	if provider != "" {
 		a.cfg.LLM.Provider = provider
 	}
@@ -787,10 +841,19 @@ func (a *app) webSwitchModel(ctx context.Context, provider, model string) error 
 			a.cfg.Model = model
 		}
 	}
+	// dsh 思考强度 (ModelSelect effort): "off"|"low"|"high"|"max"; a change to
+	// "" clears the runtime selection back to the provider default.
+	switch effort {
+	case "", "off", "low", "high", "max":
+		a.cfg.ReasoningEffort = effort
+	default:
+		return fmt.Errorf("unknown reasoning effort %q (want off|low|high|max)", effort)
+	}
 	if err := a.registerLLM(); err != nil {
 		// Restore the previous selection — never leave a half-applied switch.
 		a.cfg.LLM.Provider = oldProvider
 		a.cfg.Model, a.cfg.LLM.OpenAI.Model, a.cfg.LLM.Anthropic.Model = oldModel, oldOpenAI, oldAnthropic
+		a.cfg.ReasoningEffort = oldEffort
 		return err
 	}
 	// Rebuild compaction on the new provider so auto-summaries follow the switch.

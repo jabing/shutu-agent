@@ -431,8 +431,9 @@ func TestWebSessionNewThenMessageAfterRequestCtxCancelled(t *testing.T) {
 
 // TestWebSwitchModel covers the P5.1 live model switch (webSwitchModel): a
 // model-only change rebuilds the provider on the same selection; a provider
-// change swaps a.llm and updates the per-provider model; an unknown provider is
-// rejected fail-closed (previous selection untouched).
+// change swaps a.llm and updates the per-provider model; a reasoning-effort
+// change applies live; an unknown provider or effort is rejected fail-closed
+// (previous selection untouched).
 func TestWebSwitchModel(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "deepseek-key")
 	t.Setenv("OPENAI_API_KEY", "openai-key")
@@ -450,15 +451,30 @@ func TestWebSwitchModel(t *testing.T) {
 	}
 
 	// Model-only switch on deepseek.
-	if err := a.webSwitchModel(context.Background(), "", "deepseek-reasoner"); err != nil {
+	if err := a.webSwitchModel(context.Background(), "", "deepseek-reasoner", ""); err != nil {
 		t.Fatalf("model switch: %v", err)
 	}
 	if a.cfg.Model != "deepseek-reasoner" {
 		t.Fatalf("cfg.Model = %q, want deepseek-reasoner", a.cfg.Model)
 	}
 
+	// Reasoning-effort switch (dsh 思考强度) applies live; unknown effort fails
+	// closed and leaves the previous selection.
+	if err := a.webSwitchModel(context.Background(), "", "", "high"); err != nil {
+		t.Fatalf("effort switch: %v", err)
+	}
+	if a.cfg.ReasoningEffort != "high" {
+		t.Fatalf("cfg.ReasoningEffort = %q, want high", a.cfg.ReasoningEffort)
+	}
+	if err := a.webSwitchModel(context.Background(), "", "", "bogus"); err == nil {
+		t.Fatal("unknown effort must error")
+	}
+	if a.cfg.ReasoningEffort != "high" {
+		t.Fatalf("effort after failed switch = %q, want high (unchanged)", a.cfg.ReasoningEffort)
+	}
+
 	// Provider switch to openai, with its own model.
-	if err := a.webSwitchModel(context.Background(), "openai", "gpt-4o-mini"); err != nil {
+	if err := a.webSwitchModel(context.Background(), "openai", "gpt-4o-mini", ""); err != nil {
 		t.Fatalf("provider switch: %v", err)
 	}
 	if a.cfg.LLM.Provider != "openai" || a.cfg.LLM.OpenAI.Model != "gpt-4o-mini" {
@@ -469,7 +485,7 @@ func TestWebSwitchModel(t *testing.T) {
 	}
 
 	// Unknown provider → fail-closed, selection untouched.
-	if err := a.webSwitchModel(context.Background(), "nope", ""); err == nil {
+	if err := a.webSwitchModel(context.Background(), "nope", "", ""); err == nil {
 		t.Fatal("unknown provider must error")
 	}
 	if a.cfg.LLM.Provider != "openai" {

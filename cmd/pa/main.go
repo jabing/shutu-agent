@@ -749,7 +749,7 @@ func (a *app) newLoop() *loop.Loop {
 	return a.buildLoop(
 		func(delta string) { fmt.Print(delta) },
 		func(err error) { fmt.Fprintln(os.Stderr, "\n[stream error]", err) },
-		a.cfg.Model, a.prompt,
+		a.cfg.Model, a.cfg.ReasoningEffort, a.prompt,
 	)
 }
 
@@ -758,7 +758,7 @@ func (a *app) newLoop() *loop.Loop {
 // the SSE event flow (each chunk is already persisted by the loop), so nothing
 // may be printed to the REPL's stdout/stderr during a web turn.
 func (a *app) newLoopWeb() *loop.Loop {
-	return a.buildLoop(func(string) {}, func(error) {}, a.cfg.Model, a.prompt)
+	return a.buildLoop(func(string) {}, func(error) {}, a.cfg.Model, a.cfg.ReasoningEffort, a.prompt)
 }
 
 // newLoopFor builds a Loop bound to the current session log using the resolved
@@ -769,16 +769,17 @@ func (a *app) newLoopFor(rt sessionRuntime, interactive bool) *loop.Loop {
 		return a.buildLoop(
 			func(delta string) { fmt.Print(delta) },
 			func(err error) { fmt.Fprintln(os.Stderr, "\n[stream error]", err) },
-			rt.model, rt.prompt,
+			rt.model, rt.effort, rt.prompt,
 		)
 	}
-	return a.buildLoop(func(string) {}, func(error) {}, rt.model, rt.prompt)
+	return a.buildLoop(func(string) {}, func(error) {}, rt.model, rt.effort, rt.prompt)
 }
 
 // buildLoop assembles a Loop bound to the current session log. onText/onError
 // are the streaming hooks: the REPL prints them, the web path is silent.
 // model/prompt override the globals when a per-session mode/model is active.
-func (a *app) buildLoop(onText func(string), onError func(error), model string, pb *prompt.Builder) *loop.Loop {
+// effort is the thinking-effort selection ("" keeps the provider default).
+func (a *app) buildLoop(onText func(string), onError func(error), model, effort string, pb *prompt.Builder) *loop.Loop {
 	if model == "" {
 		model = a.cfg.Model
 	}
@@ -786,12 +787,13 @@ func (a *app) buildLoop(onText func(string), onError func(error), model string, 
 		pb = a.prompt
 	}
 	return loop.New(loop.Config{
-		LLM:    a.currentLLM(),
-		Log:    a.log,
-		Tools:  a.reg,
-		Prompt: pb,
-		Model:  model,
-		Recall: a.recall,
+		LLM:             a.currentLLM(),
+		Log:             a.log,
+		Tools:           a.reg,
+		Prompt:          pb,
+		Model:           model,
+		ReasoningEffort: effort,
+		Recall:          a.recall,
 		// M5c-2b: the "compaction" pre-step injector (auto token-pressure
 		// compaction) is appended when compaction is enabled; it runs after the
 		// M4b recall hook, inside the loop's existing pre-step extension point
@@ -803,9 +805,11 @@ func (a *app) buildLoop(onText func(string), onError func(error), model string, 
 }
 
 // sessionRuntime is the resolved per-turn runtime for one session: the
-// effective LLM model and the system-prompt builder (by mode).
+// effective LLM model, the thinking effort and the system-prompt builder
+// (by mode).
 type sessionRuntime struct {
 	model  string
+	effort string
 	prompt *prompt.Builder
 }
 
@@ -816,7 +820,7 @@ type sessionRuntime struct {
 // the base policy. Fail-open: any store or builder error falls back to the
 // globals.
 func (a *app) applySessionRuntime(id string) (sessionRuntime, func()) {
-	rt := sessionRuntime{model: a.cfg.Model, prompt: a.prompt}
+	rt := sessionRuntime{model: a.cfg.Model, effort: a.cfg.ReasoningEffort, prompt: a.prompt}
 	perm := ""
 	if scs, ok := a.store.(store.SessionConfigStore); ok {
 		if id != "" {

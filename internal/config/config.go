@@ -206,7 +206,11 @@ type Config struct {
 	BaseURL    string           `yaml:"base_url"`    // optional OpenAI-compatible base URL; empty means the provider default
 	DataDir    string           `yaml:"data_dir"`    // directory for pa.db (and runtime data); default "data"
 	PromptsDir string           `yaml:"prompts_dir"` // directory of prompt section files; default "config/prompts"
-	Tools      ToolsConfig      `yaml:"tools"`       // tool-execution policy (M3)
+	// ReasoningEffort is the runtime thinking-effort selection (dsh 思考强度,
+	// ModelSelect effort): "" | "off" | "low" | "high" | "max". Runtime-only
+	// (like the live model switch) — it never enters config.yaml.
+	ReasoningEffort string           `yaml:"-"` // runtime selection; empty keeps provider default
+	Tools           ToolsConfig      `yaml:"tools"`       // tool-execution policy (M3)
 	KB         KBConfig         `yaml:"kb"`          // knowledge-base policy (M4a kernel)
 	Jobs       JobsConfig       `yaml:"jobs"`        // background-job policy (M5a)
 	Subagent   SubagentConfig   `yaml:"subagent"`    // subagent policy (M5b)

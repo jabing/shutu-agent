@@ -1126,9 +1126,9 @@ func TestSearchAPI(t *testing.T) {
 // switcher answers 501.
 func TestModelSwitch(t *testing.T) {
 	srv, _ := newTestServer(t, "tok")
-	var gotP, gotM string
-	srv.SetModelSwitcher(func(ctx context.Context, provider, model string) error {
-		gotP, gotM = provider, model
+	var gotP, gotM, gotE string
+	srv.SetModelSwitcher(func(ctx context.Context, provider, model, effort string) error {
+		gotP, gotM, gotE = provider, model, effort
 		return nil
 	})
 	rec := doReqBody(t, srv.Handler(), "POST", "/api/config/model", "tok",
@@ -1140,13 +1140,22 @@ func TestModelSwitch(t *testing.T) {
 		t.Fatalf("switcher got (%q, %q), want (deepseek, deepseek-reasoner)", gotP, gotM)
 	}
 
-	// Empty body → 400 (neither provider nor model).
+	// reasoning_effort rides the same switch (dsh 思考强度).
+	if rec := doReqBody(t, srv.Handler(), "POST", "/api/config/model", "tok",
+		`{"reasoning_effort":"high"}`); rec.Code != http.StatusOK {
+		t.Fatalf("effort switch → %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if gotE != "high" {
+		t.Fatalf("effort = %q, want high", gotE)
+	}
+
+	// Empty body → 400 (neither provider, model nor effort).
 	if rec := doReqBody(t, srv.Handler(), "POST", "/api/config/model", "tok", `{}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("empty switch → %d, want 400", rec.Code)
 	}
 
 	// Switcher rejection → 400.
-	srv.SetModelSwitcher(func(ctx context.Context, provider, model string) error { return errors.New("unknown provider") })
+	srv.SetModelSwitcher(func(ctx context.Context, provider, model, effort string) error { return errors.New("unknown provider") })
 	if rec := doReqBody(t, srv.Handler(), "POST", "/api/config/model", "tok", `{"model":"x"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("rejected switch → %d, want 400", rec.Code)
 	}

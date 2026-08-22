@@ -46,6 +46,7 @@ type Loop struct {
 	tools   *tools.Registry
 	prompt  *prompt.Builder
 	model   string
+	effort  string
 	recall  func(context.Context, string) []llm.Message // M4b hook, kept as the first injector
 	preStep []PreStepInjector                           // additional injectors, in registration order
 	onText  func(string)                                // optional sink for streamed assistant text (REPL)
@@ -60,6 +61,9 @@ type Config struct {
 	Tools  *tools.Registry
 	Prompt *prompt.Builder
 	Model  string
+	// ReasoningEffort is the thinking-effort default applied to every model
+	// request of this loop (dsh 思考强度; "" keeps the provider default).
+	ReasoningEffort string
 	// Recall, if set, is the proactive knowledge recall extension point
 	// (design.md §8, D4: new features hang on extension points). It is the
 	// first pre-step injector ("recall", ADR 2026-08-18-m5-agent-core.md 总体
@@ -91,6 +95,7 @@ func New(cfg Config) *Loop {
 		tools:   cfg.Tools,
 		prompt:  cfg.Prompt,
 		model:   cfg.Model,
+		effort:  cfg.ReasoningEffort,
 		recall:  cfg.Recall,
 		preStep: append([]PreStepInjector(nil), cfg.PreStep...),
 		onText:  cfg.OnText,
@@ -211,7 +216,7 @@ func (l *Loop) step(ctx context.Context, contextMsgs []llm.Message) (bool, error
 	messages = append(messages, contextMsgs...)
 	messages = append(messages, history...)
 
-	reader, err := l.llm.Stream(ctx, llm.ChatRequest{Model: l.model, Messages: messages, Tools: specs})
+	reader, err := l.llm.Stream(ctx, llm.ChatRequest{Model: l.model, ReasoningEffort: l.effort, Messages: messages, Tools: specs})
 	if err != nil {
 		return false, err
 	}

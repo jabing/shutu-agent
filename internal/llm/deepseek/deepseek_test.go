@@ -91,6 +91,41 @@ func TestStreamText(t *testing.T) {
 	}
 }
 
+// TestStreamReasoningEffort verifies the dsh 思考强度 wire: a "high" effort
+// travels as reasoning_effort, "off" and "" omit the field entirely.
+func TestStreamReasoningEffort(t *testing.T) {
+	probe := func(effort string) map[string]any {
+		var gotBody map[string]any
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			json.NewDecoder(r.Body).Decode(&gotBody)
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Write([]byte(sse(`{"choices":[{"delta":{},"finish_reason":"stop"}]}`, "[DONE]")))
+		})
+		reader, err := c.Stream(context.Background(), llm.ChatRequest{ReasoningEffort: effort})
+		if err != nil {
+			t.Fatalf("stream: %v", err)
+		}
+		for {
+			if _, err := reader.Next(); errors.Is(err, io.EOF) {
+				break
+			} else if err != nil {
+				t.Fatalf("next: %v", err)
+			}
+		}
+		return gotBody
+	}
+
+	if body := probe("high"); body["reasoning_effort"] != "high" {
+		t.Fatalf("reasoning_effort = %v, want high", body["reasoning_effort"])
+	}
+	for _, eff := range []string{"", "off"} {
+		body := probe(eff)
+		if _, present := body["reasoning_effort"]; present {
+			t.Fatalf("%q effort must omit reasoning_effort, got %v", eff, body["reasoning_effort"])
+		}
+	}
+}
+
 func TestStreamToolCalls(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

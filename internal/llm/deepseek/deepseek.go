@@ -162,10 +162,11 @@ type wireTool struct {
 }
 
 type chatBody struct {
-	Model    string        `json:"model"`
-	Messages []wireMessage `json:"messages"`
-	Tools    []wireTool    `json:"tools,omitempty"`
-	Stream   bool          `json:"stream"`
+	Model           string        `json:"model"`
+	Messages        []wireMessage `json:"messages"`
+	Tools           []wireTool    `json:"tools,omitempty"`
+	Stream          bool          `json:"stream"`
+	ReasoningEffort string        `json:"reasoning_effort,omitempty"` // dsh 思考强度: "low"|"high"|"max"; absent keeps provider default
 }
 
 // toWireMessage serializes one chat message. Content follows the M8-3b
@@ -282,6 +283,14 @@ func (c *Client) Stream(ctx context.Context, req llm.ChatRequest) (llm.StreamRea
 	msgs := llm.OffloadRequestImages(req.Messages, c.maxRequestImageBytes)
 
 	body := chatBody{Model: c.model, Stream: true}
+	// dsh 思考强度 (ModelSelect effort): "off" 明确关掉思考 (请求不带
+	// reasoning_effort 字段, 与 wire 契约一致); 其它合法档位透传。
+	switch req.ReasoningEffort {
+	case "", "off":
+		// absent / off → no reasoning_effort field on the wire
+	default:
+		body.ReasoningEffort = req.ReasoningEffort
+	}
 	for _, m := range msgs {
 		wm, err := toWireMessage(m)
 		if err != nil {

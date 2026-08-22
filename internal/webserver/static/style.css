@@ -918,16 +918,14 @@ mark {
   border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-s);
   background: var(--dsw-specific-input-major); box-shadow: var(--dsw-shadow-lv2);
 }
-.ws-menu .hm-item {
-  display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 10px;
-  border: none; border-radius: var(--dsw-radius-s); background: transparent;
-  color: var(--dsw-alias-label-primary); font-size: 13px; cursor: pointer; text-align: left;
-}
+.ws-menu .hm-item { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 10px; border: none; border-radius: var(--dsw-radius-s); background: transparent; color: var(--dsw-alias-label-primary); font-size: 13px; cursor: pointer; text-align: left; width: 100%; }
 .ws-menu .hm-item:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .ws-menu .hm-item.hm-active { color: var(--dsw-alias-state-business-primary); font-weight: 600; }
 .ws-menu .hm-item .hm-ico { display: inline-flex; }
 .ws-menu .hm-item .hm-ico svg { display: block; width: 16px; height: 16px; }
 .ws-menu .hm-item .hm-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-menu .hm-item .hm-check { margin-left: auto; color: var(--dsw-alias-state-business-primary); font-weight: 600; flex: none; }
+.ws-menu .hm-item .hm-caret { margin-left: auto; color: var(--dsw-alias-label-tertiary); flex: none; font-size: 14px; line-height: 18px; }
 .hero-glow {
   position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
   width: 1051px; height: 468px; border-radius: 50%;
