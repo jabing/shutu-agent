@@ -105,25 +105,9 @@
         </div>
 
         <ul id="session-list" class="session-list"></ul>
-        <!-- P4: runs panel (subagents + background jobs), anchored above the
-             sidebar foot. Global snapshot view — dsh renders these as popover
-             triggers; here they live in the sidebar (P4-spec §7). -->
-        <div id="runs-panel" class="runs-panel hidden">
-          <div class="runs-head">
-            <span class="runs-title">运行状态</span>
-            <button id="runs-refresh" class="runs-refresh" title="刷新">↻</button>
-          </div>
-          <div class="runs-section">
-            <div class="runs-sec-title">子代理</div>
-            <div id="runs-subs" class="runs-body" aria-live="polite"></div>
-          </div>
-          <div class="runs-section">
-            <div class="runs-sec-title">后台任务</div>
-            <div id="runs-jobs" class="runs-body" aria-live="polite"></div>
-          </div>
-        </div>
-        <!-- Sidebar foot (dsh footArea): the settings entry only — the runs
-             and KB shortcuts were dropped on user request. -->
+        <!-- Sidebar foot (dsh footArea): the settings entry only. The runs
+             panel moved to a session-header popover trigger (dsh aligns
+             subagents + jobs as conversation.session.header.actions popovers). -->
         <nav class="sidebar-foot">
           <div class="foot-settings">
             <a href="#/settings" class="foot-action" title="设置"><span class="foot-ico" data-icon="settings" aria-hidden="true"></span><span class="foot-label">设置</span></a>
@@ -137,6 +121,25 @@
           <span id="cur-session" class="cur-session" title="当前会话"></span>
           <span id="mode-badge" class="mode-badge hidden" title="会话模式：改 config.yaml 重启生效"></span>
           <span class="spacer"></span>
+          <button id="runs-tab" class="header-trigger hidden" type="button" aria-haspopup="menu" aria-expanded="false" title="运行状态">
+            <span class="ht-dot" data-state="idle" aria-hidden="true"></span>
+            <span class="ht-label">运行状态</span>
+            <span class="ht-caret" data-icon="caretdown" aria-hidden="true"></span>
+          </button>
+          <div id="runs-panel" class="header-pop hidden" role="menu">
+            <div class="runs-head">
+              <span class="runs-title">运行状态</span>
+              <button id="runs-refresh" class="runs-refresh" title="刷新">↻</button>
+            </div>
+            <div class="runs-section">
+              <div class="runs-sec-title">子代理</div>
+              <div id="runs-subs" class="runs-body" aria-live="polite"></div>
+            </div>
+            <div class="runs-section">
+              <div class="runs-sec-title">后台任务</div>
+              <div id="runs-jobs" class="runs-body" aria-live="polite"></div>
+            </div>
+          </div>
           <span id="model-label" class="muted"></span>
           <a id="settings-link" class="btn-icon" href="#/settings" title="设置">⚙</a>
           <button id="theme-toggle" class="btn-icon" title="切换主题">☀️</button>

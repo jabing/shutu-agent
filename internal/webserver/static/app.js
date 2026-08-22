@@ -1403,6 +1403,7 @@ function newSession() {
   syncHeroPickState();
   setHeroPhase();
   updatePlaceholder();
+  syncRunsTrigger();
   refreshContextMeter();
   syncGrow();
 }
@@ -1904,6 +1905,7 @@ function openSession(id) {
   // picked workspace. (dsh: session → composer active, hero → choose-workspace.)
   setComposerDisabled(!id);
   updatePlaceholder();
+  syncRunsTrigger();
   if (!id) { sessionCfg = { model: "", permission: "" }; setHeroPhase(); if (contextMeter) { contextMeter.textContent = ""; contextMeter.title = ""; } return; }
   loadSessionConfig(id);
   return Promise.all([loadEvents(id), connectStream(id)]);
@@ -3428,13 +3430,35 @@ function toggleRuns(force) {
   if (next === runsOpen) return;
   runsOpen = next;
   runsPanel.classList.toggle("hidden", !runsOpen);
-  if (runsTab) runsTab.classList.toggle("active", runsOpen);
+  if (runsTab) {
+    runsTab.classList.toggle("active", runsOpen);
+    runsTab.setAttribute("aria-expanded", runsOpen ? "true" : "false");
+  }
   if (runsOpen) {
     loadRuns();
     startRunsTimers();
+    positionRunsPop();
   } else {
     stopRunsTimers();
   }
+}
+// Anchor the popover under its trigger (dsh popover menus hang from the trigger).
+function positionRunsPop() {
+  const tr = runsTab, pop = runsPanel;
+  if (!tr || !pop) return;
+  const r = tr.getBoundingClientRect();
+  let left = r.right - 260;
+  if (left < 8) left = 8;
+  pop.style.left = left + "px";
+  pop.style.top = (r.bottom + 6) + "px";
+}
+// The runs trigger only appears for an active session (dsh session-header
+// actions); switching to the hero / a blank session hides and closes it.
+function syncRunsTrigger() {
+  if (!runsTab) return;
+  const active = !!currentID;
+  runsTab.classList.toggle("hidden", !active);
+  if (!active) toggleRuns(false);
 }
 function startRunsTimers() {
   stopRunsTimers();
@@ -3526,6 +3550,13 @@ async function loadRuns() {
     runsSubs.dataset.loaded = "1"; runsJobs.dataset.loaded = "1";
     renderSubagents(subs);
     renderJobs(jobs);
+    // Reflect a running subagent/job on the header trigger dot (dsh StateDot).
+    if (runsTab) {
+      const dot = runsTab.querySelector(".ht-dot");
+      const anyRunning = (Array.isArray(subs) && subs.some((s) => s.running))
+        || (Array.isArray(jobs) && jobs.some((j) => j.status === "running" || j.status === "stopping"));
+      if (dot) dot.dataset.state = anyRunning ? "running" : "idle";
+    }
   } catch (e) {
     if (e.message === "unauthorized") { toggleRuns(false); }
     const msg = e.message || "未知错误";
